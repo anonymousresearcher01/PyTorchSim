@@ -14,7 +14,7 @@ cexpr = cpp.CppPrinter().doprint
 class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
     def __init__(self):
         super().__init__()
-        
+
 class ExtensionOverrides(common.OpOverrides):
     pass
 
@@ -27,7 +27,7 @@ class ExtensionKernel(common.Kernel):
         self.itervars = None
         self.reduction_depth = None
         self.cse.suffix = ";"
-        
+
     def load(self, name: str, index: sympy.Expr):
         var = self.args.input(name)
         line = f"{var}[{index}]"
@@ -35,11 +35,11 @@ class ExtensionKernel(common.Kernel):
         self.cse.prefix = cpp.DTYPE_TO_CPP[dtype] + " "
         return self.cse.generate(self.loads, line)
 
-    def store(self, name, index, value, *args, **kwargs):
+    def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
         var = self.args.output(name)
         line = f"{var}[{index}] = {value}"
         self.cse.generate(self.stores, line, assignment = False)
-    
+
     def reduction(self, dtype, src_dtype, reduction_type, value):
         # Todo. 1. args handling
         line = f"Extension.reduction(dtype={dtype}, src_dtype={src_dtype},\
@@ -60,13 +60,14 @@ class ExtensionKernel(common.Kernel):
                     code.splice(self.compute)
                     code.splice(self.stores)
         return code
-        
+
     def codegen_kernel(self, wrapper):
         arg_defs, call_args, arg_types = self.args.cpp_argdefs()
         arg_defs = ",\n".ljust(25).join(arg_defs)
         arg_types = ",".join(arg_types)
         code = common.BracesBuffer()
 
+        # Todo. kernel name custom
         kernel_name = f"Extensin_Kernel"
         kernel_decl_name = kernel_name if V.graph.cpp_wrapper else "kernel"
         code.writeline(f'extern "C" void {kernel_decl_name}({arg_defs})')
@@ -76,7 +77,14 @@ class ExtensionKernel(common.Kernel):
             # Loop body part
             code.splice(self.codegen_loops())
 
-        wrapper.define_kernel(kernel_name, code.getvalue(), cuda=False)
+        codecache_def = IndentedBuffer()
+        if not V.graph.cpp_wrapper:
+            codecache_def.writeline("async_compile.cpp('''")
+        codecache_def.splice(code)
+        if not V.graph.cpp_wrapper:
+            codecache_def.writeline("''')")
+
+        wrapper.define_kernel(kernel_name, codecache_def.getvalue(), cuda=False)
         # generate the code to call this
         wrapper.generate_kernel_call(kernel_name, call_args, cuda=False)
         print(code.getvalue())
@@ -130,7 +138,7 @@ class LoopNest:
         for loop in self.loops:
             code.writelines(loop.lines())
             stack.enter_context(code.indent())
-            
+
 class ExtensionScheduling(BaseScheduling):
     count = 0
     def __init__(self, scheduler):
