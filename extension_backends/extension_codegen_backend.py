@@ -20,13 +20,19 @@ class ExtensionOverrides(common.OpOverrides):
 
 class ExtensionKernel(common.Kernel):
     overrides = ExtensionOverrides
+    newvar_prefix = "auto "
+    suffix = ";"
+
     def __init__(self, args=None):
         super().__init__(args)
         self.call_ranges = None
         self.ranges = None
         self.itervars = None
         self.reduction_depth = None
-        self.cse.suffix = ";"
+        self.reduction_prefix = IndentedBuffer()
+        self.reduction_suffix = IndentedBuffer()
+        self.reduction_vars = {}
+        self.reduction_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_acc")
 
     def load(self, name: str, index: sympy.Expr):
         var = self.args.input(name)
@@ -46,19 +52,30 @@ class ExtensionKernel(common.Kernel):
                 reduction_type={reduction_type}, value={value})"
         self.cse.generate(self.compute, line)
 
+    def store_reduction(self, name, index, value):
+        pass
+
     def codegen_loops(self):
         code = common.BracesBuffer()
         # Loop body part
         loops = [LoopLevel(var, size) for var, size in zip(self.itervars, self.ranges)]
-        loops = LoopNest(loops[: self.reduction_depth])
+        loops, reductions = [LoopNest(loops[: self.reduction_depth]),
+                             LoopNest(loops[self.reduction_depth :])]
+        reductions.mark_reduction(self.reduction_vars)
 
         with contextlib.ExitStack() as stack:
             loops.codegen(code, stack)
             with contextlib.ExitStack() as stack_outer:
+                if self.reduction_prefix:
+                    stack_outer.enter_context(code.indent())
+                code.splice(self.reduction_prefix)
+
                 with contextlib.ExitStack() as stack:
+                    reductions.codegen(code, stack)
                     code.splice(self.loads)
                     code.splice(self.compute)
                     code.splice(self.stores)
+                code.splice(self.reduction_suffix)
         return code
 
     def codegen_kernel(self, wrapper):
@@ -110,7 +127,9 @@ class ExtensionKernel(common.Kernel):
 class LoopLevel:
     var: sympy.Expr
     size: sympy.Expr
+    reduction_vars: Dict[str, str] = None
 
+    # Todo. Type change for reduction
     INDEX_TYPE = "long"
     def lines(self):
         line = f"for({self.INDEX_TYPE} {self.var}=0; {self.var}<{cexpr(self.size)}; ++{self.var})"
