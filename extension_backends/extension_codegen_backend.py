@@ -35,6 +35,7 @@ class ExtensionKernel(common.Kernel):
         self.reduction_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_acc")
 
     def load(self, name: str, index: sympy.Expr):
+        index = self.rename_indexing(index)
         var = self.args.input(name)
         line = f"{var}[{index}]"
         dtype = V.graph.get_dtype(name)
@@ -42,18 +43,32 @@ class ExtensionKernel(common.Kernel):
         return self.cse.generate(self.loads, line)
 
     def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
+        index = self.rename_indexing(index)
         var = self.args.output(name)
         line = f"{var}[{index}] = {value}"
         self.cse.generate(self.stores, line, assignment = False)
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
-        # Todo. 1. args handling
-        line = f"Extension.reduction(dtype={dtype}, src_dtype={src_dtype},\
-                reduction_type={reduction_type}, value={value})"
-        self.cse.generate(self.compute, line)
+        argmax_or_argmin = reduction_type in {"argmax", "argmin"}
+        if argmax_or_argmin:
+            raise NotImplementedError() #TODO: argmin, argmax
+        else:
+            reduction_key = src_dtype, reduction_type, value
+            acc = self.reduction_cse.generate(
+                self.loads, f"reduction {reduction_key}", write=False
+            )
+            self.reduction_vars[acc] = reduction_type
+            acc_type = cpp.reduction_acc_type(reduction_type, dtype)
+            self.reduction_prefix.writeline(f"{acc_type} {acc} = {cpp.reduction_init(reduction_type, dtype)};")
+            line = f"{acc} = {cpp.reduction_combine(reduction_type, acc, value)}"
+            self.cse.generate(self.stores, line, assignment = False)
+            self.reduction_cse.reduction_cache[reduction_key] = acc
+        return acc
 
     def store_reduction(self, name, index, value):
-        pass
+        index = self.rename_indexing(index)
+        var = self.args.output(name)
+        self.reduction_suffix.writeline(f"{var}[{index}] = {value};")\
 
     def codegen_loops(self):
         code = common.BracesBuffer()
