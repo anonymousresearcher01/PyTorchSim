@@ -9,12 +9,12 @@ import torch._dynamo
 import torch.utils.cpp_extension
 
 try:
-    from extension_backends.extension_codegen_backend import (
+    from extension_backends.llvm_codegen_backend import (
         ExtensionScheduling,
         ExtensionWrapperCodegen,
     )
 except ImportError:
-    from .extension_backends.extension_codegen_backend import (
+    from .extension_backends.llvm_codegen_backend import (
         ExtensionScheduling,
         ExtensionWrapperCodegen,
     )
@@ -118,7 +118,7 @@ class ExtensionBackendTests(TestCase):
         self.assertTrue(self.module.custom_op_called())
         y = torch.empty(1000, 1000).to(device=device).fill_(2)
         z = torch.empty(1000).to(device=device).fill_(3)
-        ref = torch.empty(2, 16).fill_(5)
+        ref = torch.empty(1000, 1000).fill_(3)
 
         self.assertTrue(x.device == device)
         self.assertTrue(y.device == device)
@@ -132,12 +132,12 @@ class ExtensionBackendTests(TestCase):
 
         metrics.reset()
         opt_fn = torch.compile()(vectoradd)
-        code = run_and_get_cpp_code(opt_fn, x, z)
-        FileCheck().check("void kernel").check("loadu").check("extension_device").run(
+        code = run_and_get_cpp_code(opt_fn, x, y)
+        FileCheck().check("void kernel").check("extension_device").run(
             code
         )
-        opt_fn(x, z)
-        res = opt_fn(x, z)
+        opt_fn(x, y)
+        res = opt_fn(x, y)
         self.assertEqual(ref, res.to(device="cpu"))
 
 

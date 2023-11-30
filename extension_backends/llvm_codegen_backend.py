@@ -19,10 +19,10 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
 class ExtensionOverrides(common.OpOverrides):
     pass
 
-class ExtensionKernel(common.Kernel):
+class ExtensionKernel(common.LLVM_Kernel):
     overrides = ExtensionOverrides
-    newvar_prefix = "auto "
-    suffix = ';'
+    newvar_prefix = ""
+    # suffix = ';'
     def __init__(self, args=None):
         super().__init__(args)
         self.call_ranges = None
@@ -38,23 +38,27 @@ class ExtensionKernel(common.Kernel):
         index = self.rename_indexing(index)
         var = self.args.input(name)
         ssa_num = var[-1]
-        line = f"{var}[{index}]"
+        # line = f"{var}[{index}]"
         dtype = V.graph.get_dtype(name)
         type_name = cpp.DTYPE_TO_CPP[dtype]
-        self.reduction_prefix.writeline(f'%arrayidx{ssa_num} = getelementptr inbounds {type_name}, ptr %{var}, i64 {index}') # TODO: index
-        self.reduction_prefix.writeline(f'%{ssa_num} = load {type_name}, ptr %arrayidx{ssa_num}, align 4') # TODO: align
-        self.cse.prefix = type_name + " "
+        # self.reduction_prefix.writeline(f'%arrayidx{ssa_num} = getelementptr inbounds {type_name}, ptr %{var}, i64 {index}') # TODO: index
+        # self.reduction_prefix.writeline(f'%{ssa_num} = load {type_name}, ptr %arrayidx{ssa_num}, align 4') # TODO: align
+        # self.cse.prefix = type_name + " "
+        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 {index}"
+        self.cse.generate(self.loads, line)
+        line = f"load {type_name}, ptr %{ssa_num}, align 4"
         return self.cse.generate(self.loads, line)
 
     def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
         index = self.rename_indexing(index)
         var = self.args.output(name)
         line = f"{var}[{index}] = {value}"
-        self.reduction_prefix.writeline(f"%arrayidx = getelementptr inbounds {cpp.DTYPE_TO_CPP[V.graph.get_dtype(name)]}, ptr %{var}, i64 {index}")
-        self.reduction_prefix.writeline(f"store {cpp.DTYPE_TO_CPP[V.graph.get_dtype(name)]} {value}, ptr %arrayidx, align 4") # TODO: ``index number, value
+        # self.reduction_prefix.writeline(f"%arrayidx = getelementptr inbounds {cpp.DTYPE_TO_CPP[V.graph.get_dtype(name)]}, ptr %{var}, i64 {index}")
+        # self.reduction_prefix.writeline(f"store {cpp.DTYPE_TO_CPP[V.graph.get_dtype(name)]} {value}, ptr %arrayidx, align 4") # TODO: ``index number, value
         self.cse.generate(self.stores, line, assignment = False)
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
+        raise NotImplementedError()
         argmax_or_argmin = reduction_type in {"argmax", "argmin"}
         if argmax_or_argmin:
             raise NotImplementedError() #TODO: argmin, argmax
@@ -72,6 +76,7 @@ class ExtensionKernel(common.Kernel):
         return acc
 
     def store_reduction(self, name, index, value):
+        raise NotImplementedError()
         index = self.rename_indexing(index)
         var = self.args.output(name)
         self.reduction_suffix.writeline(f"{var}[{index}] = {value};")
