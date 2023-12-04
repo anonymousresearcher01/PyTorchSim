@@ -192,6 +192,7 @@ class LoopLevel:
             line.writeline(f"{loop_var2} = load {self.INDEX_TYPE}, ptr {idx_var}, align 4")
             line.writeline(f"{loop_var3} = add nsw {self.INDEX_TYPE}, {loop_var2}, 1")
             line.writeline(f"store {self.INDEX_TYPE} {loop_var3}, ptr {idx_var}, align 4")
+            line.writeline(f"br label %for{loop_index}")
             line.writeline(f"\nfor.end{loop_index}:")
         return ctx()
 
