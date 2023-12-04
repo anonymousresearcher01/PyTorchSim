@@ -168,9 +168,10 @@ class LoopLevel:
 
     # Todo. Type change for reduction
     INDEX_TYPE = "i64"
+    INDEX_SIZE = 8
     def init_lines(self):
         idx_var = f"%idx{self.idx}"
-        return f"{idx_var} = alloca {self.INDEX_TYPE}, align 4"
+        return f"{idx_var} = alloca {self.INDEX_TYPE}, align {self.INDEX_SIZE}"
 
     def lines(self, line):
         loop_index = self.idx
@@ -181,17 +182,21 @@ class LoopLevel:
             loop_var2 = f"%loop.inc{loop_index}"
             loop_var3 = f"%inc{loop_index}"
             cmp_var = f"%cmp{loop_index}"
-            line.writeline(f"store {self.INDEX_TYPE} 0, ptr {idx_var}, align 4")
+            line.writeline(f"store {self.INDEX_TYPE} 0, ptr {idx_var}, align {self.INDEX_SIZE}")
+            line.writeline(f"br label %for{loop_index}")
+
             line.writeline(f"\nfor{loop_index}:")
-            line.writeline(f"{loop_var} = load {self.INDEX_TYPE}, ptr {idx_var}, align 4")
+            line.writeline(f"{loop_var} = load {self.INDEX_TYPE}, ptr {idx_var}, align {self.INDEX_SIZE}")
             line.writeline(f"{cmp_var} = icmp slt {self.INDEX_TYPE} {loop_var}, {self.size}")
             line.writeline(f"br i1 {cmp_var}, label %for.body{loop_index}, label %for.end{loop_index}")
+
             line.writeline(f"\nfor.body{loop_index}:")
             yield
+            line.writeline(f"br label %for.inc{loop_index}")
             line.writeline(f"\nfor.inc{loop_index}:")
-            line.writeline(f"{loop_var2} = load {self.INDEX_TYPE}, ptr {idx_var}, align 4")
-            line.writeline(f"{loop_var3} = add nsw {self.INDEX_TYPE}, {loop_var2}, 1")
-            line.writeline(f"store {self.INDEX_TYPE} {loop_var3}, ptr {idx_var}, align 4")
+            line.writeline(f"{loop_var2} = load {self.INDEX_TYPE}, ptr {idx_var}, align {self.INDEX_SIZE}")
+            line.writeline(f"{loop_var3} = add nsw {self.INDEX_TYPE} {loop_var2}, 1")
+            line.writeline(f"store {self.INDEX_TYPE} {loop_var3}, ptr {idx_var}, align {self.INDEX_SIZE}")
             line.writeline(f"br label %for{loop_index}")
             line.writeline(f"\nfor.end{loop_index}:")
         return ctx()
