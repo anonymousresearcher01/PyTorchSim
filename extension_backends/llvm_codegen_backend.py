@@ -170,14 +170,15 @@ class LoopLevel:
     INDEX_TYPE = "i64"
     INDEX_SIZE = 8
     def init_lines(self):
-        idx_var = f"%idx{self.idx}"
+        idx_var = f"%loop_idx{self.idx}"
         return f"{idx_var} = alloca {self.INDEX_TYPE}, align {self.INDEX_SIZE}"
 
-    def lines(self, line):
+    def lines(self, line, stride=1):
         loop_index = self.idx
         @contextlib.contextmanager
         def ctx():
-            idx_var = f"%idx{loop_index}"
+            idx_var = f"%loop_idx{loop_index}"
+            stride_var = f"%idx{loop_index}"
             loop_var = f"%loop{loop_index}"
             loop_var2 = f"%loop.inc{loop_index}"
             loop_var3 = f"%inc{loop_index}"
@@ -191,6 +192,7 @@ class LoopLevel:
             line.writeline(f"br i1 {cmp_var}, label %for.body{loop_index}, label %for.end{loop_index}")
 
             line.writeline(f"\nfor.body{loop_index}:")
+            line.writeline(f"{stride_var} = mul nsw {self.INDEX_TYPE} {loop_var}, {stride}")
             yield
             line.writeline(f"br label %for.inc{loop_index}")
             line.writeline(f"\nfor.inc{loop_index}:")
@@ -221,11 +223,21 @@ class LoopNest:
         loops[0].simd = loops[par_depth - 1].simd
 
     def codegen(self, code, stack):
+        size_list = []
+        stride_list = []
         for loop in self.loops:
+            stride_list.append(loop.size)
             code.writeline(loop.init_lines())
+        stride_list.append(1)
 
-        for loop in self.loops:
-            stack.enter_context(loop.lines(code))
+        var = 1
+        for sz in size_list[::-1]:
+            var = var * sz
+            stride_list.append(var)
+        stride_list = stride_list[::-1]
+
+        for loop, stride in zip(self.loops, stride_list):
+            stack.enter_context(loop.lines(code, stride=stride))
 
 class ExtensionScheduling(BaseScheduling):
     count = 0
