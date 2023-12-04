@@ -95,7 +95,7 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
     def codegen_loops(self):
         code = common.BracesBuffer()
         # Loop body part
-        loops = [LoopLevel(var, size) for var, size in zip(self.itervars, self.ranges)]
+        loops = [LoopLevel(var, size, idx) for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
         loops, reductions = [LoopNest(loops[: self.reduction_depth]),
                              LoopNest(loops[self.reduction_depth :])]
         reductions.mark_reduction(self.reduction_vars)
@@ -162,13 +162,38 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
 class LoopLevel:
     var: sympy.Expr
     size: sympy.Expr
+    idx: int
     reduction_vars: Dict[str, str] = None
 
     # Todo. Type change for reduction
-    INDEX_TYPE = "long"
-    def lines(self):
-        line = f"for({self.INDEX_TYPE} {self.var}=0; {self.var}<{cexpr(self.size)}; ++{self.var})"
-        return [line]
+    INDEX_TYPE = "i64"
+    def init_lines(self):
+        idx_var = f"%idx{self.idx}"
+        return f"{idx_var} = alloca {self.INDEX_TYPE}, align 4"
+
+    def lines(self, line):
+        loop_index = self.idx
+        @contextlib.contextmanager
+        def ctx():
+            idx_var = f"%idx{loop_index}"
+            loop_var = f"%loop{loop_index}"
+            loop_var2 = f"%loop.inc{loop_index}"
+            loop_var3 = f"%inc{loop_index}"
+            cmp_var = f"%cmp{loop_index}"
+            line.writeline(f"store {self.INDEX_TYPE} 0, ptr {idx_var}, align 4")
+            line.writeline(f"\nfor{loop_index}:")
+            line.writeline(f"{loop_var} = load {self.INDEX_TYPE}, ptr {idx_var}, align 4")
+            line.writeline(f"{cmp_var} = icmp slt {self.INDEX_TYPE} {loop_var}, {self.size}")
+            line.writeline(f"br i1 {cmp_var}, label %for.body{loop_index}, label %for.end{loop_index}")
+            line.writeline(f"\nfor.body{loop_index}:")
+            yield
+            line.writeline(f"\nfor.inc{loop_index}:")
+            line.writeline(f"{loop_var2} = load {self.INDEX_TYPE}, ptr {idx_var}, align 4")
+            line.writeline(f"{loop_var3} = add nsw {self.INDEX_TYPE}, {loop_var2}, 1")
+            line.writeline(f"store {self.INDEX_TYPE} {loop_var3}, ptr {idx_var}, align 4")
+            line.writeline(f"\nfor.end{loop_index}:")
+        return ctx()
+
 
 @dataclasses.dataclass
 class LoopNest:
@@ -190,8 +215,10 @@ class LoopNest:
 
     def codegen(self, code, stack):
         for loop in self.loops:
-            code.writelines(loop.lines())
-            stack.enter_context(code.indent())
+            code.writeline(loop.init_lines())
+
+        for loop in self.loops:
+            stack.enter_context(loop.lines(code))
 
 class ExtensionScheduling(BaseScheduling):
     count = 0
