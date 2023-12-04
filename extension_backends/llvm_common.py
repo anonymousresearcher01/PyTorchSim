@@ -199,7 +199,7 @@ class LLVM_Kernel(common.CodeGen):
                     # A load from an invalidated store requires us to
                     # keep the actual buffer around
                     V.kernel.must_keep_buffers.add(name)
-                if free_symbol_startswith(index, "tmp"):
+                if free_symbol_startswith(index, "%"):
                     return self.indirect_load(name, index)
                 store_cache = self.cse.store_cache
                 if name in store_cache:

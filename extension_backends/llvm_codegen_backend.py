@@ -17,7 +17,21 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
         super().__init__()
 
 class ExtensionOverrides(common.OpOverrides):
-    pass
+    """Map element-wise ops to LLVM IR"""
+
+    @staticmethod
+    def add(self, other):
+        return f'fadd float {self}, {other}' # TODO: separate float and integer
+
+    def sub(self, other):
+        return f'fsub float {self}, {other}'
+
+    def mul(self, operand1, operand2):
+        return f'fmul float {operand1}, {operand2}'
+
+    def div(self, operand1, operand2):
+        return f'fdiv float {operand1}, {operand2}'
+
 
 class ExtensionKernel(llvm_common.LLVM_Kernel):
     overrides = ExtensionOverrides
@@ -38,17 +52,17 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
         index = self.rename_indexing(index)
         var = self.args.input(name)
         dtype = V.graph.get_dtype(name)
-        type_name = cpp.DTYPE_TO_CPP[dtype]
+        type_name = llvm_common.DTYPE_TO_LLVM[dtype]
         line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{index}" # TODO: index for loop
         var = self.cse.generate(self.loads, line)
-        line = f"load {type_name}, ptr {var}, align 4"
+        line = f"load {type_name}, ptr {var}, align 4" # TODO: align 4 (float32 / 8bit)
         return self.cse.generate(self.loads, line)
 
     def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
         index = self.rename_indexing(index)
         var = self.args.output(name)
         dtype = V.graph.get_dtype(name)
-        type_name = cpp.DTYPE_TO_CPP[dtype]
+        type_name = llvm_common.DTYPE_TO_LLVM[dtype]
         line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{index}"
         var = self.cse.generate(self.stores, line)
         line = f"store {type_name} {value}, ptr {var}, align 4"
