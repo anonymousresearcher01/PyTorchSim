@@ -53,9 +53,13 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
         var = self.args.input(name)
         dtype = V.graph.get_dtype(name)
         type_name = llvm_common.DTYPE_TO_LLVM[dtype]
-        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{index}" # TODO: index for loop
+        align = llvm_common.DTYPE_SIZE[dtype]
+        line = f"%idxprom = load i64, ptr %idx{index}, align 8"
         var = self.cse.generate(self.loads, line)
-        line = f"load {type_name}, ptr {var}, align 4" # TODO: align 4 (float32 / 8bit)
+        line = f"%{var} = mul nsw i64 %idxprom, {align}"
+        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %idxprom{index}" # TODO: index for loop
+        var = self.cse.generate(self.loads, line)
+        line = f"load {type_name}, ptr {var}, align {align}"
         return self.cse.generate(self.loads, line)
 
     def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
@@ -63,7 +67,7 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
         var = self.args.output(name)
         dtype = V.graph.get_dtype(name)
         type_name = llvm_common.DTYPE_TO_LLVM[dtype]
-        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{index}"
+        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %idxprom{index}"
         var = self.cse.generate(self.stores, line)
         line = f"store {type_name} {value}, ptr {var}, align 4"
         self.cse.generate(self.stores, line, assignment = False)
