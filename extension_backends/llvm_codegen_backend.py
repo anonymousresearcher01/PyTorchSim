@@ -112,6 +112,7 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
                     code.splice(self.compute)
                     code.splice(self.stores)
                 code.splice(self.reduction_suffix)
+        code.writeline(f"ret void")
         return code
 
     def codegen_kernel(self, wrapper):
