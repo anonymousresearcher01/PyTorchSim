@@ -18,7 +18,7 @@ def reduction_alloc(code, stack, vars):
     REDUCTION_TYPE = "float"
     REDUCTION_SIZE = 4
     for var in vars:
-        line = f"{var} = alloca {REDUCTION_TYPE}, align {REDUCTION_SIZE}"
+        line = f"%{var} = alloca {REDUCTION_TYPE}, align {REDUCTION_SIZE}"
         code.writeline(line)
 
 def reduction_init(reduction_type, dtype):
@@ -27,16 +27,16 @@ def reduction_init(reduction_type, dtype):
         # constant for reduction must be promoted as well
         dtype = torch.float32
     if reduction_type in ("xor_sum", "sum", "any"):
-        return 0
+        return "0.0"
     if reduction_type == "prod":
-        return 1
+        return "1.0"
     raise AssertionError(reduction_type)
 
 def reduction_combine(reduction_type, var, next_value):
     if reduction_type == "sum":
-        return f"fadd float, {var}, {next_value}"
+        return f"fadd float %{var}, %{next_value}"
     if reduction_type == "prod":
-        return f"fmul float, {var}, {next_value}"
+        return f"fmul float %{var}, %{next_value}"
     if reduction_type == "xor_sum":
         raise NotImplementedError() # TODO: implement
     if reduction_type == "any":
@@ -130,9 +130,9 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
         align = llvm_common.DTYPE_SIZE[dtype]
         line = f"mul nsw i64 %{index}, {align}"
         offset = self.cse.generate(self.loads, line)
-        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 {offset}" # TODO: index for loop
+        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{offset}" # TODO: index for loop
         var = self.cse.generate(self.loads, line)
-        line = f"load {type_name}, ptr {var}, align {align}"
+        line = f"load {type_name}, ptr %{var}, align {align}"
         return self.cse.generate(self.loads, line)
 
     def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
@@ -144,9 +144,9 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
         align = llvm_common.DTYPE_SIZE[dtype]
         line = f"mul nsw i64 %{index}, {align}"
         offset = self.cse.generate(self.loads, line)
-        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 {offset}"
+        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{offset}"
         var = self.cse.generate(self.stores, line)
-        line = f"store {type_name} {value}, ptr {var}, align {align}"
+        line = f"store {type_name} {value}, ptr %{var}, align {align}"
         self.cse.generate(self.stores, line, assignment = False)
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
@@ -161,28 +161,29 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
             self.reduction_vars[acc] = reduction_type
             type_name = llvm_common.DTYPE_TO_LLVM[dtype]
             align = llvm_common.DTYPE_SIZE[dtype]
-            self.reduction_prefix.writeline(f"store {type_name} {reduction_init(reduction_type, dtype)}, ptr {acc}, align {align}")
-            line = f"load {type_name}, ptr {acc}, align {align}"
+            self.reduction_prefix.writeline(f"store {type_name} {reduction_init(reduction_type, dtype)}, ptr %{acc}, align {align}")
+            line = f"load {type_name}, ptr %{acc}, align {align}"
             temp = self.cse.generate(self.loads, line)
             output = self.cse.generate(self.stores, reduction_combine(reduction_type, temp, value))
-            line = f"store {type_name} {output}, ptr {acc}, align {align}"
+            line = f"store {type_name} %{output}, ptr %{acc}, align {align}"
             self.cse.generate(self.stores, line, assignment = False)
             self.reduction_cse.reduction_cache[reduction_key] = acc
         return acc
 
     def store_reduction(self, name, index, value):
         index = self.rename_indexing(index)
+        index = self.depth_first_traverse(index, self.reduction_suffix)
         var = self.args.output(name)
         dtype = V.graph.get_dtype(name)
         type_name = llvm_common.DTYPE_TO_LLVM[dtype]
         align = llvm_common.DTYPE_SIZE[dtype]
-        line = f"load {type_name}, ptr {value}, align {align}"
+        line = f"load {type_name}, ptr %{value}, align {align}"
         value = self.reduction_cse.generate(self.reductions_suffix, line)
         line = f"mul nsw i64 %{index}, {align}"
         offset = self.cse.generate(self.reductions_suffix, line)
-        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 {offset}"
+        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{offset}"
         var = self.cse.generate(self.reductions_suffix, line)
-        line = f"store {type_name} {value}, ptr {var}, align {align}"
+        line = f"store {type_name} %{value}, ptr %{var}, align {align}"
         self.cse.generate(self.reductions_suffix, line, assignment = False)
 
     def codegen_loops(self):

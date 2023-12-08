@@ -94,8 +94,8 @@ class LLVMKernelArgs(common.KernelArgs):
 
 
 class LLVM_Kernel(common.CodeGen):
-    newvar_prefix = ""
-    name_prefix = "%body"
+    newvar_prefix = "%"
+    name_prefix = "body"
     suffix = ""
     overrides = None
     load_format = None
