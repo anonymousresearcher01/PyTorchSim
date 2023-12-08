@@ -143,7 +143,7 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
         type_name = llvm_common.DTYPE_TO_LLVM[dtype]
         align = llvm_common.DTYPE_SIZE[dtype]
         line = f"mul nsw i64 %{index}, {align}"
-        offset = self.cse.generate(self.loads, line)
+        offset = self.cse.generate(self.stores, line)
         line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{offset}"
         var = self.cse.generate(self.stores, line)
         line = f"store {type_name} {value}, ptr %{var}, align {align}"
