@@ -48,6 +48,11 @@ DTYPE_SIZE = {
     torch.bfloat16: 2,
 }
 
+DTYPE_LOWP_FP = [
+    torch.bfloat16,
+    torch.float16,
+]
+
 class LLVMKernelArgs(common.KernelArgs):
     def llvm_argdefs(self):
         buffer_types = {x.get_name(): x.get_dtype() for x in V.graph.buffers}
@@ -103,6 +108,7 @@ class LLVM_Kernel(common.CodeGen):
         self.loads = IndentedBuffer()
         self.compute = IndentedBuffer()
         self.stores = IndentedBuffer()
+        self.reductions_suffix = IndentedBuffer()
         self.cse = common.CSE(self.newvar_prefix, self.suffix, self.name_prefix)
         self.must_keep_buffers = set()
         self.store_buffer_names = set()

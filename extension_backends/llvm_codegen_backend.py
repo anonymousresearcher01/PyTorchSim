@@ -3,6 +3,7 @@ import contextlib
 from typing import List
 from typing import Set
 from typing import Dict
+import torch
 from torch._inductor.codegen import cpp, wrapper, common
 from . import llvm_common
 from torch._inductor.scheduler import BaseScheduling
@@ -11,6 +12,42 @@ from torch._inductor.utils import IndentedBuffer
 import sympy
 
 cexpr = cpp.CppPrinter().doprint
+
+def reduction_alloc(code, stack, vars):
+    # FIXME. USE VARIABLES' TYPE...
+    REDUCTION_TYPE = "float"
+    REDUCTION_SIZE = 4
+    for var in vars:
+        line = f"{var} = alloca {REDUCTION_TYPE}, align {REDUCTION_SIZE}"
+        code.writeline(line)
+
+def reduction_init(reduction_type, dtype):
+    if dtype in cpp.DTYPE_LOWP_FP:
+        # Since load promotes all half-precision inputs to float, the initial
+        # constant for reduction must be promoted as well
+        dtype = torch.float32
+    if reduction_type in ("xor_sum", "sum", "any"):
+        return 0
+    if reduction_type == "prod":
+        return 1
+    raise AssertionError(reduction_type)
+
+def reduction_combine(reduction_type, var, next_value):
+    if reduction_type == "sum":
+        return f"fadd float, {var}, {next_value}"
+    if reduction_type == "prod":
+        return f"fmul float, {var}, {next_value}"
+    if reduction_type == "xor_sum":
+        raise NotImplementedError() # TODO: implement
+    if reduction_type == "any":
+        raise NotImplementedError()
+    if reduction_type in ("min", "max"):
+        raise NotImplementedError()
+    if reduction_type == "welford_reduce":
+        raise NotImplementedError()
+    if reduction_type == "welford_combine":
+        raise NotImplementedError()
+    raise AssertionError(reduction_type)
 
 class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
     def __init__(self):
@@ -46,7 +83,7 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
         self.reduction_prefix = IndentedBuffer()
         self.reduction_suffix = IndentedBuffer()
         self.reduction_vars = {}
-        self.reduction_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_acc")
+        self.reduction_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="%tmp_acc")
 
     def load(self, name: str, index: sympy.Expr):
         index = self.rename_indexing(index)
@@ -75,7 +112,6 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
         self.cse.generate(self.stores, line, assignment = False)
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
-        raise NotImplementedError()
         argmax_or_argmin = reduction_type in {"argmax", "argmin"}
         if argmax_or_argmin:
             raise NotImplementedError() #TODO: argmin, argmax
@@ -85,18 +121,31 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
                 self.loads, f"reduction {reduction_key}", write=False
             )
             self.reduction_vars[acc] = reduction_type
-            acc_type = cpp.reduction_acc_type(reduction_type, dtype)
-            self.reduction_prefix.writeline(f"{acc_type} {acc} = {cpp.reduction_init(reduction_type, dtype)};")
-            line = f"{acc} = {cpp.reduction_combine(reduction_type, acc, value)}"
+            type_name = llvm_common.DTYPE_TO_LLVM[dtype]
+            align = llvm_common.DTYPE_SIZE[dtype]
+            self.reduction_prefix.writeline(f"store {type_name} {reduction_init(reduction_type, dtype)}, ptr {acc}, align {align}")
+            line = f"load {type_name}, ptr {acc}, align {align}"
+            temp = self.cse.generate(self.loads, line)
+            output = self.cse.generate(self.stores, reduction_combine(reduction_type, temp, value))
+            line = f"store {type_name} {output}, ptr {acc}, align {align}"
             self.cse.generate(self.stores, line, assignment = False)
             self.reduction_cse.reduction_cache[reduction_key] = acc
         return acc
 
     def store_reduction(self, name, index, value):
-        raise NotImplementedError()
         index = self.rename_indexing(index)
         var = self.args.output(name)
-        self.reduction_suffix.writeline(f"{var}[{index}] = {value};")
+        dtype = V.graph.get_dtype(name)
+        type_name = llvm_common.DTYPE_TO_LLVM[dtype]
+        align = llvm_common.DTYPE_SIZE[dtype]
+        line = f"load {type_name}, ptr {value}, align {align}"
+        value = self.reduction_cse.generate(self.reductions_suffix, line)
+        line = f"mul nsw i64 %{index}, {align}"
+        offset = self.cse.generate(self.reductions_suffix, line)
+        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 {offset}"
+        var = self.cse.generate(self.reductions_suffix, line)
+        line = f"store {type_name} {value}, ptr {var}, align {align}"
+        self.cse.generate(self.reductions_suffix, line, assignment = False)
 
     def codegen_loops(self):
         code = common.BracesBuffer()
@@ -107,17 +156,17 @@ class ExtensionKernel(llvm_common.LLVM_Kernel):
         reductions.mark_reduction(self.reduction_vars)
 
         with contextlib.ExitStack() as stack:
+            if self.reduction_vars:
+                reduction_alloc(code, stack, self.reduction_vars)
             loops.codegen(code, stack)
             with contextlib.ExitStack() as stack_outer:
-                if self.reduction_prefix:
-                    stack_outer.enter_context(code.indent())
                 code.splice(self.reduction_prefix)
                 with contextlib.ExitStack() as stack:
                     reductions.codegen(code, stack)
                     code.splice(self.loads)
                     code.splice(self.compute)
                     code.splice(self.stores)
-                code.splice(self.reduction_suffix)
+                code.splice(self.reductions_suffix)
         code.writeline(f"ret void")
         return code
 

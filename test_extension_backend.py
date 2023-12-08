@@ -130,14 +130,17 @@ class ExtensionBackendTests(TestCase):
         def vectoradd(a, b):
             return a + b
 
+        def reduce_sum(a):
+            return torch.sum(a, axis=-1)
+
         metrics.reset()
-        opt_fn = torch.compile()(vectoradd)
-        code = run_and_get_cpp_code(opt_fn, x, y)
+        opt_fn = torch.compile()(reduce_sum)
+        code = run_and_get_cpp_code(opt_fn, x)
         FileCheck().check("void kernel").check("extension_device").run(
             code
         )
-        opt_fn(x, y)
-        res = opt_fn(x, y)
+        opt_fn(x)
+        res = opt_fn(x)
         self.assertEqual(ref, res.to(device="cpu"))
 
 
