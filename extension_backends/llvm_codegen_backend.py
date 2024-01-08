@@ -398,6 +398,7 @@ class LoopLevel:
         def ctx():
             entry_label = f"entry{loop_index}"
             for_body_label = f"for.body{loop_index}"
+            for_inc_label = f"for.inc{loop_index}"
             for_end_label = f"for.end{loop_index}"
 
             index = f"%index{loop_index}"
@@ -409,8 +410,10 @@ class LoopLevel:
             line.writeline(f"br label %{for_body_label}")
 
             line.writeline(f"\n{for_body_label}:")
-            line.writeline(f"{index} = phi {self.INDEX_TYPE} [ {self.start}, %{entry_label} ], [ {index_next}, %{for_body_label} ]")
+            line.writeline(f"{index} = phi {self.INDEX_TYPE} [ {self.start}, %{entry_label} ], [ {index_next}, %{for_inc_label} ]")
             yield
+            line.writeline(f"br label %{for_inc_label}")
+            line.writeline(f"\n{for_inc_label}:")
             line.writeline(f"{index_next} = add nsw {self.INDEX_TYPE} {index}, {stride}")
             line.writeline(f"{cmp_var} = icmp eq {self.INDEX_TYPE} {index_next}, {self.size}")
             line.writeline(f"br i1 {cmp_var}, label %{for_end_label}, label %{for_body_label}")
