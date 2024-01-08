@@ -202,12 +202,12 @@ class BaseLLVMKernel(common.CodeGen):
 
                     if isinstance(args[0], list):
                         vector_args = (args[0][0], args[1][0])
-                        csevar = self.vector_cse.generate(
+                        vector_csevar = self.vector_cse.generate(
                             self.vector_compute,
                             getattr(parent_handler, "vector_" + name)(*vector_args, **kwargs),  # type: ignore[has-type]
                             bounds=buf_bounds,
                         )
-                        csevar.update_on_args(name, vector_args, kwargs)
+                        vector_csevar.update_on_args(name, vector_args, kwargs)
                         args = (args[0][1], args[1][1])
                     csevar = self.cse.generate(
                         self.compute,
@@ -215,6 +215,8 @@ class BaseLLVMKernel(common.CodeGen):
                         bounds=buf_bounds,
                     )
                     csevar.update_on_args(name, args, kwargs)
+                    if vector_csevar is not None:
+                        return [vector_csevar, csevar]
                     return csevar
 
                 return inner
