@@ -49,6 +49,23 @@ def reduction_combine(reduction_type, var, next_value):
         raise NotImplementedError()
     raise AssertionError(reduction_type)
 
+def vector_reduction_combine(reduction_type, start_value, vector_value):
+    if reduction_type == "sum":
+        return f"tail call float @llvm.vector.reduce.fadd.nxv2f32(float %{start_value}, <vscale x 2 x float> %{vector_value})"
+    if reduction_type == "prod":
+        return f"tail call float @llvm.vector.reduce.fmul.nxv2f32(float %{start_value}, <vscale x 2 x float> %{vector_value})"
+    if reduction_type == "xor_sum":
+        raise NotImplementedError() # TODO: implement
+    if reduction_type == "any":
+        raise NotImplementedError()
+    if reduction_type in ("min", "max"):
+        raise NotImplementedError()
+    if reduction_type == "welford_reduce":
+        raise NotImplementedError()
+    if reduction_type == "welford_combine":
+        raise NotImplementedError()
+    raise AssertionError(reduction_type)
+
 class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
     def __init__(self):
         super().__init__()
@@ -185,7 +202,9 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
             align = llvm_common.DTYPE_SIZE[dtype]
             self.reduction_prefix.writeline(f"store {type_name} {reduction_init(reduction_type, dtype)}, ptr %{acc}, align {align}")
             line = f"load {type_name}, ptr %{acc}, align {align}"
-            temp = self.cse.generate(self.loads, line)
+
+            # NOTE. To keep below line be under the compute, used store buffers
+            temp = self.cse.generate(self.stores, line)
             output = self.cse.generate(self.stores, reduction_combine(reduction_type, temp, value))
             line = f"store {type_name} %{output}, ptr %{acc}, align {align}"
             self.cse.generate(self.stores, line, assignment = False)
@@ -290,6 +309,7 @@ class VectorizedLLVMKernel(LLVMKernel):
         self.vector_stores = IndentedBuffer()
         self.vector_index_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_vec_idx")
         self.vector_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="vector_body")
+        self.vector_reduction_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_acc")
 
     def load(self, name: str, index: sympy.Expr):
         scalar_var = super().load(name, index)
@@ -330,41 +350,25 @@ class VectorizedLLVMKernel(LLVMKernel):
         self.vector_cse.generate(self.vector_stores, line, assignment = False)
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
+        super().reduction(dtype, src_dtype, reduction_type, value[1])
         argmax_or_argmin = reduction_type in {"argmax", "argmin"}
         if argmax_or_argmin:
             raise NotImplementedError() #TODO: argmin, argmax
         else:
             reduction_key = src_dtype, reduction_type, value
-            acc = self.reduction_cse.generate(
+            acc = self.vector_reduction_cse.generate(
                 self.loads, f"reduction {reduction_key}", write=False
             )
-            self.reduction_vars[acc] = reduction_type
             type_name = llvm_common.DTYPE_TO_LLVM[dtype]
             align = llvm_common.DTYPE_SIZE[dtype]
-            self.reduction_prefix.writeline(f"store {type_name} {reduction_init(reduction_type, dtype)}, ptr %{acc}, align {align}")
             line = f"load {type_name}, ptr %{acc}, align {align}"
-            temp = self.cse.generate(self.loads, line)
-            output = self.cse.generate(self.stores, reduction_combine(reduction_type, temp, value))
-            line = f"store {type_name} %{output}, ptr %{acc}, align {align}"
-            self.cse.generate(self.stores, line, assignment = False)
-            self.reduction_cse.reduction_cache[reduction_key] = acc
-        return acc
 
-    def store_reduction(self, name, index, value):
-        index = self.rename_indexing(index)
-        index = self.depth_first_traverse(index, self.reduction_suffix, self.vector_index_cse)
-        var = self.args.output(name)
-        dtype = V.graph.get_dtype(name)
-        type_name = llvm_common.DTYPE_TO_LLVM[dtype]
-        align = llvm_common.DTYPE_SIZE[dtype]
-        line = f"load {type_name}, ptr %{value}, align {align}"
-        value = self.reduction_cse.generate(self.reductions_suffix, line)
-        line = f"mul nsw i64 %{index}, {align}"
-        offset = self.cse.generate(self.reductions_suffix, line)
-        line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{offset}"
-        var = self.cse.generate(self.reductions_suffix, line)
-        line = f"store {type_name} %{value}, ptr %{var}, align {align}"
-        self.cse.generate(self.reductions_suffix, line, assignment = False)
+            # NOTE. To keep lines below under the compute lines, used store buffers
+            temp = self.vector_cse.generate(self.vector_stores, line)
+            output = self.vector_cse.generate(self.vector_stores, vector_reduction_combine(reduction_type, temp, value[0]))
+            line = f"store {type_name} %{output}, ptr %{acc}, align {align}"
+            self.vector_cse.generate(self.vector_stores, line, assignment = False)
+        return acc
 
     def codegen_loops(self):
         code = common.BracesBuffer()
