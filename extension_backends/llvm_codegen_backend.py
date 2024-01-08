@@ -115,7 +115,7 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
             first_prefix = "" if first.is_number else "%"
             second_prefix = "" if second.is_number else "%"
             line = f"{SYMPY_TO_LLVM[expr.func]} nsw i64 {first_prefix}{first}, {second_prefix}{second}"
-            var = self.index_cse.generate(buffer, line)
+            var = cse.generate(buffer, line)
             var = sympy.symbols(f"{var}")
             return var
         else:
@@ -224,6 +224,12 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
             # Loop body part
             code.splice(self.codegen_loops())
 
+        # Add llvm intrinsics definition
+        code.writeline(f'declare i64 @llvm.vscale.i64() #2')
+        code.writeline(f'declare i32 @llvm.vscale.i32() #2')
+        code.writeline(f'declare i64 @llvm.umax.i64(i64, i64) #1')
+        code.writeline(f'declare i32 @llvm.umax.i32(i32, i32) #1')
+
         codecache_def = IndentedBuffer()
         if not V.graph.cpp_wrapper:
             codecache_def.writeline("async_compile.cpp('''")
@@ -260,12 +266,12 @@ class VectorizedLLVMKernel(LLVMKernel):
         self.vector_compute = IndentedBuffer()
         self.vector_stores = IndentedBuffer()
         self.vector_index_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_vec_idx")
-        self.vector_cse = common.CSE(self.newvar_prefix, self.suffix, self.name_prefix)
+        self.vector_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="vector_body")
 
     def load(self, name: str, index: sympy.Expr):
         super().load(name, index)
         index = self.rename_indexing(index)
-        index = index.replace(sympy.symbols("index0"), sympy.symbols("vector.index0"))
+        index = index.replace(sympy.symbols(f"index{len(self.itervars)-1}"), sympy.symbols(f"vector.index{len(self.itervars)-1}"))
         index = self.depth_first_traverse(index, self.vector_loads, self.vector_index_cse)
         var = self.args.input(name)
         dtype = V.graph.get_dtype(name)
@@ -283,7 +289,7 @@ class VectorizedLLVMKernel(LLVMKernel):
     def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
         super().store(name, index, value, *args, **kwargs)
         index = self.rename_indexing(index)
-        index = index.replace(sympy.symbols("index0"), sympy.symbols("vector.index0"))
+        index = index.replace(sympy.symbols(f"index{len(self.itervars)-1}"), sympy.symbols(f"vector.index{len(self.itervars)-1}"))
         index = self.depth_first_traverse(index, self.vector_stores, self.vector_index_cse)
         var = self.args.output(name)
         dtype = V.graph.get_dtype(name)
@@ -362,13 +368,13 @@ class VectorizedLLVMKernel(LLVMKernel):
                 with contextlib.ExitStack() as stack_inner:
                     inner_most.codegen(code,stack_inner)
                     code.splice(self.vector_loads)
-                    code.splice(self.compute)
+                    # TODO. code.splice(self.compute)
                     code.splice(self.vector_stores)
 
                 with contextlib.ExitStack() as stack_inner:
                     inner_most_scalar.codegen(code, stack_inner)
                     code.splice(self.loads)
-                    code.splice(self.compute)
+                    code.splice(self.compute) #FIXME. replace scalar computes!
                     code.splice(self.stores)
                 code.splice(self.reductions_suffix)
         code.writeline(f"ret void")
@@ -398,6 +404,7 @@ class LoopLevel:
             index_next = f"%index.next{loop_index}"
             cmp_var = f"%cmp{loop_index}"
 
+            line.writeline(f"br label %{entry_label}")
             line.writeline(f"\n{entry_label}:")
             line.writeline(f"br label %{for_body_label}")
 
@@ -406,7 +413,7 @@ class LoopLevel:
             yield
             line.writeline(f"{index_next} = add nsw {self.INDEX_TYPE} {index}, {stride}")
             line.writeline(f"{cmp_var} = icmp eq {self.INDEX_TYPE} {index_next}, {self.size}")
-            line.writeline(f"br i1 {cmp_var}, label, %{for_end_label}, label %{for_body_label}")
+            line.writeline(f"br i1 {cmp_var}, label %{for_end_label}, label %{for_body_label}")
 
             line.writeline(f"\n{for_end_label}:")
         return ctx()
@@ -431,7 +438,7 @@ class VectorLoopLevel(LoopLevel):
             middle_label = f"middle.block{loop_index}"
             preheader_label = f"vector.for.body.preheader{loop_index}"
             for_body_label = f"vector.for.body{loop_index}"
-            func_ret_label = f"vector.for.end{loop_index}"
+            func_ret_label = f"for.end{loop_index}"
 
             # Variable definition
             entry_var0 = f"%entry_var.0"
@@ -452,6 +459,7 @@ class VectorLoopLevel(LoopLevel):
             scalar_condition = f"%scalar.condition"
             scalar_index_ph = f"%scalar.index.ph"
 
+            line.writeline(f"br label %{entry_label}")
             line.writeline(f"\n{entry_label}:")
             line.writeline(f"{entry_var0} = tail call {self.INDEX_TYPE} @llvm.vscale.{self.INDEX_TYPE}()")
             line.writeline(f"{entry_var1} = shl nuw nsw {self.INDEX_TYPE} {entry_var0}, 2")
@@ -462,28 +470,29 @@ class VectorLoopLevel(LoopLevel):
             # Vector loop body part
             line.writeline(f"\n{ph_label}:")
             line.writeline(f"{ph_var0} = tail call {self.INDEX_TYPE} @llvm.vscale.{self.INDEX_TYPE}()")
-            line.writeline(f"{ph_var1} = shl nuw nsw {self.INDEX_TYPE}, 2") # FIXME. 2 is hardcoded...
-            line.writeline(f"{ph_mod} = urem {self.INDEX_TYPE} {ph_var1}")
+            line.writeline(f"{ph_var1} = shl nuw nsw {self.INDEX_TYPE} {ph_var0}, 2") # FIXME. 2 is hardcoded...
+            line.writeline(f"{ph_mod} = urem {self.INDEX_TYPE} {self.size}, {ph_var1}")
             line.writeline(f"{ph_vec} = sub nuw nsw {self.INDEX_TYPE} {self.size}, {ph_mod}")
             line.writeline(f"{ph_stride0} = tail call {self.DATA_TYPE} @llvm.vscale.{self.DATA_TYPE}()")
             line.writeline(f"{ph_stride1} = shl nuw nsw {self.DATA_TYPE} {ph_stride0}, 1")
             line.writeline(f"{ph_stride2} = zext {self.DATA_TYPE} {ph_stride1} to {self.INDEX_TYPE}")
 
+            line.writeline(f"br label %{vector_body_label}")
             line.writeline(f"\n{vector_body_label}:")
-            line.writeline(f"{idx} = phi {self.INDEX_TYPE} [ 0, {ph_label} ], [ {idx_next}, {vector_body_label} ]")
+            line.writeline(f"{idx} = phi {self.INDEX_TYPE} [ 0, %{ph_label} ], [ {idx_next}, %{vector_body_label} ]")
             yield
 
             # Increment & condition check part
-            line.writeline(f"{idx_next} = add nuw {self.INDEX_TYPE} %index, {ph_stride2}")
+            line.writeline(f"{idx_next} = add nuw {self.INDEX_TYPE} {idx}, {ph_stride2}")
             line.writeline(f"{loop_condition} = icmp eq {self.INDEX_TYPE} {idx_next}, {ph_vec}")
-            line.writeline(f"br i1 {loop_condition}, %label {middle_label}, %label {vector_body_label}")
+            line.writeline(f"br i1 {loop_condition}, label %{middle_label}, label %{vector_body_label}")
 
             line.writeline(f"\n{middle_label}:")
             line.writeline(f"{scalar_condition} = icmp eq {self.INDEX_TYPE} {ph_mod}, 0")
-            line.writeline(f"br i1 {scalar_condition}, %label {func_ret_label}, %label {preheader_label}")
+            line.writeline(f"br i1 {scalar_condition}, label %{func_ret_label}, label %{preheader_label}")
 
             line.writeline(f"\n{preheader_label}:")
-            line.writeline(f"{scalar_index_ph} = phi {self.INDEX_TYPE} [ 0, {entry_label} ], [ {ph_vec}, {middle_label} ]")
+            line.writeline(f"{scalar_index_ph} = phi {self.INDEX_TYPE} [ 0, %{entry_label} ], [ {ph_vec}, %{middle_label} ]")
         return ctx()
 
 
