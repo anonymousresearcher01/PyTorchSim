@@ -11,8 +11,6 @@ from torch._inductor.virtualized import V
 from torch._inductor.utils import IndentedBuffer
 import sympy
 
-cexpr = cpp.CppPrinter().doprint
-
 tile_size = 16 # FIXME. hard coded
 tile_row = 4 # FIXME. hard coded
 tile_col = 4 # FIXME. hard coded
@@ -295,6 +293,13 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
         code.writeline(f"ret void")
         return code
 
+    def define_kernel(self, wrapper, src_code, kernel_name):
+        if src_code in wrapper.src_to_kernel:
+            kernel_name = wrapper.src_to_kernel[src_code]
+        else:
+            wrapper.src_to_kernel[src_code] = kernel_name
+            wrapper.define_kernel(kernel_name, src_code, cuda=False)
+
     def codegen_kernel(self, wrapper):
         arg_defs, call_args = self.args.llvm_argdefs()
         arg_defs = ",\n".ljust(25).join(arg_defs)
@@ -322,12 +327,15 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
 
         codecache_def = IndentedBuffer()
         if not V.graph.cpp_wrapper:
-            codecache_def.writeline("async_compile.cpp('''")
+            codecache_def.writeline("custom_async_compile.llvm('''")
         codecache_def.splice(code)
         if not V.graph.cpp_wrapper:
             codecache_def.writeline("''')")
 
-        wrapper.define_kernel(kernel_name, codecache_def.getvalue(), cuda=False)
+        wrapper.add_import_once(f'\nfrom extension_codecache import CustomAsyncCompile')
+        wrapper.add_import_once(f'\ncustom_async_compile = CustomAsyncCompile()')
+
+        self.define_kernel(wrapper, codecache_def.getvalue(), kernel_name)
         # generate the code to call this
         wrapper.generate_kernel_call(kernel_name, call_args, cuda=False)
         print(code.getvalue())
