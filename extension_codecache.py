@@ -7,11 +7,13 @@ import subprocess
 
 import torch
 from torch._inductor.codecache import AsyncCompile, get_lock_dir, get_hash, write
+from AsmParser.riscv_parser import riscv_parser
 
 LOCK_TIMEOUT = 600
 TORCHSIM_DUMP_PATH = os.environ.get('TORCHSIM_DUMP_PATH',
                         default = f"{tempfile.gettempdir()}/torchinductor_{getpass.getuser()}")
 TORCHSIM_DUMP_FILE = int(os.environ.get('TORCHSIM_DUMP_FILE', default="True") == "True")
+TORCHSIM_LLVM_PATH = os.environ.get('TORCHSIM_LLVM_PATH', default="/usr/bin")
 
 def hash_prefix(hash_value):
     return hash_value[1:5]
@@ -54,12 +56,12 @@ def llvm_compile_command(input, output):
     opt_output = f"{input[:-3]}_opt.ll"
     return [re.sub(r"[ \n]+", " ",
         f"""
-            opt -march=riscv64 -passes=lower-matrix-intrinsics {input} -o {opt_output}
+            {TORCHSIM_LLVM_PATH}/opt -march=riscv64 -passes=lower-matrix-intrinsics {input} -o {opt_output}
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v -O2 {opt_output} -o {output}
+            {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v -O2 {opt_output} -o {output}
         """,
     ).strip()]
 
@@ -92,6 +94,13 @@ class LLVMCodeCache:
                     subprocess.check_call(llc_cmd)
                 except subprocess.CalledProcessError as e:
                     assert(0)   # Todo: make LLVMCompileError
+
+                # launch tile graph generator
+                tile_graph_generator = riscv_parser()
+                tile_graph_generator.load_file(output_path)
+                if TORCHSIM_DUMP_FILE:
+                    tile_graph_generator.dump_basic_block_graph(os.path.join(write_path, "basic_block.onnx"))
+                tile_graph_generator.cycle_analysis(name=os.path.join(write_path, "tile_graph"))
             else:
                 pass
         return key

@@ -1,7 +1,11 @@
 from collections import OrderedDict
 from itertools import chain
 import onnx
-from onnx_utility import loop_index_node, load_node, store_node, compute_node, connect_nodes, dump_onnx_graph
+if __name__ == "__main__":
+    from onnx_utility import loop_index_node, load_node, store_node, compute_node, connect_nodes, dump_onnx_graph
+else:
+    from AsmParser.onnx_utility import loop_index_node, load_node, store_node, compute_node, connect_nodes, dump_onnx_graph
+
 
 # Operand Attributes
 MEM =       0x400
@@ -61,7 +65,7 @@ R32_INSTUCTION_TEMPLATE = {
     "xori": I_TEMPLATE,
     "ori": I_TEMPLATE,
     "andi": I_TEMPLATE,
-    "lui": I_TEMPLATE,
+    "lui": RI_TEMPLATE,
     "slli": I_TEMPLATE,
     "srli": I_TEMPLATE,
     "srai": I_TEMPLATE,
@@ -407,6 +411,13 @@ SUPPORTED_INSTRUCTION = [
     VECTOR_INSTRUCTION_TEMPLATE
 ]
 
+ATTRIBUTE_LIST = [
+    ".text", ".data", ".rodata", ".bss", ".comm", "common", ".section", ".option",
+    ".file", ".ident", ".size", ".type", ".globl", ".global", ".local", ".equ", ".align", ".balign",
+    ".p2align", ".2byte", ".4byte", ".8byte", ".half", ".word", ".dword", ".byte", ".asciz",
+    ".string", ".incbin", ".zero", ".cfi_startproc", ".cfi_endproc", ".attribute"
+]
+
 BRANCHES = ["beq", "bne", "blt", "bge", "bltu", "bgeu",
             "beqz", "bnez", "blez", "bgez", "bltz", "bgtz",
             "bgt", "ble", "bgtu", "bleu",
@@ -414,8 +425,8 @@ BRANCHES = ["beq", "bne", "blt", "bge", "bltu", "bgeu",
 
 UNCONDITIONAL_JUMP = ["j", "ret"]
 
-DRAM_LOAD = ["vl2re32.v"]
-DRAM_STORE = ["vs2r.v"]
+DRAM_LOAD = ["vl2re32.v", "vle32.v"]
+DRAM_STORE = ["vs2r.v", "vse32.v"]
 
 class rv_operand:
     def __init__(self, op_type, value) -> None:
@@ -525,6 +536,14 @@ class rv_instruction:
                 return True
         return False
 
+    @classmethod
+    def is_attribute(cls, assembly_code:str):
+        target_list = cls.split_assembly(assembly_code)
+
+        if not len(target_list) or target_list[0] in ATTRIBUTE_LIST:
+            return True
+        return False
+
     def __str__(self) -> str:
         join_str = "\n\t"
         operand_str = [str(op) for op in self.operands]
@@ -619,7 +638,7 @@ class riscv_parser:
         self.cycle_list = []
 
     def load_file(self, name):
-        f = open("vectoradd.s")
+        f = open(name)
         asm_lines = f.readlines()[1:]
 
         label = ""
@@ -627,8 +646,16 @@ class riscv_parser:
             if rv_instruction.is_label(asm_line):
                 label = rv_instruction.split_assembly(asm_line)[0][:-1]
                 continue
+
+            if rv_instruction.is_attribute(asm_line):
+                continue
+
             self.inst_list.append(rv_instruction(label, asm_line))
             label = ""
+
+        # Run default analysis pass
+        self.basic_block_analysis()
+        self.cycle_detect_analysis()
 
     def basic_block_analysis(self):
         # Construct Basic Block
@@ -747,8 +774,6 @@ if __name__ == "__main__":
     parser = riscv_parser()
     parser.load_file("vectoradd.s")
 
-    parser.basic_block_analysis()
     parser.dump_basic_block_graph("basic_block.onnx")
-    parser.cycle_detect_analysis()
     parser.print_cycles()
     parser.cycle_analysis()
