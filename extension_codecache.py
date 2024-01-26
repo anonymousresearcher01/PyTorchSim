@@ -14,6 +14,7 @@ TORCHSIM_DUMP_PATH = os.environ.get('TORCHSIM_DUMP_PATH',
                         default = f"{tempfile.gettempdir()}/torchinductor_{getpass.getuser()}")
 TORCHSIM_DUMP_FILE = int(os.environ.get('TORCHSIM_DUMP_FILE', default="True") == "True")
 TORCHSIM_LLVM_PATH = os.environ.get('TORCHSIM_LLVM_PATH', default="/usr/bin")
+TORCHSIM_CUSTOM_PASS_PATH = os.environ.get('TORCHSIM_CUSTOM_PASS_PATH', default="./GemminiLowerPass/build")
 
 def hash_prefix(hash_value):
     return hash_value[1:5]
@@ -56,7 +57,7 @@ def llvm_compile_command(input, output):
     opt_output = f"{input[:-3]}_opt.ll"
     return [re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/opt -march=riscv64 -passes=lower-matrix-intrinsics {input} -o {opt_output}
+            {TORCHSIM_LLVM_PATH}/opt --load-pass-plugin={TORCHSIM_CUSTOM_PASS_PATH}/libLowerGemminiPass.so -S -march=riscv64 --passes=LowerGemminiPass {input} -o {opt_output}
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",

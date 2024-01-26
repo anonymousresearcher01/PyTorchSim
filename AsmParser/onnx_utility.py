@@ -25,7 +25,7 @@ class node:
             attr_dict[var] = getattr(self, var)
 
         for idx, asm_line in enumerate(self.inst):
-            attr_dict[f"inst{idx}"] = asm_line
+            attr_dict[f"inst{idx:02x}"] = asm_line
 
         onnx_node = onnx.helper.make_node(op_type=self.__class__.__name__,
                                           inputs=inputs,
