@@ -826,9 +826,9 @@ class riscv_parser:
         for sn in unique_store_nodes:
             connect_nodes(index_node, sn)
 
-        onnx_node_list = [node.to_onnx() for node in unique_load_nodes] + \
+        onnx_node_list = [index_node.to_onnx()] + [node.to_onnx() for node in unique_load_nodes] + \
                             [node.to_onnx() for node in unique_compute_nodes] + \
-                            [node.to_onnx() for node in unique_store_nodes] + [index_node.to_onnx()]
+                            [node.to_onnx() for node in unique_store_nodes]
         if onnx_node_list:
             dump_onnx_graph(f"{name}_{suffix}.onnx", onnx_node_list)
 
