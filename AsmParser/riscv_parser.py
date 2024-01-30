@@ -1,7 +1,11 @@
 from collections import OrderedDict
 from itertools import chain
 import onnx
-from onnx_utility import loop_index_node, load_node, store_node, compute_node, connect_nodes, dump_onnx_graph
+if __name__ == "__main__":
+    from onnx_utility import loop_index_node, load_node, store_node, compute_node, connect_nodes, dump_onnx_graph
+else:
+    from AsmParser.onnx_utility import loop_index_node, load_node, store_node, compute_node, connect_nodes, dump_onnx_graph
+
 
 # Operand Attributes
 MEM =       0x400
@@ -53,6 +57,8 @@ VECTOR_VI_TEMPLATE = [REGISTER|DEST, REGISTER, IMMEDIATE]
 VECTOR_WV_TEMPLATE = [REGISTER|DEST, REGISTER, REGISTER]
 VECTOR_WX_TEMPLATE = [REGISTER|DEST, REGISTER, REGISTER]
 
+CUSTOM_R_TEMPLATE = [REGISTER|DEST,  REGISTER, REGISTER]
+
 R32_INSTUCTION_TEMPLATE = {
     # RV32
     "addi": I_TEMPLATE,
@@ -61,7 +67,7 @@ R32_INSTUCTION_TEMPLATE = {
     "xori": I_TEMPLATE,
     "ori": I_TEMPLATE,
     "andi": I_TEMPLATE,
-    "lui": I_TEMPLATE,
+    "lui": RI_TEMPLATE,
     "slli": I_TEMPLATE,
     "srli": I_TEMPLATE,
     "srai": I_TEMPLATE,
@@ -396,6 +402,11 @@ VECTOR_INSTRUCTION_TEMPLATE = {
     ".wx": VECTOR_WX_TEMPLATE
 }
 
+SUPPORTED_CUSTOM_INSTRUCTION = {
+    "custom_mvin": [47, 2, 4],
+    "custom_mvout": [47, 3, 4]
+}
+
 SUPPORTED_INSTRUCTION = [
     R32_INSTUCTION_TEMPLATE,
     R64_INSTRUCTION_TEMPLATE,
@@ -407,6 +418,13 @@ SUPPORTED_INSTRUCTION = [
     VECTOR_INSTRUCTION_TEMPLATE
 ]
 
+ATTRIBUTE_LIST = [
+    ".text", ".data", ".rodata", ".bss", ".comm", "common", ".section", ".option",
+    ".file", ".ident", ".size", ".type", ".globl", ".global", ".local", ".equ", ".align", ".balign",
+    ".p2align", ".2byte", ".4byte", ".8byte", ".half", ".word", ".dword", ".byte", ".asciz",
+    ".string", ".incbin", ".zero", ".attribute"
+]
+
 BRANCHES = ["beq", "bne", "blt", "bge", "bltu", "bgeu",
             "beqz", "bnez", "blez", "bgez", "bltz", "bgtz",
             "bgt", "ble", "bgtu", "bleu",
@@ -414,8 +432,11 @@ BRANCHES = ["beq", "bne", "blt", "bge", "bltu", "bgeu",
 
 UNCONDITIONAL_JUMP = ["j", "ret"]
 
-DRAM_LOAD = ["vl2re32.v"]
-DRAM_STORE = ["vs2r.v"]
+DRAM_LOAD = ["custom_mvin"]
+DRAM_STORE = ["custom_mvout"]
+
+SRAM_LOAD = []
+SRAM_STORE = []
 
 class rv_operand:
     def __init__(self, op_type, value) -> None:
@@ -496,6 +517,18 @@ class rv_instruction:
                     self.operands.append(rv_operand(op_type, value))
 
                 return
+
+        # For custom instruction
+        if self.opcode == ".insn" and target_list[1] == "r":
+            format = [int(imm) for imm in target_list[2:5]]
+            for custom_op, custom_format in SUPPORTED_CUSTOM_INSTRUCTION.items():
+                if format == custom_format:
+                    self.opcode = custom_op
+                    self.asm = self.asm.replace(".insn r", custom_op)
+                    for op_type, value in zip(CUSTOM_R_TEMPLATE, target_list[5:]):
+                        self.operands.append(rv_operand(op_type, value))
+                    return
+
         print(f"[Warn] Unsupported instruction in '{assembly_code.strip().rstrip()}'")
 
     def connect_user_inst(self, user_inst):
@@ -523,6 +556,17 @@ class rv_instruction:
         if len(target_list) == 1:
             if target_list[0][-1] == ":":
                 return True
+        return False
+
+    @classmethod
+    def is_attribute(cls, assembly_code:str):
+        target_list = cls.split_assembly(assembly_code)
+
+        if not len(target_list) or target_list[0] in ATTRIBUTE_LIST:
+            return True
+        if target_list[0][:4] == ".cfi":
+            return True
+
         return False
 
     def __str__(self) -> str:
@@ -617,9 +661,12 @@ class riscv_parser:
         self.inst_list = []
         self.bb_list = []
         self.cycle_list = []
+        self.loop_info ={}
+        self.load_tile_info = {}
+        self.store_tile_info = {}
 
-    def load_file(self, name):
-        f = open("vectoradd.s")
+    def load_file(self, name, loop_info={}, load_tile_info={}, store_tile_info={}):
+        f = open(name)
         asm_lines = f.readlines()[1:]
 
         label = ""
@@ -627,8 +674,21 @@ class riscv_parser:
             if rv_instruction.is_label(asm_line):
                 label = rv_instruction.split_assembly(asm_line)[0][:-1]
                 continue
+
+            if rv_instruction.is_attribute(asm_line):
+                continue
+
             self.inst_list.append(rv_instruction(label, asm_line))
             label = ""
+
+        # Load meta data (loop, memory access info)
+        self.loop_info = loop_info
+        self.load_tile_info = load_tile_info
+        self.store_tile_info = store_tile_info
+
+        # Run default analysis pass
+        self.basic_block_analysis()
+        self.cycle_detect_analysis()
 
     def basic_block_analysis(self):
         # Construct Basic Block
@@ -699,7 +759,7 @@ class riscv_parser:
             scoreboard = {}
             for inst in cycle.iter_insts():
                 for op in inst.operands[::-1]:
-                    if op.is_destination() and op.is_reg():
+                    if op.is_destination() and op.is_reg() and op.value != "zero":
                         scoreboard[op.value] = inst
                     elif op.is_reg() and op.value in scoreboard:
                         scoreboard[op.value].connect_user_inst(inst)
@@ -713,32 +773,62 @@ class riscv_parser:
 
     def generate_tile_graph(self, cycle, name="tile_graph", suffix=0):
         current_pointer = {}
+        load_nodes = {}
+        compute_nodes = {}
+        store_nodes = {}
+
+        index_node = loop_index_node(self.loop_info)
         for inst in cycle.iter_insts():
             if inst.opcode in DRAM_LOAD:
-                tmp_node = load_node([inst.asm], len(current_pointer))
-                current_pointer[inst] = tmp_node
+                tmp_node = load_node(self.load_tile_info[f"load{len(load_nodes)}"], [inst.asm], len(load_nodes))
+                load_nodes[inst] = tmp_node
             elif inst.opcode in DRAM_STORE:
-                tmp_node = store_node([inst.asm], len(current_pointer))
-                neighbor_node = [current_pointer[user_inst] for user_inst in inst.src_insts if user_inst in current_pointer]
-                check_compute = [node for node in neighbor_node if isinstance(node, compute_node)]
-                for source_node in check_compute:
-                        connect_nodes(source_node, tmp_node)
-                current_pointer[inst] = tmp_node
+                tmp_node = store_node(self.store_tile_info[f"store{len(store_nodes)}"], [inst.asm], len(store_nodes))
+                store_nodes[inst] = tmp_node
+            elif inst.opcode in SRAM_LOAD or inst.opcode[:2] == "vl":
+                check_compute = [node for node in compute_nodes.values()]
+                if len(check_compute):
+                    check_compute[0].inst.append(inst.asm)
+                    compute_nodes[inst] = check_compute[0]
+                else:
+                    tmp_node = compute_node([inst.asm], len(current_pointer))
+                    compute_nodes[inst] = tmp_node
             else:
-                neighbor_node = [current_pointer[user_inst] for user_inst in inst.src_insts if user_inst in current_pointer]
-                check_compute = [node for node in neighbor_node if isinstance(node, compute_node)]
-                check_load = [node for node in neighbor_node if isinstance(node, load_node)]
+                check_compute = [node for node in compute_nodes.values()]
+                check_load = [node for node in load_nodes.values()]
 
                 if len(check_compute):
                     check_compute[0].inst.append(inst.asm)
+                    compute_nodes[inst] = check_compute[0]
 
                 elif len(check_load):
                     tmp_node = compute_node([inst.asm], len(current_pointer))
-                    for source_node in check_load:
-                        connect_nodes(source_node, tmp_node)
-                    current_pointer[inst] = tmp_node
+                    compute_nodes[inst] = tmp_node
 
-        onnx_node_list = [node.to_onnx() for node in current_pointer.values()]
+        # NOTE. Since current custom_mvin instruciton has no dependency between following vload instruction.
+        # So, Make dependency forcefully
+        unique_load_nodes = set([node for node in load_nodes.values()])
+        unique_compute_nodes = set([node for node in compute_nodes.values()])
+        unique_store_nodes = set([node for node in store_nodes.values()])
+
+        # Link load/store and compute node
+        for ln in unique_load_nodes:
+            for cn in unique_compute_nodes:
+                connect_nodes(ln, cn)
+        for cn in unique_compute_nodes:
+            for sn in unique_store_nodes:
+                connect_nodes(cn, sn)
+
+        # Link load/store and index node
+        for ln in unique_load_nodes:
+            connect_nodes(index_node, ln)
+
+        for sn in unique_store_nodes:
+            connect_nodes(index_node, sn)
+
+        onnx_node_list = [index_node.to_onnx()] + [node.to_onnx() for node in unique_load_nodes] + \
+                            [node.to_onnx() for node in unique_compute_nodes] + \
+                            [node.to_onnx() for node in unique_store_nodes]
         if onnx_node_list:
             dump_onnx_graph(f"{name}_{suffix}.onnx", onnx_node_list)
 
@@ -747,8 +837,6 @@ if __name__ == "__main__":
     parser = riscv_parser()
     parser.load_file("vectoradd.s")
 
-    parser.basic_block_analysis()
     parser.dump_basic_block_graph("basic_block.onnx")
-    parser.cycle_detect_analysis()
     parser.print_cycles()
     parser.cycle_analysis()

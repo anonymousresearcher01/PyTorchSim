@@ -7,59 +7,57 @@ import subprocess
 
 import torch
 from torch._inductor.codecache import AsyncCompile, get_lock_dir, get_hash, write
+from AsmParser.riscv_parser import riscv_parser
+from extension_backends.llvm_common import LLVMKernelArgs
 
 LOCK_TIMEOUT = 600
 TORCHSIM_DUMP_PATH = os.environ.get('TORCHSIM_DUMP_PATH',
                         default = f"{tempfile.gettempdir()}/torchinductor_{getpass.getuser()}")
 TORCHSIM_DUMP_FILE = int(os.environ.get('TORCHSIM_DUMP_FILE', default="True") == "True")
+TORCHSIM_LLVM_PATH = os.environ.get('TORCHSIM_LLVM_PATH', default="/usr/bin")
+TORCHSIM_CUSTOM_PASS_PATH = os.environ.get('TORCHSIM_CUSTOM_PASS_PATH', default="./GemminiLowerPass/build")
 
 def hash_prefix(hash_value):
     return hash_value[1:5]
 
-def write_arg(arg, path, index, n_call):
-    if (isinstance(arg, torch.Tensor)):
-        meta_path = os.path.join(path, f'meta_{n_call}.txt')
-        data_path = os.path.join(path, f'arg_{n_call}_{index}.raw')
-        tensor = arg.cpu()
-        try:
-            with open(meta_path, "a") as file:
-                file.write(f'arg_{index}=({tensor.dtype}, {tensor.shape})\n')
-                file.close()
-        except Exception as e:
-            print(f"Error while writing meta data.")
+def dump_metadata(args, arg_attributes, path):
+    meta_path = os.path.join(path, "meta.txt")
+    if os.path.isfile(meta_path):
+        return
 
+    with open(meta_path, "a") as file:
+        for (arg_name, arg_attribute), arg in zip(arg_attributes.items(), args):
+            file.write(f'{arg_name}=({arg_attribute}, {arg.dtype}, {arg.shape})\n')
+    return
+
+def write_arg(arg, path, name):
+    dump_path = os.path.join(path, name)
+    os.makedirs(dump_path, exist_ok=True)
+    index = len(os.listdir(dump_path))
+
+    if (isinstance(arg, torch.Tensor)):
+        data_path = os.path.join(dump_path, f'{index}.raw')
+        tensor = arg.cpu()
         t_arr = tensor.numpy().flatten()
         t_arr.tofile(data_path)
     else:
         assert(0)
 
-def dump_args(args, path):
-    n_arg = len(args)
-
-    file_pattern = re.compile(r'meta_\d+\.txt')
-    matching_files = []
-
-    for _, _, files in os.walk(path):
-        for file in files:
-            if file_pattern.match(file):
-                matching_files.append(int(file[5:-4]))
-    matching_files.sort(reverse=True)
-
-    n_call = 0 if len(matching_files) == 0 else matching_files[0]+1
-
-    for i in range(n_arg):
-        write_arg(args[i], path, i, n_call)
+def dump_args(args, arg_attributes, path):
+    for (arg_name, arg_attribute), arg in zip(arg_attributes.items(), args):
+        if arg_attribute == LLVMKernelArgs.LLVM_ARGS_IN or arg_attribute == LLVMKernelArgs.LLVM_ARGS_INOUT:
+            write_arg(arg, path, arg_name)
 
 def llvm_compile_command(input, output):
     opt_output = f"{input[:-3]}_opt.ll"
     return [re.sub(r"[ \n]+", " ",
         f"""
-            opt -march=riscv64 -passes=lower-matrix-intrinsics {input} -o {opt_output}
+            {TORCHSIM_LLVM_PATH}/opt --load-pass-plugin={TORCHSIM_CUSTOM_PASS_PATH}/libLowerGemminiPass.so -S -march=riscv64 --passes=LowerGemminiPass {input} -o {opt_output}
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v -O2 {opt_output} -o {output}
+            {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v -O2 {opt_output} -o {output}
         """,
     ).strip()]
 
@@ -72,7 +70,7 @@ class LLVMCodeCache:
         pass
 
     @classmethod
-    def load(cls, source_code):
+    def load(cls, source_code, loop_info={}, load_tile_info={}, store_tile_info={}, **kwargs):
         global TORCHSIM_DUMP_PATH
         write_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(source_code)))
         key, input_path = write(source_code, "ll", specified_dir=write_path)
@@ -92,6 +90,16 @@ class LLVMCodeCache:
                     subprocess.check_call(llc_cmd)
                 except subprocess.CalledProcessError as e:
                     assert(0)   # Todo: make LLVMCompileError
+
+                # launch tile graph generator
+                tile_graph_generator = riscv_parser()
+                tile_graph_generator.load_file(output_path,
+                                               loop_info=loop_info,
+                                               load_tile_info=load_tile_info,
+                                               store_tile_info=store_tile_info)
+                if TORCHSIM_DUMP_FILE:
+                    tile_graph_generator.dump_basic_block_graph(os.path.join(write_path, "basic_block.onnx"))
+                tile_graph_generator.cycle_analysis(name=os.path.join(write_path, "tile_graph"))
             else:
                 pass
         return key
@@ -100,9 +108,9 @@ class CustomAsyncCompile(AsyncCompile):
     def __init__(self):
         pass
 
-    def llvm(self, source_code):
+    def llvm(self, source_code, arg_attributes={}, **kwargs):
         def task():
-            self.key = LLVMCodeCache.load(source_code)
+            self.key = LLVMCodeCache.load(source_code, **kwargs)
             return
         future = self.submit(task)
 
@@ -112,8 +120,9 @@ class CustomAsyncCompile(AsyncCompile):
             result_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(self.key))
             print("OUTPUT PATH > ", result_path)
 
+            dump_metadata(args, arg_attributes, result_path)
             if TORCHSIM_DUMP_FILE:
-                dump_args(args, result_path)
+                dump_args(args, arg_attributes, result_path)
 
             assembly_path = os.path.join(result_path, f'{self.key}.s')
             try:

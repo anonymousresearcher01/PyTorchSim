@@ -7,6 +7,7 @@ class node:
 
         self.__parents = set()
         self.__children = set()
+        self.inst = []
 
     def add_child(self, child):
         self.__children.add(child)
@@ -25,7 +26,7 @@ class node:
             attr_dict[var] = getattr(self, var)
 
         for idx, asm_line in enumerate(self.inst):
-            attr_dict[f"inst{idx}"] = asm_line
+            attr_dict[f"inst{idx:02x}"] = asm_line
 
         onnx_node = onnx.helper.make_node(op_type=self.__class__.__name__,
                                           inputs=inputs,
@@ -34,22 +35,26 @@ class node:
         return onnx_node
 
 class loop_index_node(node):
-     def __init__(self, start, end, stride, node_id=0):
+     def __init__(self, loop_info, node_id=0):
         super().__init__(node_id)
-        self.torchsim_start = start
-        self.torchsim_end = end
-        self.torchsim_stride = stride
+        self.torchsim_start = []
+        self.torchsim_end = []
+        self.torchsim_stride = []
+        for start, end, stride in loop_info.values():
+            self.torchsim_start.append(start)
+            self.torchsim_end.append(end)
+            self.torchsim_stride.append(stride)
 
 
 class memory_node(node):
-    def __init__(self, inst_list=list(), node_id=0):
+    def __init__(self, tile_info, inst_list=list(), node_id=0):
         super().__init__(node_id)
         self.inst = inst_list
-        self.torchsim_base_addr = 0
-        self.torchsim_stride_list = [100, 10, 1]
-        self.torchsim_tile_size = [4, 4]
-        self.torchsim_tile_stride = [10, 1]
-        self.torchsim_element_size = 2
+        self.torchsim_base_addr = tile_info["base_addr"]
+        self.torchsim_stride_list = tile_info["stride_list"]
+        self.torchsim_tile_size = tile_info["tile_size"]
+        self.torchsim_tile_stride = tile_info["tile_stride"]
+        self.torchsim_element_size = tile_info["element_size"]
 
 class load_node(memory_node):
     pass
