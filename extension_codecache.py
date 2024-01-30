@@ -75,7 +75,7 @@ class LLVMCodeCache:
         pass
 
     @classmethod
-    def load(cls, source_code):
+    def load(cls, source_code, loop_info={}, load_tile_info={}, store_tile_info={}):
         global TORCHSIM_DUMP_PATH
         write_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(source_code)))
         key, input_path = write(source_code, "ll", specified_dir=write_path)
@@ -98,7 +98,10 @@ class LLVMCodeCache:
 
                 # launch tile graph generator
                 tile_graph_generator = riscv_parser()
-                tile_graph_generator.load_file(output_path)
+                tile_graph_generator.load_file(output_path,
+                                               loop_info=loop_info,
+                                               load_tile_info=load_tile_info,
+                                               store_tile_info=store_tile_info)
                 if TORCHSIM_DUMP_FILE:
                     tile_graph_generator.dump_basic_block_graph(os.path.join(write_path, "basic_block.onnx"))
                 tile_graph_generator.cycle_analysis(name=os.path.join(write_path, "tile_graph"))
@@ -110,9 +113,9 @@ class CustomAsyncCompile(AsyncCompile):
     def __init__(self):
         pass
 
-    def llvm(self, source_code):
+    def llvm(self, source_code, **kwargs):
         def task():
-            self.key = LLVMCodeCache.load(source_code)
+            self.key = LLVMCodeCache.load(source_code, **kwargs)
             return
         future = self.submit(task)
 

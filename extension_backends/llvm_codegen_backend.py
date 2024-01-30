@@ -1,3 +1,4 @@
+import os
 import dataclasses
 import contextlib
 from typing import List
@@ -9,10 +10,9 @@ from . import llvm_common
 from torch._inductor.scheduler import BaseScheduling
 from torch._inductor.virtualized import V
 from torch._inductor.utils import IndentedBuffer
-from torch._inductor.codecache import write
+from torch._inductor.codecache import write, get_hash
 import extension_codecache
 import sympy
-import os
 
 tile_size = 16 # FIXME. hard coded
 tile_row = 4 # FIXME. hard coded
@@ -172,6 +172,33 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
         self.reduction_vars = {}
         self.reduction_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_acc")
         self.index_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_idx")
+        self.loop_info = {}
+        self.load_desc = {}
+        self.store_desc = {}
+
+    def get_constant_vector(self, expr):
+        constant_vector = [int(expr.coeff(var)) for var in self.itervars]
+        return constant_vector
+
+    def add_desc(self, is_load, base_addr, element_size, stride_list, tile_size):
+        if is_load:
+            key = f"load{len(self.load_desc)}"
+            self.load_desc[key] = {
+                "base_addr": base_addr,
+                "element_size": element_size,
+                "stride_list": stride_list,
+                "tile_size": tile_size,
+                "tile_stride": stride_list[-2:]
+            }
+        else:
+            key = f"store{len(self.store_desc)}"
+            self.store_desc[key] = {
+                "base_addr": base_addr,
+                "element_size": element_size,
+                "stride_list": stride_list,
+                "tile_size": tile_size,
+                "tile_stride": stride_list[-2:]
+            }
 
     def depth_first_traverse(self, expr, buffer, cse):
         child_var = []
@@ -202,7 +229,7 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
             var = sympy.symbols(f"{var}")
             return var
         else:
-            raise Exception
+            raise Exception()
 
     def load(self, name: str, index: sympy.Expr):
         index = self.rename_indexing(index)
@@ -333,16 +360,21 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
             codecache_def.writeline("custom_async_compile.llvm('''")
         codecache_def.splice(code)
         if not V.graph.cpp_wrapper:
-            codecache_def.writeline("''')")
+            codecache_def.writeline("''', ")
+            codecache_def.writeline("loop_info=loop_info,")
+            codecache_def.writeline("load_tile_info=load_tile_info,")
+            codecache_def.writeline("store_tile_info=store_tile_info)")
 
         wrapper.add_import_once('\nprint(f\'Wrapper Codegen Path = {__file__}\')')
         wrapper.add_import_once(f'\nfrom extension_codecache import CustomAsyncCompile')
         wrapper.add_import_once(f'\ncustom_async_compile = CustomAsyncCompile()')
-
+        # Dump loop and load/store information
+        wrapper.add_import_once(f"loop_info = {self.loop_info}")
+        wrapper.add_import_once(f"load_tile_info = {self.load_desc}")
+        wrapper.add_import_once(f"store_tile_info = {self.store_desc}")
         self.define_kernel(wrapper, codecache_def.getvalue(), kernel_name)
         # generate the code to call this
         wrapper.generate_kernel_call(kernel_name, call_args, cuda=False)
-        print(code.getvalue())
         return code.getvalue()
 
     def set_ranges(self, lengths, reduction_lengths):
@@ -477,12 +509,15 @@ class MatrixLLVMKernel(LLVMKernel):
         super().__init__()
 
     def load(self, name: str, index: sympy.Expr):
-        index = self.rename_indexing(index)
-        index = self.depth_first_traverse(index, self.loads, self.index_cse)
         var = self.args.input(name)
         dtype = V.graph.get_dtype(name)
         type_name = llvm_common.DTYPE_TO_LLVM[dtype]
         align = llvm_common.DTYPE_SIZE[dtype]
+
+        index = self.rename_indexing(index)
+        cv = self.get_constant_vector(index)
+        self.add_desc(True, name, align, cv, [tile_row, tile_col])
+        index = self.depth_first_traverse(index, self.loads, self.index_cse)
         line = f"mul nsw i64 %{index}, {align}"
         offset = self.cse.generate(self.loads, line)
         line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{offset}"
@@ -492,12 +527,15 @@ class MatrixLLVMKernel(LLVMKernel):
         return self.cse.generate(self.loads, line)
 
     def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
-        index = self.rename_indexing(index)
-        index = self.depth_first_traverse(index, self.stores, self.index_cse)
         var = self.args.output(name)
         dtype = V.graph.get_dtype(name)
         type_name = llvm_common.DTYPE_TO_LLVM[dtype]
         align = llvm_common.DTYPE_SIZE[dtype]
+
+        index = self.rename_indexing(index)
+        cv = self.get_constant_vector(index)
+        self.add_desc(False, name, align, cv, [tile_row, tile_col])
+        index = self.depth_first_traverse(index, self.stores, self.index_cse)
         line = f"mul nsw i64 %{index}, {align}"
         offset = self.cse.generate(self.stores, line)
         line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{offset}"
@@ -576,7 +614,7 @@ class MatrixLLVMKernel(LLVMKernel):
 
     def codegen_loops(self):
         code = common.BracesBuffer()
-        loop_info = ""
+        self.loop_info = {}
         # Loop body part
         loops_args = [[var, size, idx] for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
         outer_loops = [LoopLevel(var, size, idx) for var, size, idx in loops_args[:-2]]
@@ -589,22 +627,18 @@ class MatrixLLVMKernel(LLVMKernel):
         with contextlib.ExitStack() as stack:
             if self.reduction_vars:
                 reduction_alloc(code, stack, self.reduction_vars)
-            loop_info += loops.codegen(code, stack)
+            self.loop_info.update(loops.codegen(code, stack))
             with contextlib.ExitStack() as stack_outer:
                 code.splice(self.reduction_prefix)
                 with contextlib.ExitStack() as stack:
-                    loop_info += reductions.codegen(code, stack)
+                    self.loop_info.update(reductions.codegen(code, stack))
                     code.splice(self.loads)
                     code.splice(self.compute)
                     code.splice(self.stores)
                 code.splice(self.reductions_suffix)
         code.writeline(f"ret void")
-        self.dump_loop_info(loop_info)
         return code
 
-    def dump_loop_info(self, loop_info):
-        write_path = os.path.join(extension_codecache.TORCHSIM_DUMP_PATH, "tmp")
-        key, input_path = write(loop_info, "txt", specified_dir=write_path)
 
 @dataclasses.dataclass
 class LoopLevel:
@@ -620,6 +654,7 @@ class LoopLevel:
 
     def lines(self, line, stride=1):
         loop_index = self.idx
+        self.stride = stride
         @contextlib.contextmanager
         def ctx():
             entry_label = f"entry{loop_index}"
@@ -658,6 +693,7 @@ class VectorLoopLevel(LoopLevel):
     DATA_SIZE = 4
     def lines(self, line, stride=1):
         loop_index = self.idx
+        self.stride = stride # FIXME. vector type can't be determined in this time...
         @contextlib.contextmanager
         def ctx():
             # Label definition
@@ -737,6 +773,7 @@ class MatrixLoopLevel(LoopLevel):
 
     def lines(self, line, stride=1):
         loop_index = self.idx
+        self.stride = stride * tile_row
         @contextlib.contextmanager
         def ctx():
             entry_label = f"entry{loop_index}"
@@ -785,7 +822,7 @@ class LoopNest:
     def codegen(self, code, stack):
         size_list = []
         stride_list = []
-        loop_info = ""
+        loop_info = {}
         for loop in self.loops:
             stride_list.append(loop.size)
         stride_list.append(1)
@@ -798,7 +835,7 @@ class LoopNest:
 
         for loop, stride in zip(self.loops, stride_list):
             stack.enter_context(loop.lines(code, stride=stride))
-            loop_info += f"{stride * tile_row}, {loop.start}, {loop.size}\n"
+            loop_info[str(loop.var)] = [loop.start, loop.size, loop.stride]
         return loop_info
 
 class LLVMScheduling(BaseScheduling):

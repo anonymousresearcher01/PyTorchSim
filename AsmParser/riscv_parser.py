@@ -661,8 +661,11 @@ class riscv_parser:
         self.inst_list = []
         self.bb_list = []
         self.cycle_list = []
+        self.loop_info ={}
+        self.load_tile_info = {}
+        self.store_tile_info = {}
 
-    def load_file(self, name):
+    def load_file(self, name, loop_info={}, load_tile_info={}, store_tile_info={}):
         f = open(name)
         asm_lines = f.readlines()[1:]
 
@@ -677,6 +680,11 @@ class riscv_parser:
 
             self.inst_list.append(rv_instruction(label, asm_line))
             label = ""
+
+        # Load meta data (loop, memory access info)
+        self.loop_info = loop_info
+        self.load_tile_info = load_tile_info
+        self.store_tile_info = store_tile_info
 
         # Run default analysis pass
         self.basic_block_analysis()
@@ -765,50 +773,62 @@ class riscv_parser:
 
     def generate_tile_graph(self, cycle, name="tile_graph", suffix=0):
         current_pointer = {}
+        load_nodes = {}
+        compute_nodes = {}
+        store_nodes = {}
+
+        index_node = loop_index_node(self.loop_info)
         for inst in cycle.iter_insts():
             if inst.opcode in DRAM_LOAD:
-                tmp_node = load_node([inst.asm], len(current_pointer))
-                current_pointer[inst] = tmp_node
+                tmp_node = load_node(self.load_tile_info[f"load{len(load_nodes)}"], [inst.asm], len(load_nodes))
+                load_nodes[inst] = tmp_node
             elif inst.opcode in DRAM_STORE:
-                tmp_node = store_node([inst.asm], len(current_pointer))
-                current_pointer[inst] = tmp_node
+                tmp_node = store_node(self.store_tile_info[f"store{len(store_nodes)}"], [inst.asm], len(store_nodes))
+                store_nodes[inst] = tmp_node
             elif inst.opcode in SRAM_LOAD or inst.opcode[:2] == "vl":
-                check_compute = [node for node in current_pointer.values() if isinstance(node, compute_node)]
+                check_compute = [node for node in compute_nodes.values()]
                 if len(check_compute):
                     check_compute[0].inst.append(inst.asm)
-                    current_pointer[inst] = check_compute[0]
+                    compute_nodes[inst] = check_compute[0]
                 else:
                     tmp_node = compute_node([inst.asm], len(current_pointer))
-                    current_pointer[inst] = tmp_node
+                    compute_nodes[inst] = tmp_node
             else:
-                neighbor_node = [current_pointer[user_inst] for user_inst in inst.src_insts if user_inst in current_pointer]
-                check_compute = [node for node in neighbor_node if isinstance(node, compute_node)]
-                check_load = [node for node in neighbor_node if isinstance(node, load_node)]
+                check_compute = [node for node in compute_nodes.values()]
+                check_load = [node for node in load_nodes.values()]
 
                 if len(check_compute):
                     check_compute[0].inst.append(inst.asm)
-                    current_pointer[inst] = check_compute[0]
+                    compute_nodes[inst] = check_compute[0]
 
                 elif len(check_load):
                     tmp_node = compute_node([inst.asm], len(current_pointer))
-                    current_pointer[inst] = tmp_node
+                    compute_nodes[inst] = tmp_node
 
         # NOTE. Since current custom_mvin instruciton has no dependency between following vload instruction.
         # So, Make dependency forcefully
-        load_nodes = set([node for node in current_pointer.values() if isinstance(node, load_node)])
-        compute_nodes = set([node for node in current_pointer.values() if isinstance(node, compute_node)])
-        store_nodes = set([node for node in current_pointer.values() if isinstance(node, store_node)])
+        unique_load_nodes = set([node for node in load_nodes.values()])
+        unique_compute_nodes = set([node for node in compute_nodes.values()])
+        unique_store_nodes = set([node for node in store_nodes.values()])
 
-        for ln in load_nodes:
-            for cn in compute_nodes:
+        # Link load/store and compute node
+        for ln in unique_load_nodes:
+            for cn in unique_compute_nodes:
                 connect_nodes(ln, cn)
-        for cn in compute_nodes:
-            for sn in store_nodes:
+        for cn in unique_compute_nodes:
+            for sn in unique_store_nodes:
                 connect_nodes(cn, sn)
 
-        onnx_node_list = [node.to_onnx() for node in load_nodes] + \
-                            [node.to_onnx() for node in compute_nodes] + \
-                            [node.to_onnx() for node in store_nodes]
+        # Link load/store and index node
+        for ln in unique_load_nodes:
+            connect_nodes(index_node, ln)
+
+        for sn in unique_store_nodes:
+            connect_nodes(index_node, sn)
+
+        onnx_node_list = [node.to_onnx() for node in unique_load_nodes] + \
+                            [node.to_onnx() for node in unique_compute_nodes] + \
+                            [node.to_onnx() for node in unique_store_nodes] + [index_node.to_onnx()]
         if onnx_node_list:
             dump_onnx_graph(f"{name}_{suffix}.onnx", onnx_node_list)
 
