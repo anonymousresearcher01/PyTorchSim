@@ -6,7 +6,7 @@ import shlex
 import subprocess
 
 import torch
-from torch._inductor.codecache import AsyncCompile, get_lock_dir, get_hash, write
+from torch._inductor.codecache import AsyncCompile, get_lock_dir, get_hash, write, write_atomic
 from AsmParser.riscv_parser import riscv_parser
 from extension_backends.llvm_common import LLVMKernelArgs
 
@@ -116,7 +116,7 @@ def get_onnxim_command(model_path):
 
 class CustomAsyncCompile(AsyncCompile):
     def __init__(self):
-        pass
+        self.llvm_caller = LLVMKernelCallerCodeGen()
 
     def llvm(self, source_code, arg_attributes={}, **kwargs):
         def task():
@@ -131,6 +131,7 @@ class CustomAsyncCompile(AsyncCompile):
             print("OUTPUT PATH > ", result_path)
 
             dump_metadata(args, arg_attributes, result_path)
+            LLVMCodeCache.write_llvm_caller(self.llvm_caller.generate(args), self.key, result_path)
             if TORCHSIM_DUMP_FILE:
                 dump_args(args, arg_attributes, result_path)
 
