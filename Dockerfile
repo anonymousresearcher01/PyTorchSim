@@ -67,8 +67,9 @@ RUN git clone https://github.com/riscv-software-src/riscv-isa-sim.git && cd risc
     ../configure --prefix=$RISCV && make -j && make install
 
 # Install Proxy kernel
-RUN git clone https://github.com/riscv-software-src/riscv-pk.git && cd riscv-pk && git checkout v1.0.0 && mkdir build && cd build && \
+RUN git clone https://github.com/riscv-software-src/riscv-pk.git && cd riscv-pk && mkdir build && cd build && \
     ../configure --prefix=$RISCV --host=riscv64-unknown-elf && make -j && make install
 
-# Install torchsim prepare
-RUN apt install ninja-build && pip install onnx
+# Install torchsim dependency
+RUN apt install ninja-build && pip install onnx && pip install --user conan==1.56.0
+ENV PATH $PATH:/root/.local.bin
