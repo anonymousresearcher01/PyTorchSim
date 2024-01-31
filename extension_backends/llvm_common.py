@@ -59,6 +59,12 @@ class LLVMKernelArgs(common.KernelArgs):
     LLVM_ARGS_INOUT = 0x04
     LLVM_ARGS_VAR = 0x08
 
+    def is_llvm_arg_in(self, value):
+        return (LLVMKernelArgs.LLVM_ARGS_IN & value) | (LLVMKernelArgs.LLVM_ARGS_INOUT & value)
+
+    def is_llvm_arg_out(self, value):
+        return (LLVMKernelArgs.LLVM_ARGS_OUT & value) | (LLVMKernelArgs.LLVM_ARGS_INOUT & value)
+
     def llvm_argdefs(self):
         buffer_types = {x.get_name(): x.get_dtype() for x in V.graph.buffers}
         for name, val in V.graph.graph_inputs.items():

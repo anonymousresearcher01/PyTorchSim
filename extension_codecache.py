@@ -9,11 +9,14 @@ import torch
 from torch._inductor.codecache import AsyncCompile, get_lock_dir, get_hash, write, write_atomic
 from AsmParser.riscv_parser import riscv_parser
 from extension_backends.llvm_common import LLVMKernelArgs
+from extension_backends.llvm_caller_codegen import LLVMKernelCallerCodeGen
+from Validation.functional_simulator import FunctionalSimulator
 
 LOCK_TIMEOUT = 600
 TORCHSIM_DUMP_PATH = os.environ.get('TORCHSIM_DUMP_PATH',
                         default = f"{tempfile.gettempdir()}/torchinductor_{getpass.getuser()}")
 TORCHSIM_DUMP_FILE = int(os.environ.get('TORCHSIM_DUMP_FILE', default="True") == "True")
+TORCHSIM_VALIDATION_MODE = int(os.environ.get('TORCHSIM_VALIDATION_MODE', default="Falsee") == "True")
 TORCHSIM_LLVM_PATH = os.environ.get('TORCHSIM_LLVM_PATH', default="/usr/bin")
 TORCHSIM_CUSTOM_PASS_PATH = os.environ.get('TORCHSIM_CUSTOM_PASS_PATH', default="./GemminiLowerPass/build")
 TORCHSIM_DIR = os.environ.get('TORCHSIM_DIR', default='/workspace/TorchSim')
@@ -44,11 +47,14 @@ def write_arg(arg, path, name):
         t_arr.tofile(data_path)
     else:
         assert(0)
+    return index
 
 def dump_args(args, arg_attributes, path):
+    index = 0
     for (arg_name, arg_attribute), arg in zip(arg_attributes.items(), args):
         if arg_attribute == LLVMKernelArgs.LLVM_ARGS_IN or arg_attribute == LLVMKernelArgs.LLVM_ARGS_INOUT:
-            write_arg(arg, path, arg_name)
+            index = write_arg(arg, path, arg_name)
+    return index
 
 def llvm_compile_command(input, output):
     opt_output = f"{input[:-3]}_opt.ll"
@@ -105,6 +111,10 @@ class LLVMCodeCache:
             else:
                 pass
         return key
+    @classmethod
+    def write_llvm_caller(cls, code, key, path):
+        write_path = os.path.join(path, key+".c",)
+        write_atomic(write_path, code)
 
 def get_onnxim_command(model_path):
     base_dir = os.path.join(TORCHSIM_DIR, "ONNXim")
@@ -116,6 +126,8 @@ def get_onnxim_command(model_path):
 
 class CustomAsyncCompile(AsyncCompile):
     def __init__(self):
+        global TORCHSIM_DUMP_PATH
+        global TORCHSIM_VALIDATION_MODE
         self.llvm_caller = LLVMKernelCallerCodeGen()
 
     def llvm(self, source_code, arg_attributes={}, **kwargs):
@@ -131,9 +143,15 @@ class CustomAsyncCompile(AsyncCompile):
             print("OUTPUT PATH > ", result_path)
 
             dump_metadata(args, arg_attributes, result_path)
-            LLVMCodeCache.write_llvm_caller(self.llvm_caller.generate(args), self.key, result_path)
             if TORCHSIM_DUMP_FILE:
-                dump_args(args, arg_attributes, result_path)
+                n_call = dump_args(args, arg_attributes, result_path)
+            
+            LLVMCodeCache.write_llvm_caller(self.llvm_caller.generate(result_path, arg_attributes, TORCHSIM_VALIDATION_MODE, args),
+                                            self.key, result_path)
+
+            if TORCHSIM_VALIDATION_MODE:
+                funcsim = FunctionalSimulator(result_path, self.key, arg_attributes, args)
+                funcsim.run_spike(n_call)
 
             assembly_path = os.path.join(result_path, f'{self.key}.s')
             try:
