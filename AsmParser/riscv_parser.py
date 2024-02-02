@@ -771,7 +771,7 @@ class riscv_parser:
             for inst in cycle.iter_insts():
                 inst.clear_dependency()
 
-    def generate_tile_graph(self, cycle, name="tile_graph", suffix=0):
+    def generate_tile_graph(self, cycle, compute_ticks=0, name="tile_graph", suffix=0):
         current_pointer = {}
         load_nodes = {}
         compute_nodes = {}
@@ -791,7 +791,7 @@ class riscv_parser:
                     check_compute[0].inst.append(inst.asm)
                     compute_nodes[inst] = check_compute[0]
                 else:
-                    tmp_node = compute_node([inst.asm], len(current_pointer))
+                    tmp_node = compute_node([inst.asm], compute_ticks, len(current_pointer))
                     compute_nodes[inst] = tmp_node
             else:
                 check_compute = [node for node in compute_nodes.values()]
@@ -802,7 +802,7 @@ class riscv_parser:
                     compute_nodes[inst] = check_compute[0]
 
                 elif len(check_load):
-                    tmp_node = compute_node([inst.asm], len(current_pointer))
+                    tmp_node = compute_node([inst.asm], compute_ticks, len(current_pointer))
                     compute_nodes[inst] = tmp_node
 
         # NOTE. Since current custom_mvin instruciton has no dependency between following vload instruction.

@@ -4,6 +4,8 @@ import os
 import re
 import shlex
 import subprocess
+import operator
+import functools
 
 import torch
 from torch._inductor.codecache import AsyncCompile, get_lock_dir, get_hash, write
@@ -127,6 +129,9 @@ class LLVMCodeCache:
                 # Run cyclesim
                 cyclesim = CycleSimulator()
                 ticks = cyclesim.compile_and_simulate(os.path.join(write_path, cycle_binary_name))
+                nr_range = [len(range(*range_info)) for range_info in loop_info.values()]
+                nr_iters = functools.reduce(operator.mul, nr_range, 1)
+                compute_ticks = ticks // nr_iters
 
                 # launch tile graph generator
                 tile_graph_generator = riscv_parser()
@@ -137,7 +142,7 @@ class LLVMCodeCache:
 
                 if TORCHSIM_DUMP_FILE:
                     tile_graph_generator.dump_basic_block_graph(os.path.join(write_path, "basic_block.onnx"))
-                tile_graph_generator.cycle_analysis(name=os.path.join(write_path, "tile_graph"))
+                tile_graph_generator.cycle_analysis(compute_ticks=compute_ticks, name=os.path.join(write_path, "tile_graph"))
         return key
 
 def get_onnxim_command(model_path):
