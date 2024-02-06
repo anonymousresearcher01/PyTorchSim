@@ -79,7 +79,7 @@ class LLVMKernelCallerCodeGen():
 
     def generate_args_define(self):
         for arg_name, (_, arg_type, arg_shape) in self.arg_attributes.items():
-            self.writeline(f'{cpp.DTYPE_TO_CPP[arg_type]} {arg_name}[{arg_shape}]{self.ending}')
+            self.writeline(f'{cpp.DTYPE_TO_CPP[arg_type]} {arg_name}[{arg_shape}] __attribute__ ((aligned (4096))){self.ending}')
 
     def generate_load_dump_fn(self):
         self.writeline(f'{self.newline}int load_arg(void *arg, int size, const char *path) {self.open_bracket}')

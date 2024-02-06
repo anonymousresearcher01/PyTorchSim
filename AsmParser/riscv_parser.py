@@ -403,8 +403,8 @@ VECTOR_INSTRUCTION_TEMPLATE = {
 }
 
 SUPPORTED_CUSTOM_INSTRUCTION = {
-    "custom_mvin": [47, 2, 4],
-    "custom_mvout": [47, 3, 4]
+    "custom_mvin": [123, 2, 4],
+    "custom_mvout": [123, 3, 4]
 }
 
 SUPPORTED_INSTRUCTION = [

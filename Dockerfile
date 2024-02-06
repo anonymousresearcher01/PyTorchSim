@@ -63,7 +63,7 @@ ENV PATH $RISCV/bin:$PATH
 
 # Install Spike simulator
 RUN apt -y install device-tree-compiler
-RUN git clone https://github.com/riscv-software-src/riscv-isa-sim.git && cd riscv-isa-sim && git checkout v1.1.0 && mkdir build && cd build && \
+RUN git clone https://github.com/PSAL-POSTECH/riscv-isa-sim.git --branch TorchSim && cd riscv-isa-sim && mkdir build && cd build && \
     ../configure --prefix=$RISCV && make -j && make install
 
 # Install Proxy kernel
