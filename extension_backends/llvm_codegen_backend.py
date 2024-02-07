@@ -597,12 +597,15 @@ class MatrixLLVMKernel(LLVMKernel):
         return acc
 
     def store_reduction(self, name, index, value):
-        index = self.rename_indexing(index)
-        index = self.depth_first_traverse(index, self.reduction_suffix, self.index_cse)
         var = self.args.output(name)
         dtype = V.graph.get_dtype(name)
         type_name = llvm_common.DTYPE_TO_LLVM[dtype]
         align = llvm_common.DTYPE_SIZE[dtype]
+
+        index = self.rename_indexing(index)
+        cv = self.get_constant_vector(index)
+        self.add_desc(False, name, align, cv, [self.tile_row, 1])
+        index = self.depth_first_traverse(index, self.reduction_suffix, self.index_cse)
         line = f"load <{self.tile_row} x {type_name}>, ptr %{value}, align {align}"
         value = self.reduction_cse.generate(self.reductions_suffix, line)
         line = f"getelementptr inbounds {type_name}, ptr %{var}, i64 %{index}"

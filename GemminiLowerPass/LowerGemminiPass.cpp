@@ -951,7 +951,7 @@ public:
     // Propagate shapes until nothing changes any longer.
     while (!WorkList.empty()) {
       WorkList = propagateShapeForward(WorkList);
-      WorkList = propagateShapeBackward(WorkList);
+      // WorkList = propagateShapeBackward(WorkList);
     }
 
     optimizeTransposes();
@@ -1094,9 +1094,9 @@ public:
   CallInst* gemmini_extended_mv(IRBuilder<> &Builder, bool is_mvin, Value* dram_addr, Value* spad_addr, uint64_t cols, uint64_t rows) {
     StringRef asmString;
     if (is_mvin)
-      asmString = ".insn r CUSTOM_3, " STR(k_MVIN) ", 4, x0, $0, $1";
+      asmString = ".insn r CUSTOM_1, " STR(k_MVIN) ", 4, x0, $0, $1";
     else
-      asmString = ".insn r CUSTOM_3, " STR(k_MVOUT) ", 4, x0, $0, $1";
+      asmString = ".insn r CUSTOM_1, " STR(k_MVOUT) ", 4, x0, $0, $1";
     StringRef constraints = "r,r,~{dirflag},~{fpsr},~{flags}";
     SmallVector<Value *, 16> args;
     SmallVector<Type *, 16> ty_args;

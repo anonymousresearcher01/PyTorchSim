@@ -421,8 +421,8 @@ VECTOR_INSTRUCTION_TEMPLATE = {
 }
 
 SUPPORTED_CUSTOM_INSTRUCTION = {
-    "custom_mvin": [123, 2, 4],
-    "custom_mvout": [123, 3, 4]
+    "custom_mvin": [43, 2, 4],
+    "custom_mvout": [43, 3, 4]
 }
 
 SUPPORTED_INSTRUCTION = [
@@ -786,7 +786,7 @@ class riscv_parser:
             cycle.loop_path[last_key].suffix_node = loop_end_node(info[0], node_id=idx)
 
 
-        for cycle, info in zip(self.cycle_list, loop_info_list):
+        for cycle, info in zip(self.cycle_list[:1], loop_info_list[:1]):
             # Construct rough instruction dependency
             scoreboard = {}
             for inst in cycle.iter_insts():
