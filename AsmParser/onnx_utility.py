@@ -35,16 +35,17 @@ class node:
         return onnx_node
 
 class loop_index_node(node):
-     def __init__(self, loop_info, node_id=0):
+     def __init__(self, loop_idx, loop_info, node_id=0):
         super().__init__(node_id)
-        self.torchsim_start = []
-        self.torchsim_end = []
-        self.torchsim_stride = []
-        for start, end, stride in loop_info.values():
-            self.torchsim_start.append(start)
-            self.torchsim_end.append(end)
-            self.torchsim_stride.append(stride)
+        self.torchsim_loop_idx = loop_idx
+        self.torchsim_start = loop_info[0]
+        self.torchsim_end = loop_info[1]
+        self.torchsim_stride = loop_info[2]
 
+class loop_end_node(node):
+    def __init__(self, loop_idx, node_id=0):
+        super().__init__(node_id)
+        self.torchsim_loop_idx = loop_idx
 
 class memory_node(node):
     def __init__(self, tile_info, inst_list=list(), node_id=0):

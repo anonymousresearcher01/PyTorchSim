@@ -4,7 +4,7 @@ import onnx
 if __name__ == "__main__":
     from onnx_utility import loop_index_node, load_node, store_node, compute_node, connect_nodes, dump_onnx_graph
 else:
-    from AsmParser.onnx_utility import loop_index_node, load_node, store_node, compute_node, connect_nodes, dump_onnx_graph
+    from AsmParser.onnx_utility import loop_index_node, loop_end_node, load_node, store_node, compute_node, connect_nodes, dump_onnx_graph
 
 
 # Operand Attributes
@@ -58,6 +58,10 @@ VECTOR_WV_TEMPLATE = [REGISTER|DEST, REGISTER, REGISTER]
 VECTOR_WX_TEMPLATE = [REGISTER|DEST, REGISTER, REGISTER]
 
 CUSTOM_R_TEMPLATE = [REGISTER|DEST,  REGISTER, REGISTER]
+
+VSETVLI_TEMPLATE = [REGISTER|DEST, REGISTER]
+VSETIVLI_TEMPLATE = [REGISTER|DEST, IMMEDIATE]
+VSETVL_TEMPLATE = [REGISTER|DEST, REGISTER, REGISTER]
 
 R32_INSTUCTION_TEMPLATE = {
     # RV32
@@ -391,15 +395,29 @@ VECTOR_INSTRUCTION_TEMPLATE = {
     "vs4r.v": VECTOR_STORE_TEMPLATE,
     "vs8r.v": VECTOR_STORE_TEMPLATE,
 
+    "vsetvli": R2_TEMPLATE,
+    "vsetivli": RI_TEMPLATE,
+
     # For arithmetic vector instuction
     ".vv": VECTOR_VV_TEMPLATE,
     ".vx": VECTOR_VX_TEMPLATE,
+    ".vs": VECTOR_VX_TEMPLATE,
     ".vi": VECTOR_VI_TEMPLATE,
     ".vf": VECTOR_VF_TEMPLATE,
     ".vv": VECTOR_VV_TEMPLATE,
 
     ".wv": VECTOR_WV_TEMPLATE,
-    ".wx": VECTOR_WX_TEMPLATE
+    ".wx": VECTOR_WX_TEMPLATE,
+
+    ".v.v": R2_TEMPLATE,
+    ".v.x": R2_TEMPLATE,
+    ".v.f": R2_TEMPLATE,
+    ".v.i": RI_TEMPLATE,
+
+    ".x.s": R2_TEMPLATE,
+    ".s.x": R2_TEMPLATE,
+    ".f.s": R2_TEMPLATE,
+    ".s.f": R2_TEMPLATE
 }
 
 SUPPORTED_CUSTOM_INSTRUCTION = {
@@ -496,7 +514,7 @@ class rv_instruction:
             if self.opcode not in inst_list:
                 continue
 
-            if len(inst_list[self.opcode]) != len(target_list[1:]):
+            if len(inst_list[self.opcode]) != len(target_list[1:]) and "vset" not in self.opcode:
                 print(f"[Warn] {self.opcode}'s template mismatch in '{assembly_code}'")
 
             for op_type, value in zip(inst_list[self.opcode], target_list[1:]):
@@ -585,8 +603,8 @@ class loop:
         for idx, bb in enumerate(path):
             self.loop_path[idx] = bb
 
-    def __equal__(self, path):
-        return set(self.loop_path.values()) == set(path)
+    def __eq__(self, other) -> bool:
+        return set(self.loop_path.values()) == set(other.loop_path.values())
 
     def __str__(self) -> str:
         join_str = "->"
@@ -603,6 +621,8 @@ class basic_block:
         self.outputs = []
         self.visited = False
         self.cycle_list = []
+        self.prefix_node = None
+        self.suffix_node = None
 
         if name != "":
             self.name = f"{name}"
@@ -627,7 +647,7 @@ class basic_block:
         lines = {}
         asm = ([i.asm.strip().rstrip() for i in self.insts])
         for idx, asm_line in enumerate(asm):
-            lines[f"inst{idx}"] = asm_line
+            lines[f"inst{idx:02d}"] = asm_line
 
         onnx_node = onnx.helper.make_node(op_type=self.__class__.__name__,
                                           inputs=inputs,
@@ -754,7 +774,19 @@ class riscv_parser:
             print(f"Cycle-path: {cycle}")
 
     def cycle_analysis(self, *args, **kwargs):
-        for idx, cycle in enumerate(self.cycle_list):
+        loop_info_list = list(self.loop_info.items())#[::-1]
+        if len(loop_info_list) != len(self.cycle_list):
+            print("[Error] Generated code and loop information are not matched...")
+            exit(1)
+
+        for idx, (cycle, info) in enumerate(zip(self.cycle_list, loop_info_list)):
+            bb_keys = list(cycle.loop_path)
+            first_key, last_key = bb_keys[0], bb_keys[-1]
+            cycle.loop_path[first_key].prefix_node = loop_index_node(info[0], info[1], node_id=idx)
+            cycle.loop_path[last_key].suffix_node = loop_end_node(info[0], node_id=idx)
+
+
+        for cycle, info in zip(self.cycle_list, loop_info_list):
             # Construct rough instruction dependency
             scoreboard = {}
             for inst in cycle.iter_insts():
@@ -765,72 +797,90 @@ class riscv_parser:
                         scoreboard[op.value].connect_user_inst(inst)
 
             # Cycle analysis phase start
-            self.generate_tile_graph(cycle, *args, suffix=idx, **kwargs)
+            self.generate_tile_graph(cycle, info, *args, **kwargs)
 
             # Clear instruction dependency
             for inst in cycle.iter_insts():
                 inst.clear_dependency()
 
-    def generate_tile_graph(self, cycle, compute_ticks=0, name="tile_graph", suffix=0):
-        current_pointer = {}
-        load_nodes = {}
-        compute_nodes = {}
-        store_nodes = {}
+    def generate_tile_graph(self, cycle, info, name="tile_graph", compute_ticks=0):
+        load_nodes = []
+        store_nodes = []
+        compute_nodes = []
+        inst_to_node = {}
 
-        index_node = loop_index_node(self.loop_info)
-        for inst in cycle.iter_insts():
-            if inst.opcode in DRAM_LOAD:
-                tmp_node = load_node(self.load_tile_info[f"load{len(load_nodes)}"], [inst.asm], len(load_nodes))
-                load_nodes[inst] = tmp_node
-            elif inst.opcode in DRAM_STORE:
-                tmp_node = store_node(self.store_tile_info[f"store{len(store_nodes)}"], [inst.asm], len(store_nodes))
-                store_nodes[inst] = tmp_node
-            elif inst.opcode in SRAM_LOAD or inst.opcode[:2] == "vl":
-                check_compute = [node for node in compute_nodes.values()]
-                if len(check_compute):
-                    check_compute[0].inst.append(inst.asm)
-                    compute_nodes[inst] = check_compute[0]
+        start_node = []
+        last_node = []
+        index_node = []
+        end_node = []
+
+        for bb in cycle.loop_path.values():
+            if bb.prefix_node is not None:
+                for ln in last_node:
+                    connect_nodes(ln, bb.prefix_node)
+                last_node = [bb.prefix_node]
+                index_node.append(bb.prefix_node)
+
+            local_load_nodes = []
+            local_store_nodes = []
+
+            # Create compute node for basic block
+            bb_compute_node = compute_node([], compute_ticks, len(compute_nodes))
+            compute_nodes.append(bb_compute_node)
+
+            for inst in bb.insts:
+                if inst.opcode in DRAM_LOAD:
+                    tmp_node = load_node(self.load_tile_info[f"load{len(load_nodes)}"], [inst.asm], len(load_nodes)+len(local_load_nodes))
+                    local_load_nodes.append(tmp_node)
+                    inst_to_node[inst] = tmp_node
+                    connect_nodes(tmp_node, bb_compute_node)
+                elif inst.opcode in DRAM_STORE:
+                    tmp_node = store_node(self.store_tile_info[f"store{len(store_nodes)}"], [inst.asm], len(store_nodes)+len(local_store_nodes))
+                    local_store_nodes.append(tmp_node)
+                    inst_to_node[inst] = tmp_node
+                    connect_nodes(bb_compute_node, tmp_node)
+                elif inst.opcode in SRAM_LOAD or inst.opcode[:2] == "vl":
+                    bb_compute_node.inst.append(inst.asm)
+                    inst_to_node[inst] = bb_compute_node
                 else:
-                    tmp_node = compute_node([inst.asm], compute_ticks, len(current_pointer))
-                    compute_nodes[inst] = tmp_node
+                    bb_compute_node.inst.append(inst.asm)
+                    inst_to_node[inst] = bb_compute_node
+
+            if len(local_load_nodes):
+                start_node = local_load_nodes
             else:
-                check_compute = [node for node in compute_nodes.values()]
-                check_load = [node for node in load_nodes.values()]
+                start_node = [bb_compute_node]
 
-                if len(check_compute):
-                    check_compute[0].inst.append(inst.asm)
-                    compute_nodes[inst] = check_compute[0]
+            # Link it!
+            for sn in start_node:
+                for ln in last_node:
+                    connect_nodes(ln, sn)
 
-                elif len(check_load):
-                    tmp_node = compute_node([inst.asm], compute_ticks, len(current_pointer))
-                    compute_nodes[inst] = tmp_node
+            if len(local_store_nodes):
+                last_node = local_store_nodes
+            else:
+                last_node = [bb_compute_node]
+
+            if bb.suffix_node is not None:
+                for ln in last_node:
+                    connect_nodes(ln, bb.suffix_node)
+                last_node = [bb.suffix_node]
+                end_node.append(bb.suffix_node)
+
+            # Update to global list
+            load_nodes += local_load_nodes
+            store_nodes += local_store_nodes
 
         # NOTE. Since current custom_mvin instruciton has no dependency between following vload instruction.
         # So, Make dependency forcefully
-        unique_load_nodes = set([node for node in load_nodes.values()])
-        unique_compute_nodes = set([node for node in compute_nodes.values()])
-        unique_store_nodes = set([node for node in store_nodes.values()])
-
-        # Link load/store and compute node
-        for ln in unique_load_nodes:
-            for cn in unique_compute_nodes:
-                connect_nodes(ln, cn)
-        for cn in unique_compute_nodes:
-            for sn in unique_store_nodes:
-                connect_nodes(cn, sn)
-
-        # Link load/store and index node
-        for ln in unique_load_nodes:
-            connect_nodes(index_node, ln)
-
-        for sn in unique_store_nodes:
-            connect_nodes(index_node, sn)
-
-        onnx_node_list = [index_node.to_onnx()] + [node.to_onnx() for node in unique_load_nodes] + \
-                            [node.to_onnx() for node in unique_compute_nodes] + \
-                            [node.to_onnx() for node in unique_store_nodes]
+        onnx_node_list = [node.to_onnx() for node in index_node] + \
+                            [node.to_onnx() for node in load_nodes] + \
+                            [node.to_onnx() for node in compute_nodes] + \
+                            [node.to_onnx() for node in store_nodes] + \
+                            [node.to_onnx() for node in end_node]
         if onnx_node_list:
-            dump_onnx_graph(f"{name}_{suffix}.onnx", onnx_node_list)
+            dump_onnx_graph(f"{name}.onnx", onnx_node_list)
+        return index_node, end_node, onnx_node_list
 
 if __name__ == "__main__":
     # For Test!
