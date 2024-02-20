@@ -5,6 +5,7 @@ from torch._inductor.codegen.common import Kernel
 from torch._inductor.ir import TensorBox
 from torch._inductor.ir import TemplateBuffer
 from torch._inductor.utils import override_lowering
+from torch._inductor.lowering import register_lowering, get_overloads, lowerings
 
 aten = torch.ops.aten
 
@@ -72,8 +73,9 @@ class LLVMGemmTemplate(LLVMTemplate):
     def render(self):
         pass
 
-@override_lowering(aten.mm)
 def tuned_mm(mat1, mat2, * ,layout=None):
     llvm_template = LLVMGemmTemplate()
 
     return llvm_template.generate()
+
+lowerings.update({getattr(aten.mm, overload): tuned_mm for overload in aten.mm.overloads()})

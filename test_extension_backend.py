@@ -123,7 +123,7 @@ class ExtensionBackendTests(TestCase):
             return torch.matmul(a, b)
 
         metrics.reset()
-        opt_fn = torch.compile()(reduce_sum)
+        opt_fn = torch.compile()(custom_matmul)
         res = opt_fn(x, y)
         self.assertEqual(ref, res.to(device="cpu"))
 
