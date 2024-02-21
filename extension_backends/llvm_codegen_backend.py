@@ -924,3 +924,6 @@ class MatrixLLVMScheduling(LLVMScheduling):
         wrapper = V.graph.wrapper_code
         ex_kernel.codegen_kernel(wrapper)
         pass
+
+    def codegen_template(self, template_node, epilogue_nodes):
+        raise NotImplementedError
