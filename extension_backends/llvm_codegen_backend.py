@@ -319,28 +319,10 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
         code.writeline(f"ret void")
         return code
 
-    def define_kernel(self, wrapper, src_code, kernel_name):
-        if src_code in wrapper.src_to_kernel:
-            kernel_name = wrapper.src_to_kernel[src_code]
-        else:
-            wrapper.src_to_kernel[src_code] = kernel_name
-            wrapper.define_kernel(kernel_name, src_code, cuda=False)
-
-    def codegen_kernel(self, wrapper):
-        arg_defs, call_args, arg_attributes = self.args.llvm_argdefs()
-        kernel_name = f"Extensin_Kernel"
+    def codegen_kernel(self, kernel_name):
+        wrapper = V.graph.wrapper_code
+        arg_defs, _, arg_attributes = self.args.llvm_argdefs()
         code = self._codegen_kernel(arg_defs, kernel_name)
-
-        codecache_def = IndentedBuffer()
-        if not V.graph.cpp_wrapper:
-            codecache_def.writeline("custom_async_compile.llvm('''")
-        codecache_def.splice(code)
-        if not V.graph.cpp_wrapper:
-            codecache_def.writeline("''', ")
-            codecache_def.writeline("loop_info=loop_info,")
-            codecache_def.writeline("load_tile_info=load_tile_info,")
-            codecache_def.writeline("store_tile_info=store_tile_info,")
-            codecache_def.writeline("arg_attributes=arg_attributes)")
 
         wrapper.add_import_once('\nprint(f\'Wrapper Codegen Path = {__file__}\')')
         wrapper.add_import_once(f'\nfrom extension_codecache import CustomAsyncCompile')
@@ -350,10 +332,14 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
         wrapper.add_import_once(f"load_tile_info = {self.load_desc}")
         wrapper.add_import_once(f"store_tile_info = {self.store_desc}")
         wrapper.add_import_once(f"arg_attributes = {arg_attributes}")
-        self.define_kernel(wrapper, codecache_def.getvalue(), kernel_name)
-        # generate the code to call this
-        wrapper.generate_kernel_call(kernel_name, call_args, cuda=False)
+
         return code.getvalue()
+
+    def call_kernel(self, kernel_name):
+        wrapper = V.graph.wrapper_code
+        _, call_args, arg_attributes = self.args.llvm_argdefs()
+       # generate the code to call this
+        wrapper.generate_kernel_call(kernel_name, call_args, cuda=False)
 
     def _codegen_kernel(self, arg_defs, kernel_name):
         arg_defs = ",\n".ljust(25).join(arg_defs)
@@ -862,6 +848,7 @@ class LoopNest:
 
 class LLVMScheduling(BaseScheduling):
     count = 0
+    target_kernel = LLVMKernel
     def __init__(self, scheduler):
         self.scheduler = scheduler
         self._scheduling = cpp.CppScheduling(scheduler)
@@ -879,15 +866,16 @@ class LLVMScheduling(BaseScheduling):
         _, (group, reduction_group) = max(
             nodes, key=lambda x: int(x.is_reduction())
         ).group
-        ex_kernel = LLVMKernel()
+        ex_kernel = self.target_kernel()
         with ex_kernel as kernel:
             for node in nodes:
                 vars, reduction_vars = ex_kernel.set_ranges(group, reduction_group)
                 node.run(vars, reduction_vars)
 
-        wrapper = V.graph.wrapper_code
-        ex_kernel.codegen_kernel(wrapper)
-        pass
+        kernel_name = f"extension_kernel"
+        src_code = ex_kernel.codegen_kernel(kernel_name=kernel_name)
+        self.define_kernel(src_code, kernel_name)
+        ex_kernel.call_kernel(kernel_name)
 
     def codegen_sync(self):
         pass
@@ -895,35 +883,26 @@ class LLVMScheduling(BaseScheduling):
     def flush(self):
         self._scheduling.flush()
 
-class VectorizedLLVMScheduling(LLVMScheduling):
-    def codegen_nodes(self, nodes):
-        _, (group, reduction_group) = max(
-            nodes, key=lambda x: int(x.is_reduction())
-        ).group
-        ex_kernel = VectorizedLLVMKernel()
-        with ex_kernel as kernel:
-            for node in nodes:
-                vars, reduction_vars = ex_kernel.set_ranges(group, reduction_group)
-                node.run(vars, reduction_vars)
-
+    def define_kernel(self, src_code, kernel_name):
         wrapper = V.graph.wrapper_code
-        ex_kernel.codegen_kernel(wrapper)
-        pass
+        if src_code in wrapper.src_to_kernel:
+            kernel_name = wrapper.src_to_kernel[src_code]
+        else:
+            wrapper.src_to_kernel[src_code] = kernel_name
+
+            codecache_def = IndentedBuffer()
+            codecache_def.writeline("custom_async_compile.llvm('''")
+            codecache_def.splice(src_code)
+            codecache_def.writeline("''', ")
+            codecache_def.writeline("loop_info=loop_info,")
+            codecache_def.writeline("load_tile_info=load_tile_info,")
+            codecache_def.writeline("store_tile_info=store_tile_info,")
+            codecache_def.writeline("arg_attributes=arg_attributes)")
+
+            wrapper.define_kernel(kernel_name, codecache_def.getvalue(), cuda=False)
+
+class VectorizedLLVMScheduling(LLVMScheduling):
+    target_kernel = VectorizedLLVMKernel
 
 class MatrixLLVMScheduling(LLVMScheduling):
-    def codegen_nodes(self, nodes):
-        _, (group, reduction_group) = max(
-            nodes, key=lambda x: int(x.is_reduction())
-        ).group
-        ex_kernel = MatrixLLVMKernel()
-        with ex_kernel as kernel:
-            for node in nodes:
-                vars, reduction_vars = ex_kernel.set_ranges(group, reduction_group)
-                node.run(vars, reduction_vars)
-
-        wrapper = V.graph.wrapper_code
-        ex_kernel.codegen_kernel(wrapper)
-        pass
-
-    def codegen_template(self, template_node, epilogue_nodes):
-        raise NotImplementedError
+    target_kernel = MatrixLLVMKernel
