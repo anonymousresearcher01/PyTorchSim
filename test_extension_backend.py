@@ -2,11 +2,14 @@
 import os
 import shutil
 import sys
+import time
+import contextlib
 import unittest
 
 import torch
 import torch._dynamo
 import torch.utils.cpp_extension
+from torch._inductor import config
 
 try:
     from extension_backends.llvm_codegen_backend import (
@@ -27,7 +30,7 @@ from torch._inductor.codegen.common import (
     register_backend_for_device,
 )
 from torch.testing._internal.common_utils import IS_MACOS
-from torch.testing._internal.common_utils import TestCase
+from torch.testing._internal.common_utils import TestCase as TorchTestCase
 
 def remove_build_path():
     if sys.platform == "win32":
@@ -36,6 +39,42 @@ def remove_build_path():
     default_build_root = torch.utils.cpp_extension.get_default_build_root()
     if os.path.exists(default_build_root):
         shutil.rmtree(default_build_root, ignore_errors=True)
+
+class TestCase(TorchTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._stack = contextlib.ExitStack()
+        cls._stack.enter_context(
+            config.patch(
+                {
+                    "debug": True,
+                    "debug_index_asserts": True,
+                    "cpp.min_chunk_size": 1,
+                    "triton.autotune_pointwise": False,  # too slow
+                    "implicit_fallbacks": False,
+                    "generate_intermediate_hooks": True,
+                }
+            )
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._stack.close()
+        super().tearDownClass()
+
+    def setUp(self):
+        torch._dynamo.reset()
+        torch._inductor.metrics.reset()
+        super().setUp()
+        self._start = time.perf_counter()
+
+    def tearDown(self):
+        super().tearDown()
+        torch._dynamo.reset()
+        if os.environ.get("ERROR_ON_SLOW") == "1":
+            elapsed = time.perf_counter() - self._start
+            assert elapsed < 120
 
 
 class ExtensionBackendTests(TestCase):

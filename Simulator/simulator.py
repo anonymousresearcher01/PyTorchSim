@@ -30,7 +30,8 @@ class FunctionalSimulator():
         try:
             subprocess.check_call(run_cmd)
         except subprocess.CalledProcessError as e:
-            print("Spike error")
+            print("Command failed with exit code", e.returncode)
+            print("Error output:", e.output)
             assert(0)
 
         for (arg_name, arg_attribute), arg in zip(self.arg_attributes.items(), self.args):
@@ -48,7 +49,8 @@ class CycleSimulator():
             lines = output.decode('utf-8').split('\n')
             ticks = int(lines[-2] if lines[-1] == '' else lines[-1])
         except subprocess.CalledProcessError as e:
-            print(e)
+            print("Command failed with exit code", e.returncode)
+            print("Error output:", e.output)
             assert(0)
 
         return ticks

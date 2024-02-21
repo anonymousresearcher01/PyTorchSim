@@ -110,6 +110,8 @@ class LLVMCodeCache:
                     subprocess.check_call(opt_cmd)
                     subprocess.check_call(llc_cmd)
                 except subprocess.CalledProcessError as e:
+                    print("Command failed with exit code", e.returncode)
+                    print("Error output:", e.output)
                     assert(0)   # Todo: make LLVMCompileError
 
                 # Generate LLVM kernel calller and binary for validation
@@ -193,5 +195,11 @@ class CustomAsyncCompile(AsyncCompile):
             except Exception as e:
                 print(f"Error while reading.")
             cmd = get_onnxim_command(result_path)
-            subprocess.check_call(shlex.split(cmd))
+
+            try:
+                subprocess.check_call(shlex.split(cmd))
+            except subprocess.CalledProcessError as e:
+                print("Command failed with exit code", e.returncode)
+                print("Error output:", e.output)
+                assert(0)
         return dummy_simulator

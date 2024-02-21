@@ -173,5 +173,6 @@ class LLVMKernelCallerCodeGen():
             subprocess.check_call(kernel_compile_cmd)
             subprocess.check_call(link_cmd)
         except subprocess.CalledProcessError as e:
-            print("Compile error")
+            print("Command failed with exit code", e.returncode)
+            print("Error output:", e.output)
             assert(0)
