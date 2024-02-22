@@ -321,9 +321,13 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
 
     def codegen_kernel(self, kernel_name):
         wrapper = V.graph.wrapper_code
-        arg_defs, _, arg_attributes = self.args.llvm_argdefs()
+        arg_defs, _, _ = self.args.llvm_argdefs()
         code = self._codegen_kernel(arg_defs, kernel_name)
+        return code.getvalue()
 
+    def meta_kernel(self):
+        wrapper = V.graph.wrapper_code
+        _, _, arg_attributes = self.args.llvm_argdefs()
         wrapper.add_import_once('\nprint(f\'Wrapper Codegen Path = {__file__}\')')
         wrapper.add_import_once(f'\nfrom extension_codecache import CustomAsyncCompile')
         wrapper.add_import_once(f'\ncustom_async_compile = CustomAsyncCompile()')
@@ -333,7 +337,6 @@ class LLVMKernel(llvm_common.BaseLLVMKernel):
         wrapper.add_import_once(f"store_tile_info = {self.store_desc}")
         wrapper.add_import_once(f"arg_attributes = {arg_attributes}")
 
-        return code.getvalue()
 
     def call_kernel(self, kernel_name):
         wrapper = V.graph.wrapper_code
@@ -874,6 +877,7 @@ class LLVMScheduling(BaseScheduling):
 
         kernel_name = f"extension_kernel"
         src_code = ex_kernel.codegen_kernel(kernel_name=kernel_name)
+        ex_kernel.meta_kernel()
         self.define_kernel(src_code, kernel_name)
         ex_kernel.call_kernel(kernel_name)
 
@@ -906,3 +910,18 @@ class VectorizedLLVMScheduling(LLVMScheduling):
 
 class MatrixLLVMScheduling(LLVMScheduling):
     target_kernel = MatrixLLVMKernel
+    def codegen_template(self, template_node, epilogue_nodes):
+        _, (numel, rnumel) = template_node.group
+
+        template_buffer = template_node.node
+        kernel, render = template_buffer.make_kernel_render(template_buffer, epilogue_nodes=epilogue_nodes)
+        with kernel:
+            for node in [template_node, *epilogue_nodes]:
+                node.mark_run()
+            src_code = render()
+
+        with V.set_kernel_handler(kernel):
+            node_schedule = [template_node, *epilogue_nodes]
+            kernel.meta_kernel()
+            self.define_kernel(src_code, kernel.kernel_name)
+        kernel.call_kernel()
