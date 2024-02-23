@@ -10,7 +10,7 @@ from torch._inductor.virtualized import V
 from torch._inductor.utils import IndentedBuffer
 
 from . import llvm_common
-from . import llvm_template
+from . import llvm_lowering
 
 def reduction_alloc(code, stack, vars):
     # FIXME. USE VARIABLES' TYPE...
