@@ -648,6 +648,8 @@ class basic_block:
         asm = ([i.asm.strip().rstrip() for i in self.insts])
         for idx, asm_line in enumerate(asm):
             lines[f"inst{idx:02d}"] = asm_line
+            if idx > 10:
+                break
 
         onnx_node = onnx.helper.make_node(op_type=self.__class__.__name__,
                                           inputs=inputs,
@@ -769,6 +771,13 @@ class riscv_parser:
                 if not is_duplicated:
                     self.cycle_list.append(bb_cycle)
 
+        for cycle in self.cycle_list:
+            last_key = list(cycle.loop_path)[-1]
+            # Handle trampoline pattern ex) j label N
+            if len(cycle.loop_path[last_key].insts) == 1 and \
+                cycle.loop_path[last_key].insts[0].opcode == "j":
+                del cycle.loop_path[last_key]
+
     def print_cycles(self):
         for cycle in self.cycle_list:
             print(f"Cycle-path: {cycle}")
@@ -782,6 +791,7 @@ class riscv_parser:
         for idx, (cycle, info) in enumerate(zip(self.cycle_list, loop_info_list)):
             bb_keys = list(cycle.loop_path)
             first_key, last_key = bb_keys[0], bb_keys[-1]
+
             cycle.loop_path[first_key].prefix_node = loop_index_node(info[0], info[1], node_id=idx)
             cycle.loop_path[last_key].suffix_node = loop_end_node(info[0], node_id=idx)
 

@@ -33,6 +33,8 @@ class node:
 
         for idx, asm_line in enumerate(self.inst):
             attr_dict[f"inst{idx:02x}"] = asm_line
+            if idx > 10:
+                break
 
         onnx_node = onnx.helper.make_node(op_type=self.__class__.__name__,
                                           inputs=inputs,
