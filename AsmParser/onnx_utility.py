@@ -31,10 +31,12 @@ class node:
         for var in [attr for attr in dir(self) if not callable(getattr(self, attr)) and attr.startswith("torchsim")]:
             attr_dict[var] = getattr(self, var)
 
-        for idx, asm_line in enumerate(self.inst):
+        inst_list = self.inst
+        if len(self.inst) > 20:
+            inst_list = self.inst[:10] + ["..."] + self.inst[-10:]
+
+        for idx, asm_line in enumerate(inst_list):
             attr_dict[f"inst{idx:02x}"] = asm_line
-            if idx > 10:
-                break
 
         onnx_node = onnx.helper.make_node(op_type=self.__class__.__name__,
                                           inputs=inputs,
