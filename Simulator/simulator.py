@@ -46,11 +46,12 @@ class CycleSimulator():
         try:
             gem5_cmd = [extension_codecache.GEM5_PATH, extension_codecache.GEM5_SCRIPT_PATH, target_binary]
             output = subprocess.check_output(gem5_cmd)
-            lines = output.decode('utf-8').split('\n')
-            ticks = int(lines[-2] if lines[-1] == '' else lines[-1])
         except subprocess.CalledProcessError as e:
             print("Command failed with exit code", e.returncode)
             print("Error output:", e.output)
             assert(0)
 
-        return ticks
+        with open("m5out/stats.txt", "r") as stat_file:
+            raw_list = stat_file.readlines()
+            cycle_list = [int(line.split()[1]) for line in raw_list if "system.cpu.numCycles" in line]
+        return cycle_list

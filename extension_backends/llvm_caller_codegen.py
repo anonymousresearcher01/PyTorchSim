@@ -155,8 +155,8 @@ class LLVMKernelCallerCodeGen():
     def compile_wih_kernel(self, write_path, llvm_name, wrapper_name, binary_name):
         main_path = os.path.join(write_path, self.add_extention(wrapper_name, 'c'))
         main_obj_path = os.path.join(write_path, self.add_extention(wrapper_name, 'o'))
-        kernel_path = os.path.join(write_path, self.add_extention(llvm_name + '_opt', 'll'))
-        kernel_obj_path = os.path.join(write_path, self.add_extention(llvm_name +'_kernel', 'o'))
+        kernel_path = os.path.join(write_path, self.add_extention(llvm_name, 's'))
+        kernel_obj_path = os.path.join(write_path, self.add_extention(llvm_name, 'o'))
 
         main_compile = f'riscv64-unknown-elf-gcc -march=rv64gcv -c {main_path} -o {main_obj_path}'
         kernel_compile = f'clang -c --target="riscv64" -march=rv64gcv -O2 -nostdlib {kernel_path} -o {kernel_obj_path}'

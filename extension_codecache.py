@@ -114,6 +114,15 @@ class LLVMCodeCache:
                     print("Error output:", e.output)
                     assert(0)   # Todo: make LLVMCompileError
 
+                # Launch tile graph generator
+                tile_graph_generator = riscv_parser()
+                tile_graph_generator.load_file(output_path,
+                                               loop_info=loop_info,
+                                               load_tile_info=load_tile_info,
+                                               store_tile_info=store_tile_info)
+                # Create code for sampling
+                tile_graph_generator.dump_sampling_code(output_path[:-2] + "_sample.s")
+
                 # Generate LLVM kernel calller and binary for validation
                 if TORCHSIM_VALIDATION_MODE:
                     val_llvm_caller = LLVMKernelCallerCodeGen(TORCHSIM_VALIDATION_MODE, arg_attributes)
@@ -123,25 +132,15 @@ class LLVMCodeCache:
                 # Generate LLVM kernel calller and binary for cycle calculation
                 cycle_llvm_caller = LLVMKernelCallerCodeGen(False, arg_attributes)
                 cycle_llvm_caller.generate_wrapper_file(write_path, cycle_wrapper_name)
-                cycle_llvm_caller.compile_wih_kernel(write_path, key, cycle_wrapper_name, cycle_binary_name)
+                cycle_llvm_caller.compile_wih_kernel(write_path, key + "_sample", cycle_wrapper_name, cycle_binary_name)
 
                 # Run cyclesim
                 cyclesim = CycleSimulator()
-                ticks = cyclesim.compile_and_simulate(os.path.join(write_path, cycle_binary_name))
-                nr_range = [len(range(*range_info)) for range_info in loop_info.values()]
-                nr_iters = functools.reduce(operator.mul, nr_range, 1)
-                compute_ticks = ticks // nr_iters
-
-                # launch tile graph generator
-                tile_graph_generator = riscv_parser()
-                tile_graph_generator.load_file(output_path,
-                                               loop_info=loop_info,
-                                               load_tile_info=load_tile_info,
-                                               store_tile_info=store_tile_info)
+                cycle_list = cyclesim.compile_and_simulate(os.path.join(write_path, cycle_binary_name))
 
                 if TORCHSIM_DUMP_FILE:
                     tile_graph_generator.dump_basic_block_graph(os.path.join(write_path, "basic_block.onnx"))
-                tile_graph_generator.cycle_analysis(compute_ticks=compute_ticks, name=os.path.join(write_path, "tile_graph"))
+                tile_graph_generator.cycle_analysis(cycle_list=cycle_list, name=os.path.join(write_path, "tile_graph"))
         return key
 
 def get_onnxim_command(model_path):

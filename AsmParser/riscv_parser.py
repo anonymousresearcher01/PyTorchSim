@@ -397,6 +397,7 @@ VECTOR_INSTRUCTION_TEMPLATE = {
 
     "vsetvli": R2_TEMPLATE,
     "vsetivli": RI_TEMPLATE,
+    "vmv" : R2_TEMPLATE,
 
     # For arithmetic vector instuction
     ".vv": VECTOR_VV_TEMPLATE,
@@ -456,6 +457,9 @@ DRAM_STORE = ["custom_mvout"]
 SRAM_LOAD = []
 SRAM_STORE = []
 
+M5OPS_RESET_STAT = "\t.insn r CUSTOM_3, 0, 0x40, x0, x0, x0\n"
+M5OPS_DUMP_STAT = "\t.insn r CUSTOM_3, 0, 0x41, x0, x0, x0\n"
+
 class rv_operand:
     def __init__(self, op_type, value) -> None:
         self.type = op_type & TYPE_MASK
@@ -500,15 +504,20 @@ class rv_operand:
         return value
 
 class rv_instruction:
-    def __init__(self, label, assembly_code:str):
+    def __init__(self, label, assembly_code:str, is_attribute=False):
         self.label = label
-        self.asm = assembly_code.strip().rstrip()
+        self.asm = assembly_code
+        self.raw_asm = assembly_code
         target_list = self.split_assembly(assembly_code)
         self.opcode = target_list[0]
         self.operands= []
         self.basic_block = None
         self.user_insts = []
         self.src_insts = []
+        self.is_attribute = is_attribute
+
+        if is_attribute:
+            return
 
         for inst_list in SUPPORTED_INSTRUCTION:
             if self.opcode not in inst_list:
@@ -531,9 +540,20 @@ class rv_instruction:
                 if len(template) != len(target_list[1:]):
                     print(f"[Warn] {self.opcode}'s template mismatch in '{assembly_code}'")
 
+                whole_register = 1
+                if "2r" in self.opcode:
+                    whole_register = 2
+                if "4r" in self.opcode:
+                    whole_register = 4
+                if "8r" in self.opcode:
+                    whole_register = 8
+
                 for op_type, value in zip(template, target_list[1:]):
                     self.operands.append(rv_operand(op_type, value))
-
+                    if (REGISTER == TYPE_MASK & op_type and whole_register > 1):
+                        for i in range(1, whole_register):
+                            next_reg = f"{value[0]}{int(value[1:])+i}"
+                            self.operands.append(rv_operand(op_type, next_reg))
                 return
 
         # For custom instruction
@@ -577,10 +597,18 @@ class rv_instruction:
         return False
 
     @classmethod
+    def is_comment(cls, assembly_code:str):
+        target_list = cls.split_assembly(assembly_code)
+
+        if not len(target_list):
+            return True
+        return False
+
+    @classmethod
     def is_attribute(cls, assembly_code:str):
         target_list = cls.split_assembly(assembly_code)
 
-        if not len(target_list) or target_list[0] in ATTRIBUTE_LIST:
+        if len(target_list) and target_list[0] in ATTRIBUTE_LIST:
             return True
         if target_list[0][:4] == ".cfi":
             return True
@@ -588,14 +616,11 @@ class rv_instruction:
         return False
 
     def __str__(self) -> str:
-        join_str = "\n\t"
-        operand_str = [str(op) for op in self.operands]
-        info =  f"[OPCODE]:{self.opcode}"
         if self.label != "":
-            info = f"{info}, Label: {self.label}"
-        info = f"{info}\n\t"
-        return f"{info}{join_str.join(operand_str)}"
-
+            info = f"{self.label}:\n"
+        else:
+            info = ""
+        return f"{info}{self.raw_asm}"
 
 class loop:
     def __init__(self, path) -> None:
@@ -646,10 +671,13 @@ class basic_block:
         #asm = "\n"
         lines = {}
         asm = ([i.asm.strip().rstrip() for i in self.insts])
-        for idx, asm_line in enumerate(asm):
+
+        inst_list = asm
+        if len(asm) > 20:
+            inst_list = asm[:10] + ["..."] + asm[-10:]
+
+        for idx, asm_line in enumerate(inst_list):
             lines[f"inst{idx:02d}"] = asm_line
-            if idx > 10:
-                break
 
         onnx_node = onnx.helper.make_node(op_type=self.__class__.__name__,
                                           inputs=inputs,
@@ -680,6 +708,7 @@ class basic_block:
 
 class riscv_parser:
     def __init__(self) -> None:
+        self.asm_list = []
         self.inst_list = []
         self.bb_list = []
         self.cycle_list = []
@@ -689,19 +718,24 @@ class riscv_parser:
 
     def load_file(self, name, loop_info={}, load_tile_info={}, store_tile_info={}):
         with open(name) as file:
-            asm_lines = file.readlines()[1:]
+            asm_lines = file.readlines()
 
         label = ""
         for asm_line in asm_lines:
+            is_attribute = False
             if rv_instruction.is_label(asm_line):
                 label = rv_instruction.split_assembly(asm_line)[0][:-1]
                 continue
 
-            if rv_instruction.is_attribute(asm_line):
+            if rv_instruction.is_comment(asm_line):
                 continue
 
-            self.inst_list.append(rv_instruction(label, asm_line))
+            if rv_instruction.is_attribute(asm_line):
+                is_attribute = True
+
+            self.asm_list.append(rv_instruction(label, asm_line, is_attribute))
             label = ""
+        self.inst_list = [inst for inst in self.asm_list if not inst.is_attribute]
 
         # Load meta data (loop, memory access info)
         self.loop_info = loop_info
@@ -782,6 +816,50 @@ class riscv_parser:
         for cycle in self.cycle_list:
             print(f"Cycle-path: {cycle}")
 
+    def dump_sampling_code(self, file):
+        for cycle in self.cycle_list:
+            bb_name_list = [bb.name for bb in cycle.loop_path.values()]
+            inst_list = list(cycle.iter_insts())
+
+            b_insts = [inst for inst in inst_list if inst.opcode in BRANCHES]
+            branch = b_insts[-1]
+            branch_label = branch.operands[-1].value
+            branch_idx = self.asm_list.index(branch)
+
+            if branch_label in bb_name_list:
+                # Make it to nop for a escape
+                self.asm_list[branch_idx].raw_asm = "\tnop\n"
+            else:
+                # Make it to unconditional jump for a escape
+                self.asm_list[branch_idx].raw_asm = f"\tj\t{branch_label}\n"
+
+        for bb in self.cycle_list[0].loop_path.values():
+            first_inst = bb.insts[0]
+            last_inst = bb.insts[-1]
+
+            first_idx = self.asm_list.index(first_inst)
+
+            self.asm_list.pop(first_idx)
+            if first_inst.label != "":
+                label = first_inst.label
+            else:
+                label = ""
+            reset_insn = rv_instruction(label, M5OPS_RESET_STAT, True)
+            changed_insn = rv_instruction("", first_inst.raw_asm, True)
+            new_inst = [reset_insn, changed_insn]
+
+            # Update with sampling instruction
+            self.asm_list[first_idx:first_idx] = new_inst
+
+            last_idx = self.asm_list.index(last_inst)
+            dump_isn = rv_instruction("", M5OPS_DUMP_STAT, True)
+            self.asm_list[last_idx:last_idx] = [dump_isn]
+
+        with open(file, "w") as f:
+            lines = [str(inst) for inst in self.asm_list]
+            f.writelines(lines)
+
+
     def cycle_analysis(self, *args, **kwargs):
         loop_info_list = list(self.loop_info.items())#[::-1]
         if len(loop_info_list) != len(self.cycle_list):
@@ -813,7 +891,7 @@ class riscv_parser:
             for inst in cycle.iter_insts():
                 inst.clear_dependency()
 
-    def generate_tile_graph(self, cycle, info, name="tile_graph", compute_ticks=0):
+    def generate_tile_graph(self, cycle, info, name="tile_graph", cycle_list=list):
         load_nodes = []
         store_nodes = []
         compute_nodes = []
@@ -838,7 +916,7 @@ class riscv_parser:
             local_store_nodes = []
 
             # Create compute node for basic block
-            bb_compute_node = compute_node([], compute_ticks, len(compute_nodes))
+            bb_compute_node = compute_node([], cycle_list.pop(0), len(compute_nodes))
             compute_nodes.append(bb_compute_node)
             all_nodes.append(bb_compute_node)
 
@@ -913,6 +991,7 @@ if __name__ == "__main__":
     parser = riscv_parser()
     parser.load_file("vectoradd.s")
 
+    parser.dump_sampling_code("test.s")
     parser.dump_basic_block_graph("basic_block.onnx")
     parser.print_cycles()
     parser.cycle_analysis()
