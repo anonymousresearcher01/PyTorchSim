@@ -10,8 +10,8 @@ import functools
 import torch
 from torch._inductor.codecache import AsyncCompile, get_lock_dir, get_hash, write
 from AsmParser.riscv_parser import riscv_parser
-from PyTorchSimFrontend.llvm_common import LLVMKernelArgs
-from PyTorchSimFrontend.llvm_caller_codegen import LLVMKernelCallerCodeGen
+from PyTorchSimFrontend.llvm.llvm_caller_codegen import LLVMKernelCallerCodeGen
+from PyTorchSimFrontend.mlir.mlir_caller_codegen import MLIRKernelCallerCodeGen
 from Simulator.simulator import FunctionalSimulator, CycleSimulator
 
 LOCK_TIMEOUT = 600
@@ -55,6 +55,68 @@ def llvm_compile_command(input, output):
             {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v -O2 {opt_output} -o {output}
         """,
     ).strip()]
+
+def mlir_compile_command(filename):
+    return [re.sub(r"[ \n]+", " ",
+        f"""
+            {TORCHSIM_LLVM_PATH}/mlir-opt -lower-affine -finalize-memref-to-llvm -convert-arith-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm -convert-index-to-llvm -convert-vector-to-llvm -reconcile-unrealized-casts {filename}.mlir -o {filename}_llvm.mlir
+        """,
+    ).strip(),
+            re.sub(r"[ \n]+", " ",
+        f"""
+            {TORCHSIM_LLVM_PATH}/mlir-translate -mlir-to-llvmir {filename}_llvm.mlir -o {filename}.ll
+        """,
+    ).strip(),
+            re.sub(r"[ \n]+", " ",
+        f"""
+            {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v -O2 {filename}.ll -o {filename}.s
+        """,
+    ).strip()]
+
+class MLIRCodeCache:
+    cache = dict()
+    clear = staticmethod(cache.clear)   # Todo: Cache
+
+    @staticmethod
+    def _load_library(path):
+        pass
+
+    @classmethod
+    def load(cls, source_code,
+             validation_wrapper_name="validation_wrapper",
+             validation_binary_name="validation_bin",
+             cycle_wrapper_name="cycle_wrapper",
+             cycle_binary_name="cycle_bin",
+             arg_attributes={}, loop_info={},
+             load_tile_info={}, store_tile_info={}, **kwargs):
+        write_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(source_code.strip())))
+        key, input_path = write(source_code, "mlir", specified_dir=write_path)
+
+        cmds = mlir_compile_command(os.path.splitext(input_path)[0])
+        opt_cmd = shlex.split(cmds[0])
+        translate_cmd = shlex.split(cmds[1])
+        llc_cmd = shlex.split(cmds[2])
+
+        from filelock import FileLock
+        lock_dir = get_lock_dir()
+        lock = FileLock(os.path.join(lock_dir, key + ".lock"), timeout=LOCK_TIMEOUT)
+        with lock:
+            try:
+                subprocess.check_call(opt_cmd)
+                subprocess.check_call(translate_cmd)
+                subprocess.check_call(llc_cmd)
+            except subprocess.CalledProcessError as e:
+                print("Command failed with exit code", e.returncode)
+                print("Error output:", e.output)
+                assert(0)
+
+            # Generate LLVM kernel calller and binary for validation
+            if TORCHSIM_VALIDATION_MODE:
+                val_llvm_caller = MLIRKernelCallerCodeGen(TORCHSIM_VALIDATION_MODE, arg_attributes)
+                val_llvm_caller.generate_wrapper_file(write_path, validation_wrapper_name)
+                val_llvm_caller.compile_wih_kernel(write_path, key, validation_wrapper_name, validation_binary_name)
+
+        return key
 
 class LLVMCodeCache:
     cache = dict()
@@ -138,6 +200,34 @@ class CustomAsyncCompile(AsyncCompile):
         self.validation_binary_name = "validation_binary"
         self.cycle_wrapper_name = "cycle_wrapper"
         self.cycle_binary_name = "cycle_binary"
+
+    def mlir(self, source_code, arg_attributes={}, **kwargs):
+        def task():
+            key = MLIRCodeCache.load(source_code,
+                                          valdiation_wrapper_name=self.validation_binary_name,
+                                          validation_binary_name=self.validation_binary_name,
+                                          arg_attributes=arg_attributes, **kwargs)
+            return key
+        future = self.submit(task)
+
+        def dummy_simulator(*args, **kwargs):
+            # Wait for compilation
+            key = future.result()
+
+            # Run simulator pass
+            result_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
+            print("Running dummy simulator!")
+            print("OUTPUT PATH > ", result_path)
+
+            # Dump arguments and meta data
+            dump_metadata(args, arg_attributes, result_path)
+            if TORCHSIM_VALIDATION_MODE:
+                funcsim = FunctionalSimulator(result_path, key)
+                funcsim.run_spike(args, arg_attributes,
+                                  os.path.join(result_path, self.validation_binary_name),
+                                  kwargs['intermediate_op'] if 'intermediate_op' in kwargs else None)
+
+        return dummy_simulator
 
     def llvm(self, source_code, arg_attributes={}, **kwargs):
         def task():

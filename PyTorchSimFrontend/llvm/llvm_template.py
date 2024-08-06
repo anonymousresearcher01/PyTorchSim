@@ -14,8 +14,8 @@ from torch._inductor.codegen.cuda.cuda_kernel import CUDATemplateCaller
 from torch._inductor.autotune_process import TensorMeta
 from torch._inductor.virtualized import V
 
-from PyTorchSimFrontend.llvm_autotune import LLVMBenchmarkRequest
-from PyTorchSimFrontend.llvm_common import LLVMKernelArgs
+from PyTorchSimFrontend.llvm.llvm_autotune import LLVMBenchmarkRequest
+from PyTorchSimFrontend.llvm.llvm_common import LLVMKernelArgs
 
 class LLVMTemplateKernel(Kernel):
     overrides = OpOverrides

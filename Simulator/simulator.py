@@ -5,7 +5,7 @@ import subprocess
 import torch
 import numpy as np
 
-from PyTorchSimFrontend.llvm_common import LLVMKernelArgs
+from PyTorchSimFrontend.llvm.llvm_common import LLVMKernelArgs
 import extension_codecache
 
 TORCH_TO_NUMPY = {

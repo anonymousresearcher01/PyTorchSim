@@ -14,13 +14,13 @@ import torch.utils.cpp_extension
 from torch._inductor import config
 
 try:
-    from PyTorchSimFrontend.llvm_codegen_backend import (
-        MatrixLLVMScheduling,
+    from PyTorchSimFrontend.mlir.mlir_codegen_backend import (
+        MLIRScheduling,
         ExtensionWrapperCodegen,
     )
 except ImportError:
-    from .PyTorchSimFrontend.llvm_codegen_backend import (
-        MatrixLLVMScheduling,
+    from .PyTorchSimFrontend.mlir.mlir_codegen_backend import (
+        MLIRScheduling,
         ExtensionWrapperCodegen,
     )
 
@@ -129,10 +129,10 @@ class ExtensionBackendTests(TestCase):
         torch.utils.rename_privateuse1_backend("extension_device")
 
         register_backend_for_device(
-            "extension_device", MatrixLLVMScheduling, ExtensionWrapperCodegen
+            "extension_device", MLIRScheduling, ExtensionWrapperCodegen
         )
         self.assertTrue(
-            get_scheduling_for_device("extension_device") == MatrixLLVMScheduling
+            get_scheduling_for_device("extension_device") == MLIRScheduling
         )
         self.assertTrue(
             get_wrapper_codegen_for_device("extension_device")

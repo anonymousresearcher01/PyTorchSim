@@ -43,7 +43,7 @@ RUN cd gem5 && scons build/RISCV/gem5.opt -j $(nproc)
 # Build LLVM RISC-V
 RUN git clone https://github.com/llvm/llvm-project.git
 RUN cd llvm-project && git checkout release/17.x && mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/riscv-llvm -DLLVM_TARGETS_TO_BUILD=RISCV -G "Unix Makefiles" ../llvm && \
+    cmake -DLLVM_ENABLE_PROJECTS=mlir -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/riscv-llvm -DLLVM_TARGETS_TO_BUILD=RISCV -G "Unix Makefiles" ../llvm && \
     make -j && make install
 
 # Store RISC-V LLVM for TorchSim

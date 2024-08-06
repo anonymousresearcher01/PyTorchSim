@@ -6,8 +6,8 @@ from torch._inductor.kernel.mm_common import mm_args
 from torch._inductor import ir
 from torch._inductor.virtualized import V
 from torch._inductor.ir import TensorBox
-from PyTorchSimFrontend.llvm_gemm_template import LLVMGemmTemplate
-from PyTorchSimFrontend.llvm_conv_template import LLVMConvTemplate
+from PyTorchSimFrontend.llvm.llvm_gemm_template import LLVMGemmTemplate
+from PyTorchSimFrontend.llvm.llvm_conv_template import LLVMConvTemplate
 
 aten = torch.ops.aten
 

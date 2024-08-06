@@ -1,8 +1,8 @@
 import os, math
 from typing import List, Optional, cast
-from PyTorchSimFrontend.llvm_common import LLVMKernelArgs
-from PyTorchSimFrontend.llvm_template import LLVMTemplate
-from PyTorchSimFrontend.llvm_template import LLVMTemplateKernel
+from PyTorchSimFrontend.llvm.llvm_common import LLVMKernelArgs
+from PyTorchSimFrontend.llvm.llvm_template import LLVMTemplate
+from PyTorchSimFrontend.llvm.llvm_template import LLVMTemplateKernel
 from torch._inductor.ir import Buffer
 from torch._inductor.ir import IRNode
 from torch._inductor.codecache import get_hash
