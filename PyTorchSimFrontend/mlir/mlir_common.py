@@ -76,7 +76,7 @@ class MLIRKernelArgs(common.KernelArgs):
                 continue
             outer = inplaced.other_names[-1]
             inner = inplaced.inner_name
-            set_info(outer, inner, call_args, self.MLIR_ARGS_INOUT)
+            set_info(outer, inner, self.MLIR_ARGS_INOUT)
         for outer, inner in self.input_buffers.items():
             if outer in self.inplace_buffers:
                 continue
@@ -103,6 +103,7 @@ class BaseMLIRKernel(common.Kernel):
         self.cse = common.CSE(self.newvar_prefix, self.suffix)
         # Defaulat tile setting
         self.tile_size = 4
+        self.tile_info = {}
 
     def load(self, name: str, index: sympy.Expr):
         raise NotImplementedError()
@@ -115,6 +116,23 @@ class BaseMLIRKernel(common.Kernel):
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
         raise NotImplementedError()
+
+    def expand(self, args, buf_bounds):
+        if not args[0] in self.tile_info or not args[1] in self.tile_info:
+            return args, 1, torch.float32 # FIXME: dtype is not always float32
+        lhs_tile_size, lhs_dtype = self.tile_info[args[0]]
+        rhs_tile_size, rhs_dtype = self.tile_info[args[1]]
+        lhs_shape = f"vector<{lhs_tile_size}x{DTYPE_TO_MLIR[lhs_dtype]}>" if lhs_tile_size > 1 else DTYPE_TO_MLIR[lhs_dtype]
+        rhs_shape = f"vector<{rhs_tile_size}x{DTYPE_TO_MLIR[rhs_dtype]}>" if rhs_tile_size > 1 else DTYPE_TO_MLIR[rhs_dtype]
+        temp = list(args)
+        if lhs_tile_size > rhs_tile_size:
+            expand = f"vector.broadcast %{args[1]} : {rhs_shape} to {lhs_shape}"
+            temp[1] = self.cse.generate(self.compute, expand, bounds=buf_bounds)
+        elif lhs_tile_size < rhs_tile_size:
+            expand = f"vector.broadcast %{args[0]} : {lhs_shape} to {rhs_shape}"
+            temp[0] = self.cse.generate(self.compute, expand, bounds=buf_bounds)
+        args = tuple(temp)
+        return args, max(lhs_tile_size, rhs_tile_size), lhs_dtype
 
     def __enter__(self):
         class CSEProxy:
@@ -132,11 +150,13 @@ class BaseMLIRKernel(common.Kernel):
                             fx_node, ValueRanges.unknown()
                         )
 
+                    args, tile_size, dtype = self.expand(args, buf_bounds)
                     csevar = self.cse.generate(
                         self.compute,
-                        getattr(parent_handler, name)(*args, tile_size=self.tile_size, **kwargs),  # type: ignore[has-type]
+                        getattr(parent_handler, name)(*args, tile_size=tile_size, **kwargs),  # type: ignore[has-type]
                         bounds=buf_bounds,
                     )
+                    self.tile_info[csevar] = tile_size, dtype
                     csevar.update_on_args(name, args, kwargs)
                     return csevar
 

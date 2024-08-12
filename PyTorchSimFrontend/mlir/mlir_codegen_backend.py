@@ -93,23 +93,28 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
 class ExtensionOverrides(common.OpOverrides):
     @staticmethod
     def add(operand1, operand2, tile_size=16):
-        return f'arith.addf %{operand1}, %{operand2} : vector<{tile_size}xf32>'
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'arith.addf %{operand1}, %{operand2} : {shape}'
 
     @staticmethod
     def sub(operand1, operand2, tile_size=16):
-        return f'arith.subf %{operand1}, %{operand2} : vector<{tile_size}xf32>'
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'arith.subf %{operand1}, %{operand2} : {shape}'
 
     @staticmethod
     def mul(operand1, operand2, tile_size=16):
-        return f'arith.mulf %{operand1}, %{operand2} : vector<{tile_size}xf32>'
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'arith.mulf %{operand1}, %{operand2} : {shape}'
 
     @staticmethod
     def div(operand1, operand2, tile_size=16):
-        return f'arith.divf %{operand1}, %{operand2} : vector<{tile_size}xf32>'
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'arith.divf %{operand1}, %{operand2} : {shape}'
 
     @staticmethod
     def truediv(operand1, operand2, tile_size=16):
-        return f'arith.divf %{operand1}, %{operand2} : vector<{tile_size}xf32>'
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'arith.divf %{operand1}, %{operand2} : {shape}'
 
     @staticmethod
     def constant(value, dtype, tile_size=16):
@@ -117,7 +122,8 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def exp(operand, tile_size=16):
-        return f'math.exp %{operand} : vector<{tile_size}xf32>'
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'math.exp %{operand} : {shape}'
 
 RTYPE_TO_MLIR = {
     "sum": "add",
@@ -220,19 +226,29 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
     def load(self, name: str, index: sympy.Expr):
         index = self.rename_indexing(index)
         indices = self.parse_indices(index)
+        prefix = "" if index.is_number else "%"
         var = self.args.input(name)
         dtype = V.graph.get_dtype(name)
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
-        line = f"affine.vector_load %{var}[%{indices}] : memref<{self.buffer_types[name][1]}x{type_name}>, vector<{self.tile_size}x{type_name}>"
-        return self.cse.generate(self.loads, line)
+        tile_size = min(self.tile_size, self.buffer_types[name][1])
+        operation = "affine.vector_load" if tile_size > 1 else "affine.load"
+        shape = f", vector<{tile_size}x{type_name}>" if tile_size > 1 else ""
+        line = f"{operation} %{var}[{prefix}{indices}] : memref<{self.buffer_types[name][1]}x{type_name}>{shape}"
+        out = self.cse.generate(self.loads, line)
+        self.tile_info[out] = tile_size, dtype
+        return out
 
     def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
         index = self.rename_indexing(index)
         indices = self.parse_indices(index)
+        prefix = "" if index.is_number else "%"
         var = self.args.output(name)
         dtype = V.graph.get_dtype(name)
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
-        line = f"affine.vector_store %{value}, %{var}[%{indices}] : memref<{self.buffer_types[name][1]}x{type_name}>, vector<{self.tile_size}x{type_name}>"
+        tile_size = min(self.tile_size, self.buffer_types[name][1])
+        operation = "affine.vector_store" if tile_size > 1 else "affine.store"
+        shape = f", vector<{tile_size}x{type_name}>" if tile_size > 1 else ""
+        line = f"{operation} %{value}, %{var}[{prefix}{indices}] : memref<{self.buffer_types[name][1]}x{type_name}>{shape}"
         self.cse.generate(self.stores, line, assignment = False)
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
@@ -276,16 +292,18 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
         index = self.rename_indexing(index)
         indices = self.parse_indices(index)
+        prefix = "" if index.is_number else "%"
         if self.tiling_idx >= self.reduction_depth: # horizontal reduction
-            self.cse.generate(self.reductions_suffix, f"affine.store %{value}, %{var}[%{indices}] : memref<{self.buffer_types[name][1]}x{type_name}>", assignment = False)
+            self.cse.generate(self.reductions_suffix, f"affine.store %{value}, %{var}[{prefix}{indices}] : memref<{self.buffer_types[name][1]}x{type_name}>", assignment = False)
         else:
-            self.cse.generate(self.reductions_suffix, f"affine.vector_store %{value}, %{var}[%{indices}] : memref<{self.buffer_types[name][1]}x{type_name}>, vector<{self.tile_size}x{type_name}>", assignment = False)
+            self.cse.generate(self.reductions_suffix, f"affine.vector_store %{value}, %{var}[{prefix}{indices}] : memref<{self.buffer_types[name][1]}x{type_name}>, vector<{self.tile_size}x{type_name}>", assignment = False)
 
     def codegen_loops(self):
         code = common.BracesBuffer()
         # Loop body part
         loops = [LoopLevel(var, size, idx, tile_size=1) for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
-        loops[self.tiling_idx].tile_size = self.tile_size #innermost vector tile
+        if len(loops) > 0:
+            loops[self.tiling_idx].tile_size = self.tile_size #innermost vector tile
         loops, reductions = [LoopNest(loops[: self.reduction_depth]),
                              LoopNest(loops[self.reduction_depth :])]
         reductions.mark_reduction(self.reduction_vars)
@@ -297,19 +315,19 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                     return
                 code.writelines(loop_lines)
                 stack.enter_context(code.indent())
-                with contextlib.ExitStack() as stack_outer:
-                    code.splice(self.reduction_prefix)
-                    with contextlib.ExitStack() as stack:
-                        for reduction in reductions.loops:
-                            reduction_lines = reduction.lines()
-                            if reduction_lines is None:
-                                return
-                            code.writelines(reduction_lines)
-                            stack.enter_context(code.indent())
-                        code.splice(self.loads)
-                        code.splice(self.compute)
-                        code.splice(self.stores)
-                    code.splice(self.reductions_suffix)
+            with contextlib.ExitStack() as stack_outer:
+                code.splice(self.reduction_prefix)
+                with contextlib.ExitStack() as stack:
+                    for reduction in reductions.loops:
+                        reduction_lines = reduction.lines()
+                        if reduction_lines is None:
+                            return
+                        code.writelines(reduction_lines)
+                        stack.enter_context(code.indent())
+                    code.splice(self.loads)
+                    code.splice(self.compute)
+                    code.splice(self.stores)
+                code.splice(self.reductions_suffix)
         code.writeline(f"return")
         return code
 
