@@ -33,6 +33,9 @@ GEM5_SCRIPT_PATH = os.environ.get('GEM5_SCRIPT_PATH',
 def hash_prefix(hash_value):
     return hash_value[1:5]
 
+def get_write_path(src_code):
+    return os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(src_code.strip())))
+
 def dump_metadata(args, arg_attributes, path):
     meta_path = os.path.join(path, "meta.txt")
     if os.path.isfile(meta_path):
@@ -59,7 +62,7 @@ def llvm_compile_command(input, output):
 def mlir_compile_command(filename):
     return [re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/mlir-opt -lower-affine -finalize-memref-to-llvm -convert-arith-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm -convert-index-to-llvm -convert-vector-to-llvm -reconcile-unrealized-casts {filename}.mlir -o {filename}_llvm.mlir
+            {TORCHSIM_LLVM_PATH}/mlir-opt -lower-affine -test-memref-to-gemmini -finalize-memref-to-llvm -convert-arith-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm -convert-index-to-llvm -convert-vector-to-llvm -reconcile-unrealized-casts {filename}.mlir -o {filename}_llvm.mlir
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",
@@ -69,7 +72,7 @@ def mlir_compile_command(filename):
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v -O2 {filename}.ll -o {filename}.s
+            {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp -O2 {filename}.ll -o {filename}.s
         """,
     ).strip()]
 
@@ -89,7 +92,7 @@ class MLIRCodeCache:
              cycle_binary_name="cycle_bin",
              arg_attributes={}, loop_info={},
              load_tile_info={}, store_tile_info={}, **kwargs):
-        write_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(source_code.strip())))
+        write_path = get_write_path(source_code)
         key, input_path = write(source_code, "mlir", specified_dir=write_path)
 
         cmds = mlir_compile_command(os.path.splitext(input_path)[0])
@@ -216,9 +219,6 @@ class CustomAsyncCompile(AsyncCompile):
 
             # Run simulator pass
             result_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
-            print("Running dummy simulator!")
-            print("OUTPUT PATH > ", result_path)
-
             # Dump arguments and meta data
             dump_metadata(args, arg_attributes, result_path)
             if TORCHSIM_VALIDATION_MODE:

@@ -14,6 +14,10 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
     def __init__(self, validation, arg_attributes):
         super().__init__(validation, arg_attributes)
 
+    def write_header(self):
+        super().write_header()
+        self.writeline(f"#include \"global_var.h\"")
+
     def generate_kernel_declare(self):
         # memref to llvm arguments (memref -> ptr, ptr, i64, <?xi64>, <?xi64>) allocated pointer, aligned pointer, offset, size, stride
         args_type_p = [f'{cpp.DTYPE_TO_CPP[arg_type[1]]}*, {cpp.DTYPE_TO_CPP[arg_type[1]]}*, int64_t, int64_t, int64_t' for arg_type in self.arg_attributes.values()]
@@ -41,3 +45,7 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
 
             self.write_exit()
         self.writeline(self.closed_bracket)
+
+    def compile_wih_kernel(self, write_path, llvm_name, wrapper_name, binary_name):
+        link_option = "-Wl,--section-start=.spad=0x0A000000"
+        super().compile_wih_kernel(write_path, llvm_name, wrapper_name, binary_name, link_option)

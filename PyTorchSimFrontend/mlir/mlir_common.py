@@ -33,6 +33,19 @@ DTYPE_TO_MLIR = {
     torch.bfloat16: "bf16",
 }
 
+DTYPE_TO_C = {
+    torch.float32: "float",
+    torch.float64: "double",
+    torch.float16: "half",
+    torch.int64: "int64_t",
+    torch.int32: "int32_t",
+    torch.int16: "int16_t",
+    torch.int8: "int8_t",
+    torch.uint8: "uint8_t",
+    torch.bool: "bool",
+    torch.bfloat16: "bfloat16",
+}
+
 DTYPE_LOWP_FP = [
     torch.bfloat16,
     torch.float16,
@@ -101,7 +114,8 @@ class BaseMLIRKernel(common.Kernel):
         self.vector_compute = IndentedBuffer()
         self.reductions_suffix = IndentedBuffer()
         self.cse = common.CSE(self.newvar_prefix, self.suffix)
-        # Defaulat tile setting
+        # Default HW setting
+        self.vector_lane = 4
         self.tile_size = 4
         self.tile_info = {}
 

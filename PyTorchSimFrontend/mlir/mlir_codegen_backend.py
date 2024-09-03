@@ -3,6 +3,7 @@ import contextlib
 import sympy
 import itertools
 import re
+import os
 from functools import reduce
 from operator import mul
 from typing import List
@@ -13,6 +14,7 @@ from torch._inductor.codegen import cpp, wrapper, common
 from torch._inductor.scheduler import BaseScheduling
 from torch._inductor.virtualized import V, _ops as ops
 from torch._inductor.utils import IndentedBuffer
+from torch._inductor.codecache import write_atomic, write
 import extension_codecache
 
 from . import mlir_common
@@ -143,13 +145,14 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.reduction_prefix = IndentedBuffer()
         self.reduction_suffix = IndentedBuffer()
         self.global_vars = IndentedBuffer()
+        self.header = IndentedBuffer()
         self.reduction_vars = {}
         self.reduction_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_acc")
         self.iterator_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="iter")
         self.init_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="init")
         self.init_vec_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="init_vec")
         self.map_cse = common.CSE("#", self.suffix, name_prefix="map")
-        self.spad_cse = common.CSE("memref.global @", self.suffix, name_prefix="spad")
+        self.spad_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="spad")
         self.loop_info = {}
         self.load_desc = {}
         self.store_desc = {}
@@ -222,6 +225,13 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         src_code = self.codegen_kernel(kernel_name=kernel_name)
         self.meta_kernel()
+
+        write_path = extension_codecache.get_write_path(src_code)
+        if not os.path.exists(write_path):
+            os.makedirs(write_path)
+        write_path = os.path.join(write_path, "global_var.h")
+        if not os.path.exists(write_path):
+            write_atomic(write_path, self.header.getvalue())
         return src_code
 
     def load(self, name: str, index: sympy.Expr):
@@ -232,13 +242,15 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dtype = V.graph.get_dtype(name)
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
         tile_size = min(self.tile_size, self.buffer_types[name][1])
-        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{tile_size}x{type_name}, 1>", assignment = False)
-        buffer = self.cse.generate(self.loads, f"memref.get_global @{name}_spad : memref<{tile_size}x{type_name}, 1>")
-        code = f"affine.dma_start %{var}[{prefix}{indices}], %{buffer}[0], %{name}_tag[0], %c{tile_size}, %c1, %c{tile_size} : memref<{self.buffer_types[name][1]}x{type_name}>, memref<{self.tile_size}x{type_name}, 1>, memref<1xi32>"
+        spad_size = tile_size * self.vector_lane
+        self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{spad_size}] __attribute__ ((section(\".spad\")));")
+        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{spad_size}x{type_name}, 1>", assignment = False)
+        buffer = self.cse.generate(self.loads, f"memref.get_global @{name}_spad : memref<{spad_size}x{type_name}, 1>")
+        code = f"affine.dma_start %{var}[{prefix}{indices}], %{buffer}[0], %{name}_tag[0], %c{spad_size}, %c1, %c{spad_size} : memref<{self.buffer_types[name][1]}x{type_name}>, memref<{spad_size}x{type_name}, 1>, memref<1xi32>"
         self.cse.generate(self.loads, code, assignment = False)
         operation = "affine.vector_load" if tile_size > 1 else "affine.load"
         shape = f", vector<{tile_size}x{type_name}>" if tile_size > 1 else ""
-        line = f"{operation} %{buffer}[0] : memref<{tile_size}x{type_name}, 1>{shape}"
+        line = f"{operation} %{buffer}[0] : memref<{spad_size}x{type_name}, 1>{shape}"
         out = self.cse.generate(self.loads, line)
         self.tile_info[out] = tile_size, dtype
         return out
@@ -251,13 +263,15 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dtype = V.graph.get_dtype(name)
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
         tile_size = min(self.tile_size, self.buffer_types[name][1])
-        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{tile_size}x{type_name}, 1>", assignment = False)
-        buffer = self.cse.generate(self.stores, f"memref.get_global @{name}_spad : memref<{tile_size}x{type_name}, 1>")
+        spad_size = tile_size * self.vector_lane
+        self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{spad_size}] __attribute__ ((section(\".spad\")));")
+        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{spad_size}x{type_name}, 1>", assignment = False)
+        buffer = self.cse.generate(self.stores, f"memref.get_global @{name}_spad : memref<{spad_size}x{type_name}, 1>")
         operation = "affine.vector_store" if tile_size > 1 else "affine.store"
         shape = f", vector<{tile_size}x{type_name}>" if tile_size > 1 else ""
-        line = f"{operation} %{value}, %{buffer}[0] : memref<{tile_size}x{type_name}, 1>{shape}"
+        line = f"{operation} %{value}, %{buffer}[0] : memref<{spad_size}x{type_name}, 1>{shape}"
         self.cse.generate(self.stores, line, assignment = False)
-        code = f"affine.dma_start %{buffer}[0], %{var}[{prefix}{indices}], %{name}_tag[0], %c{tile_size}, %c1, %c{tile_size} : memref<{self.tile_size}x{type_name}, 1>, memref<{self.buffer_types[name][1]}x{type_name}>, memref<1xi32>"
+        code = f"affine.dma_start %{buffer}[0], %{var}[{prefix}{indices}], %{name}_tag[0], %c{spad_size}, %c1, %c{spad_size} : memref<{spad_size}x{type_name}, 1>, memref<{self.buffer_types[name][1]}x{type_name}>, memref<1xi32>"
         self.cse.generate(self.stores, code, assignment = False)
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
@@ -317,14 +331,15 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             code.writeline(f"%{name}_tag = memref.alloc() : memref<1xi32>")
             tiles.add(tile_size)
         for tile_size in tiles:
-            code.writeline(f"%c{tile_size} = arith.constant {tile_size} : index")
+            spad_size = tile_size * self.vector_lane
+            code.writeline(f"%c{spad_size} = arith.constant {spad_size} : index")
         code.writeline(f"%c1 = arith.constant 1 : index") # for stride TODO: matrix dma stride should be col_size
         return code
 
     def codegen_loops(self):
         code = common.BracesBuffer()
         # Loop body part
-        loops = [LoopLevel(var, size, idx, tile_size=1) for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
+        loops = [LoopLevel(var, size, idx, tile_size=1, vector_lane=self.vector_lane) for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
         if len(loops) > 0:
             loops[self.tiling_idx].tile_size = self.tile_size #innermost vector tile
         loops, reductions = [LoopNest(loops[: self.reduction_depth]),
@@ -433,6 +448,7 @@ class LoopLevel:
     idx: int
     start: int = 0
     tile_size: int = 4
+    vector_lane: int = 128
     reduction_vars: Dict[str, str] = None
 
     def lines(self):
@@ -443,7 +459,7 @@ class LoopLevel:
             dtype = ', '.join([f"{dtype}" for (_, _, _, dtype) in self.reduction_vars.values()])
             line = f"%{acc} = affine.for %index{loop_index} = {self.start} to {self.size} step {self.tile_size} iter_args({args}) -> ({dtype})"
         else:
-            line = f"affine.for %index{loop_index} = {self.start} to {self.size} step {self.tile_size}"
+            line = f"affine.for %index{loop_index} = {self.start} to {self.size} step {self.tile_size * self.vector_lane}"
 
         return [line]
 
