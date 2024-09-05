@@ -41,7 +41,7 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
         affine.dma_start %W[%index1], %W_buffer[0, 0], %tag[0], %c{{ TILE_K * TILE_N }}, %N, %c{{ TILE_N }} : memref<{{ K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
         linalg.matmul ins(%X_buffer, %W_buffer : memref<{{ TILE_M }}x{{ TILE_K }}x{{ DATA_STYPE }}, 1>, memref<{{ TILE_K }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
                 outs(%Y_buffer : memref<{{ TILE_M }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
-        affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c{{ TILE_M * TILE_N }}, %c{{ TILE_N }}, %c{{ TILE_N }} : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ M * N }}xf32>, memref<1xi32>
+        affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c{{ TILE_M * TILE_N }}, %N, %c{{ TILE_N }} : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ M * N }}xf32>, memref<1xi32>
       }
     }
   }

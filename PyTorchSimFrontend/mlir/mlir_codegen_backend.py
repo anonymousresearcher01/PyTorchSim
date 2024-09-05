@@ -247,7 +247,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{spad_size}] __attribute__ ((section(\".spad\")));")
         self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{spad_size}x{type_name}, 1>", assignment = False)
         buffer = self.cse.generate(self.loads, f"memref.get_global @{name}_spad : memref<{spad_size}x{type_name}, 1>")
-        code = f"affine.dma_start %{var}[{prefix}{indices}], %{buffer}[0], %{name}_tag[0], %c{spad_size}, %c1, %c{spad_size} : memref<{self.buffer_types[name][1]}x{type_name}>, memref<{spad_size}x{type_name}, 1>, memref<1xi32>"
+        code = f"affine.dma_start %{var}[{prefix}{indices}], %{buffer}[0], %{name}_tag[0], %c{spad_size}, %c{spad_size}, %c{spad_size} : memref<{self.buffer_types[name][1]}x{type_name}>, memref<{spad_size}x{type_name}, 1>, memref<1xi32>"
         self.cse.generate(self.loads, code, assignment = False)
         operation = "affine.vector_load" if tile_size > 1 else "affine.load"
         shape = f", vector<{tile_size}x{type_name}>" if tile_size > 1 else ""
@@ -272,7 +272,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         shape = f", vector<{tile_size}x{type_name}>" if tile_size > 1 else ""
         line = f"{operation} %{value}, %{buffer}[0] : memref<{spad_size}x{type_name}, 1>{shape}"
         self.cse.generate(self.stores, line, assignment = False)
-        code = f"affine.dma_start %{buffer}[0], %{var}[{prefix}{indices}], %{name}_tag[0], %c{spad_size}, %c1, %c{spad_size} : memref<{spad_size}x{type_name}, 1>, memref<{self.buffer_types[name][1]}x{type_name}>, memref<1xi32>"
+        code = f"affine.dma_start %{buffer}[0], %{var}[{prefix}{indices}], %{name}_tag[0], %c{spad_size}, %c{spad_size}, %c{spad_size} : memref<{spad_size}x{type_name}, 1>, memref<{self.buffer_types[name][1]}x{type_name}>, memref<1xi32>"
         self.cse.generate(self.stores, code, assignment = False)
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
