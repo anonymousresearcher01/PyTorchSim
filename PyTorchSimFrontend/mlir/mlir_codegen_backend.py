@@ -158,6 +158,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.load_desc = {}
         self.store_desc = {}
         self.tiling_indices = [0, 1]
+        self.tile_shape = f"{self.vector_lane}x{self.tile_row}"
 
     def parse_indices(self, expr):
         if len(expr.args) == 0:
@@ -243,14 +244,15 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dtype = V.graph.get_dtype(name)
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
         tile_size = min(self.tile_size, self.buffer_types[name][1])
-        self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{self.tile_row}][{self.vector_lane}] __attribute__ ((section(\".spad\")));")
-        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{self.tile_row}x{self.vector_lane}x{type_name}, 1>", assignment = False)
-        buffer = self.cse.generate(self.loads, f"memref.get_global @{name}_spad : memref<{self.tile_row}x{self.vector_lane}x{type_name}, 1>")
-        code = f"affine.dma_start %{var}[{prefix}{indices}], %{buffer}[0, 0], %{name}_tag[0], %c{tile_size}, %c{tile_size}, %c{tile_size} : memref<{self.buffer_types[name][1]}x{type_name}>, memref<{self.tile_row}x{self.vector_lane}x{type_name}, 1>, memref<1xi32>"
+        self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{self.vector_lane}][{self.tile_row}] __attribute__ ((section(\".spad\")));")
+        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{self.tile_shape}x{type_name}, 1>", assignment = False)
+        buffer = self.cse.generate(self.loads, f"memref.get_global @{name}_spad : memref<{self.tile_shape}x{type_name}, 1>")
+        element_per_stride = 1 if self.tiling_idx >= self.reduction_depth else self.tile_row
+        code = f"affine.dma_start %{var}[{prefix}{indices}], %{buffer}[0, 0], %{name}_tag[0], %c{tile_size}, %c{self.tile_row}, %c{element_per_stride} : memref<{self.buffer_types[name][1]}x{type_name}>, memref<{self.tile_shape}x{type_name}, 1>, memref<1xi32>"
         self.cse.generate(self.loads, code, assignment = False)
         operation = "affine.vector_load" if self.tile_row > 1 else "affine.load"
         shape = f", vector<{self.tile_row}x{type_name}>" if self.tile_row > 1 else ""
-        line = f"{operation} %{buffer}[0, 0] : memref<{self.tile_row}x{self.vector_lane}x{type_name}, 1>{shape}"
+        line = f"{operation} %{buffer}[0, 0] : memref<{self.tile_shape}x{type_name}, 1>{shape}"
         out = self.cse.generate(self.loads, line)
         self.tile_info[out] = self.tile_row, dtype
         return out
@@ -263,14 +265,14 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dtype = V.graph.get_dtype(name)
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
         tile_size = min(self.tile_size, self.buffer_types[name][1])
-        self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{self.tile_row}][{self.vector_lane}] __attribute__ ((section(\".spad\")));")
-        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{self.tile_row}x{self.vector_lane}x{type_name}, 1>", assignment = False)
-        buffer = self.cse.generate(self.stores, f"memref.get_global @{name}_spad : memref<{self.tile_row}x{self.vector_lane}x{type_name}, 1>")
+        self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{self.vector_lane}][{self.tile_row}] __attribute__ ((section(\".spad\")));")
+        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{self.tile_shape}x{type_name}, 1>", assignment = False)
+        buffer = self.cse.generate(self.stores, f"memref.get_global @{name}_spad : memref<{self.tile_shape}x{type_name}, 1>")
         operation = "affine.vector_store" if self.tile_row > 1 else "affine.store"
         shape = f", vector<{self.tile_row}x{type_name}>" if self.tile_row > 1 else ""
-        line = f"{operation} %{value}, %{buffer}[0, 0] : memref<{self.tile_row}x{self.vector_lane}x{type_name}, 1>{shape}"
+        line = f"{operation} %{value}, %{buffer}[0, 0] : memref<{self.tile_shape}x{type_name}, 1>{shape}"
         self.cse.generate(self.stores, line, assignment = False)
-        code = f"affine.dma_start %{buffer}[0, 0], %{var}[{prefix}{indices}], %{name}_tag[0], %c{tile_size}, %c{tile_size}, %c{tile_size} : memref<{self.tile_row}x{self.vector_lane}x{type_name}, 1>, memref<{self.buffer_types[name][1]}x{type_name}>, memref<1xi32>"
+        code = f"affine.dma_start %{buffer}[0, 0], %{var}[{prefix}{indices}], %{name}_tag[0], %c{tile_size}, %c{self.tile_row}, %c{tile_size} : memref<{self.tile_shape}x{type_name}, 1>, memref<{self.buffer_types[name][1]}x{type_name}>, memref<1xi32>"
         self.cse.generate(self.stores, code, assignment = False)
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
@@ -291,18 +293,10 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             type_name = mlir_common.DTYPE_TO_MLIR[dtype]
             self.reduction_vars[acc] = (reduction_type, iterator, init, type_name)
             self.reduction_prefix.writeline(f"%{init} = arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
-            if self.tiling_idx >= self.reduction_depth: # horizontal reduction
-                out = self.cse.generate(self.compute, reduction_combine_vec(reduction_type, value, tile_size=self.tile_size))
-                out = self.cse.generate(self.compute, f"arith.{RTYPE_TO_MLIR[reduction_type]}f %{iterator}, %{out} : {type_name}")
-                self.cse.generate(self.stores, f"affine.yield %{out} : {type_name}", assignment = False)
-            else:
-                init_vec = self.init_vec_cse.generate(
-                    self.loads, f"reduction {reduction_key}", write=False
-                )
-                self.reduction_prefix.writeline(f"%{init_vec} = vector.broadcast %{init} : {type_name} to vector<{self.tile_size}x{type_name}>")
-                out = self.cse.generate(self.compute, reduction_combine(reduction_type, iterator, value, tile_size=self.tile_size))
-                self.cse.generate(self.compute, f"affine.yield %{out} : vector<{self.tile_size}x{type_name}>", assignment = False)
-                self.reduction_vars[acc] = (reduction_type, iterator, init_vec, f"vector<{self.tile_size}x{type_name}>")
+            out = self.cse.generate(self.compute, reduction_combine_vec(reduction_type, value, tile_size=self.tile_row))
+            out = self.cse.generate(self.compute, f"arith.{RTYPE_TO_MLIR[reduction_type]}f %{iterator}, %{out} : {type_name}")
+            self.cse.generate(self.stores, f"affine.yield %{out} : {type_name}", assignment = False)
+
             self.reduction_cse.reduction_cache[reduction_key] = acc
             self.iterator_cse.reduction_cache[reduction_key] = iterator
             self.init_cse.reduction_cache[reduction_key] = init
@@ -315,31 +309,36 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         index = self.rename_indexing(index)
         indices = self.parse_indices(index)
         prefix = "" if index.is_number else "%"
-        if self.tiling_idx >= self.reduction_depth: # horizontal reduction
-            self.cse.generate(self.reductions_suffix, f"affine.store %{value}, %{var}[{prefix}{indices}] : memref<{self.buffer_types[name][1]}x{type_name}>", assignment = False)
-        else:
-            self.cse.generate(self.reductions_suffix, f"affine.vector_store %{value}, %{var}[{prefix}{indices}] : memref<{self.buffer_types[name][1]}x{type_name}>, vector<{self.tile_size}x{type_name}>", assignment = False)
+        self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{self.vector_lane}] __attribute__ ((section(\".spad\")));")
+        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{self.vector_lane}x{type_name}, 1>", assignment = False)
+        buffer = self.cse.generate(self.reductions_suffix, f"memref.get_global @{name}_spad : memref<{self.vector_lane}x{type_name}, 1>")
+        line = f"affine.store %{value}, %{buffer}[0] : memref<{self.vector_lane}x{type_name}, 1>"
+        self.cse.generate(self.reductions_suffix, line, assignment = False)
+        code = f"affine.dma_start %{buffer}[0], %{var}[{prefix}{indices}], %{name}_tag[0], %c{self.vector_lane}, %c{self.vector_lane}, %c{self.vector_lane} : memref<{self.vector_lane}x{type_name}, 1>, memref<{self.buffer_types[name][1]}x{type_name}>, memref<1xi32>"
+        self.cse.generate(self.reductions_suffix, code, assignment = False)
 
     def codegen_init(self):
         code = IndentedBuffer()
         _, _, arg_attributes, _ = self.args.mlir_argdefs()
-        tiles = set()
-        for name, (_, dtype, size) in arg_attributes.items():
+        consts = set()
+        for name, (_, _, size) in arg_attributes.items():
             tile_size = min(self.tile_size, size)
-            type_name = mlir_common.DTYPE_TO_MLIR[dtype]
             code.writeline(f"%{name}_tag = memref.alloc() : memref<1xi32>")
-            tiles.add(tile_size)
-        for tile_size in tiles:
-            code.writeline(f"%c{tile_size} = arith.constant {tile_size} : index")
-        code.writeline(f"%c1 = arith.constant 1 : index") # for stride TODO: matrix dma stride should be col_size
+            consts.add(tile_size)
+        consts.add(self.vector_lane)
+        consts.add(self.tile_row)
+        if self.tiling_idx >= self.reduction_depth:
+            consts.add(1)
+        for const in consts:
+            code.writeline(f"%c{const} = arith.constant {const} : index")
         return code
 
     def codegen_loops(self):
         code = common.BracesBuffer()
         # Loop body part
         loops = [LoopLevel(var, size, idx, tile_row=self.tile_row, vector_lane=self.vector_lane) for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
-        if len(loops) > 0:
-            loops[self.tiling_idx].tile_size = self.tile_size #innermost vector tile
+        # if len(loops) > 0:
+        #     loops[self.tiling_idx].tile_size = self.tile_size #innermost vector tile
         loops, reductions = [LoopNest(loops[: self.reduction_depth]),
                              LoopNest(loops[self.reduction_depth :])]
         reductions.mark_reduction(self.reduction_vars)
@@ -434,6 +433,13 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         else:
             self.tiling_idx = self.tiling_indices[0]
             self.outer_idx = None
+        if len(reduction_lengths) > 0:
+            self.tile_row = reduction_lengths[0]
+            self.tile_size = self.vector_lane * self.tile_row
+            if self.tiling_idx >= self.reduction_depth:
+                self.tile_shape = f"{self.vector_lane}x{self.tile_row}"
+            else:
+                self.tile_shape = f"{self.tile_row}x{self.vector_lane}"
         return (
             self.itervars[: self.reduction_depth],
             self.itervars[self.reduction_depth :],
