@@ -59,10 +59,10 @@ def llvm_compile_command(input, output):
         """,
     ).strip()]
 
-def mlir_compile_command(filename):
+def mlir_compile_command(filename, vectorlane_size):
     return [re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/mlir-opt -test-pytorchsim-to-vcix='systolic-array-size=16' -lower-affine -convert-vector-to-llvm -test-memref-to-gemmini -finalize-memref-to-llvm -convert-arith-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm -convert-index-to-llvm -reconcile-unrealized-casts {filename}.mlir -o {filename}_llvm.mlir
+            {TORCHSIM_LLVM_PATH}/mlir-opt -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size}' -lower-affine -convert-vector-to-llvm -test-memref-to-gemmini="vectorlane-stride={vectorlane_size}" -finalize-memref-to-llvm -convert-arith-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm -convert-index-to-llvm -reconcile-unrealized-casts {filename}.mlir -o {filename}_llvm.mlir
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",
@@ -91,11 +91,11 @@ class MLIRCodeCache:
              cycle_wrapper_name="cycle_wrapper",
              cycle_binary_name="cycle_bin",
              arg_attributes={}, loop_info={},
-             load_tile_info={}, store_tile_info={}, **kwargs):
+             load_tile_info={}, store_tile_info={}, vectorlane_size=16, **kwargs):
         write_path = get_write_path(source_code)
         key, input_path = write(source_code, "mlir", specified_dir=write_path)
 
-        cmds = mlir_compile_command(os.path.splitext(input_path)[0])
+        cmds = mlir_compile_command(os.path.splitext(input_path)[0], vectorlane_size)
         opt_cmd = shlex.split(cmds[0])
         translate_cmd = shlex.split(cmds[1])
         llc_cmd = shlex.split(cmds[2])
@@ -204,12 +204,12 @@ class CustomAsyncCompile(AsyncCompile):
         self.cycle_wrapper_name = "cycle_wrapper"
         self.cycle_binary_name = "cycle_binary"
 
-    def mlir(self, source_code, arg_attributes={}, **kwargs):
+    def mlir(self, source_code, arg_attributes={}, vectorlane_size=16, **kwargs):
         def task():
             key = MLIRCodeCache.load(source_code,
                                           valdiation_wrapper_name=self.validation_binary_name,
                                           validation_binary_name=self.validation_binary_name,
-                                          arg_attributes=arg_attributes, **kwargs)
+                                          arg_attributes=arg_attributes, vectorlane_size=vectorlane_size, **kwargs)
             return key
         future = self.submit(task)
 

@@ -504,7 +504,7 @@ class MLIRScheduling(BaseScheduling):
         kernel_name = f"extension_kernel_{self.count}"
         self.count += 1
         src_code = ex_kernel.codegen_nodes(nodes, kernel_name)
-        self.define_kernel(src_code, kernel_name)
+        self.define_kernel(src_code, kernel_name, ex_kernel.vector_lane)
         ex_kernel.call_kernel(kernel_name)
 
     def codegen_sync(self):
@@ -519,7 +519,7 @@ class MLIRScheduling(BaseScheduling):
             wrapper = V.graph.wrapper_code
             wrapper.header.writeline(code)
 
-    def define_kernel(self, src_code, kernel_name):
+    def define_kernel(self, src_code, kernel_name, vector_lane):
         wrapper = V.graph.wrapper_code
         if src_code in wrapper.src_to_kernel:
             kernel_name = wrapper.src_to_kernel[src_code]
@@ -532,6 +532,7 @@ class MLIRScheduling(BaseScheduling):
             codecache_def.writeline("load_tile_info=load_tile_info,")
             codecache_def.writeline("store_tile_info=store_tile_info,")
             codecache_def.writeline("arg_attributes=arg_attributes)")
+            codecache_def.writeline(f"vectorlane_size={vector_lane}")
 
             wrapper.define_kernel(kernel_name, codecache_def.getvalue(), cuda=False)
         return kernel_name
