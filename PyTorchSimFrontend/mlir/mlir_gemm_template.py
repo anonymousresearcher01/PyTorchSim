@@ -80,9 +80,10 @@ class MLIRGemmTemplate(MLIRTemplate):
         Y = self.output_node
         Bias = None if len(self.input_nodes) == 2 else self.input_nodes[2]
 
-        TILE_M = min(4, X.get_size()[0]) # TODO:: This should be determined by the size of the SRAM
-        TILE_N = min(4, W.get_size()[1]) # FIXME: 16 is hard-coded
-        TILE_K = min(4, X.get_size()[1])
+        # Use BaseMLIRHardwareInfo
+        TILE_M = min(kernel.vector_lane, X.get_size()[0])
+        TILE_N = min(kernel.vector_lane, W.get_size()[1])
+        TILE_K = min(kernel.vector_lane, X.get_size()[1])
 
         W_transposed = self.is_transposed(W)
         X_transposed = self.is_transposed(X)

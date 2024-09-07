@@ -15,9 +15,9 @@ from torch._inductor.autotune_process import TensorMeta
 from torch._inductor.virtualized import V
 
 from PyTorchSimFrontend.mlir.mlir_autotune import MLIRBenchmarkRequest
-from PyTorchSimFrontend.mlir.mlir_common import MLIRKernelArgs
+from PyTorchSimFrontend.mlir.mlir_common import MLIRKernelArgs, BaseMLIRHardwareInfo
 
-class MLIRTemplateKernel(Kernel):
+class MLIRTemplateKernel(Kernel, BaseMLIRHardwareInfo):
     overrides = OpOverrides
     def __init__(self, kernel_name):
         super().__init__(MLIRKernelArgs())

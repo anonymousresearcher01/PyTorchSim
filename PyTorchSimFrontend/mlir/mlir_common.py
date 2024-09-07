@@ -105,7 +105,17 @@ class MLIRKernelArgs(common.KernelArgs):
             set_info(outer, inner, self.MLIR_ARGS_VAR)
         return arg_defs, call_args, arg_attributes, buffer_types
 
-class BaseMLIRKernel(common.Kernel):
+class BaseMLIRHardwareInfo():
+    def __init__(self):
+        # Default HW setting
+        self.vector_lane = 4
+        self.spad_info = {
+            "spad_vaddr" : 0x0B000000,
+            "spad_paddr" : 0xD0000000,
+            "spad_size" : 128 << 10 # 128KB per Lane
+        }
+
+class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
     newvar_prefix = "%"
     suffix = ""
     overrides = None
@@ -117,13 +127,6 @@ class BaseMLIRKernel(common.Kernel):
         self.vector_compute = IndentedBuffer()
         self.reductions_suffix = IndentedBuffer()
         self.cse = common.CSE(self.newvar_prefix, self.suffix)
-        # Default HW setting
-        self.vector_lane = 4
-        self.spad_info = {
-            "spad_vaddr" : 0x0B000000,
-            "spad_paddr" : 0xD0000000,
-            "spad_size" : 128 << 10 # 128KB per Lane
-        }
         self.tile_row = 4
         self.tile_size = self.tile_row * self.vector_lane
         self.tile_info = {}
