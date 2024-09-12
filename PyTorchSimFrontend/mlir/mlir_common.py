@@ -166,6 +166,11 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         raise NotImplementedError()
 
     def expand(self, args, buf_bounds):
+        if len(args) == 1:
+            if not args[0] in self.tile_info:
+                return args, 1, torch.float32
+            info = self.tile_info[args[0]]
+            return args, info[0], info[1]
         if not args[0] in self.tile_info or not args[1] in self.tile_info:
             return args, 1, torch.float32 # FIXME: dtype is not always float32
         lhs_tile_size, lhs_dtype = self.tile_info[args[0]]

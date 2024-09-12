@@ -57,8 +57,10 @@ def reduction_combine_vec(reduction_type, vector_value, init_value, axis, shape,
         return f"vector.multi_reduction <add>, %{vector_value}, %{init_value} [{axis}] : vector<{shape}> to vector<{reduced_shape}>"
     if reduction_type == "prod":
         return f"vector.multi_reduction <mul>, %{vector_value}, %{init_value} [{axis}] : vector<{shape}> to vector<{reduced_shape}>"
-    if reduction_type in ("min", "max"):
-        raise NotImplementedError()
+    if reduction_type == "max":
+        return f"vector.multi_reduction <maximumf>, %{vector_value}, %{init_value} [{axis}] : vector<{shape}> to vector<{reduced_shape}>"
+    if reduction_type == "min":
+        return f"vector.multi_reduction <minimumf>, %{vector_value}, %{init_value} [{axis}] : vector<{shape}> to vector<{reduced_shape}>"
     raise AssertionError(reduction_type)
 
 class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
@@ -121,12 +123,20 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def constant(value, dtype, tile_size=16):
-        return f'arith.constant {value} : {mlir_common.DTYPE_TO_MLIR[dtype]}'
+        return f'arith.constant {value} : f32'
 
     @staticmethod
     def exp(operand, tile_size=16):
         shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
         return f'math.exp %{operand} : {shape}'
+    @staticmethod
+    def maximum(operand1, operand2, tile_size=4):
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'arith.maximumf %{operand1}, %{operand2} : {shape}'
+
+    @staticmethod
+    def relu(x, tile_size=16):
+        return ops.maximum(x, ops.constant(0.0, torch.int32))
 
 RTYPE_TO_MLIR = {
     "sum": "add",
