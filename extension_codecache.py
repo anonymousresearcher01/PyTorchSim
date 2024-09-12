@@ -9,6 +9,7 @@ import functools
 
 import torch
 from torch._inductor.codecache import AsyncCompile, get_lock_dir, get_hash, write
+from AsmParser.tog_generator import tog_generator
 from AsmParser.riscv_parser import riscv_parser
 from PyTorchSimFrontend.llvm.llvm_caller_codegen import LLVMKernelCallerCodeGen
 from PyTorchSimFrontend.mlir.mlir_caller_codegen import MLIRKernelCallerCodeGen
@@ -76,6 +77,28 @@ def mlir_compile_command(filename, vectorlane_size):
         """,
     ).strip()]
 
+def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_size):
+    return [re.sub(r"[ \n]+", " ",
+        f"""
+            {TORCHSIM_LLVM_PATH}/mlir-opt -test-tile-operation-graph {filename}.mlir -o {sample_filename}.mlir
+        """,
+    ).strip(),
+            re.sub(r"[ \n]+", " ",
+        f"""
+            {TORCHSIM_LLVM_PATH}/mlir-opt -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size}' -lower-affine -convert-vector-to-llvm -test-memref-to-gemmini="vectorlane-stride={vectorlane_size}" -finalize-memref-to-llvm -convert-arith-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm -convert-index-to-llvm -reconcile-unrealized-casts {sample_filename}.mlir -o {sample_filename}_llvm.mlir
+        """,
+    ).strip(),
+            re.sub(r"[ \n]+", " ",
+        f"""
+            {TORCHSIM_LLVM_PATH}/mlir-translate -mlir-to-llvmir {sample_filename}_llvm.mlir -o {sample_filename}.ll
+        """,
+    ).strip(),
+            re.sub(r"[ \n]+", " ",
+        f"""
+            {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp -O2 {sample_filename}.ll -o {sample_filename}.s
+        """,
+    ).strip()]
+
 class MLIRCodeCache:
     cache = dict()
     clear = staticmethod(cache.clear)   # Todo: Cache
@@ -90,12 +113,15 @@ class MLIRCodeCache:
              validation_binary_name="validation_bin",
              cycle_wrapper_name="cycle_wrapper",
              cycle_binary_name="cycle_bin",
-             arg_attributes={}, loop_info={},
-             load_tile_info={}, store_tile_info={}, vectorlane_size=16, spad_info=None, **kwargs):
+             arg_attributes={}, vectorlane_size=16, spad_info=None, **kwargs):
         write_path = get_write_path(source_code)
         key, input_path = write(source_code, "mlir", specified_dir=write_path)
+        new_input_path = os.path.splitext(input_path)[0]
+        raw_tog_path = new_input_path + "_tog.py"
+        sample_mlir_path = new_input_path + "_sample"
+        cmds = mlir_compile_command(new_input_path, vectorlane_size)
+        gem5_cmds = mlir_gem5_compile_command(new_input_path, sample_mlir_path, raw_tog_path, vectorlane_size)
 
-        cmds = mlir_compile_command(os.path.splitext(input_path)[0], vectorlane_size)
         opt_cmd = shlex.split(cmds[0])
         translate_cmd = shlex.split(cmds[1])
         llc_cmd = shlex.split(cmds[2])
@@ -123,7 +149,41 @@ class MLIRCodeCache:
                 val_llvm_caller.generate_wrapper_file(write_path, validation_wrapper_name)
                 val_llvm_caller.compile_wih_kernel(write_path, key, validation_wrapper_name,
                                                    validation_binary_name, link_option)
+        # Launch tile graph generator
+        gem5_sample_cmd = shlex.split(gem5_cmds[0])
+        gem5_opt_cmd = shlex.split(gem5_cmds[1])
+        gem5_translate_cmd = shlex.split(gem5_cmds[2])
+        gem5_llc_cmd = shlex.split(gem5_cmds[3])
 
+        lock = FileLock(os.path.join(lock_dir, key + ".lock"), timeout=LOCK_TIMEOUT)
+        with lock:
+            try:
+                result = subprocess.check_output(gem5_sample_cmd)
+                with open(raw_tog_path, "wb") as file:
+                    file.write(result)
+                subprocess.check_call(gem5_opt_cmd)
+                subprocess.check_call(gem5_translate_cmd)
+                subprocess.check_call(gem5_llc_cmd)
+            except subprocess.CalledProcessError as e:
+                print("Command failed with exit code", e.returncode)
+                print("Error output:", e.output)
+                assert(0)
+
+        tile_graph_generator = tog_generator()
+        tile_graph_generator.load_file(raw_tog_path)
+        tile_graph_generator.generate_tile_graph(os.path.join(write_path, "basic_block.onnx"), list())
+
+        # Generate MLIR kernel calller and binary for cycle calculation
+        cycle_llvm_caller = MLIRKernelCallerCodeGen(False, arg_attributes)
+        cycle_llvm_caller.generate_wrapper_file(write_path, cycle_wrapper_name)
+        cycle_llvm_caller.compile_wih_kernel(write_path, key + "_sample", cycle_wrapper_name, cycle_binary_name, link_option)
+        array_size = []
+        for (arg_name, arg_attribute) in arg_attributes.items():
+            array_size.append(str(arg_attribute[2]))
+
+        # Run cyclesim
+        cyclesim = CycleSimulator()
+        cycle_list = cyclesim.compile_and_simulate(os.path.join(write_path, cycle_binary_name), " ".join(array_size))
         return key
 
 class LLVMCodeCache:

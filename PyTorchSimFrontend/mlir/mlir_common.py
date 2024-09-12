@@ -2,6 +2,7 @@ import torch
 from torch._inductor.codegen import common
 from torch._inductor.virtualized import V
 import sympy
+import contextlib
 
 from typing import Callable
 
@@ -50,6 +51,26 @@ DTYPE_LOWP_FP = [
     torch.bfloat16,
     torch.float16,
 ]
+
+class ParallelLoopBuffer(IndentedBuffer):
+    def indent(self, offset=1):
+        @contextlib.contextmanager
+        def ctx():
+            for _ in range(offset):
+                self.writeline("{")
+                self._indent += 1
+            for _ in range(-offset):
+                self._indent -= 1
+                self.writeline("} {outer_loop=true}")
+            yield
+            for _ in range(-offset):
+                self.writeline("{")
+                self._indent += 1
+            for _ in range(offset):
+                self._indent -= 1
+                self.writeline("} {outer_loop=true}")
+
+        return ctx()
 
 class MLIRKernelArgs(common.KernelArgs):
     MLIR_ARGS_IN = 0x01

@@ -34,6 +34,7 @@ class LLVMKernelCallerCodeGen():
     def write_header(self):
         self.writeline('#include <stdio.h>')
         self.writeline('#include <stdlib.h>')
+        self.writeline("#include <stdint.h>")
         if self.validation:
             self.writeline("#include <unistd.h>")
             self.writeline('#include <string.h>')

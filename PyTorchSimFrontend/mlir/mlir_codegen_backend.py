@@ -334,7 +334,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         return code
 
     def codegen_loops(self):
-        code = common.BracesBuffer()
+        code = mlir_common.ParallelLoopBuffer()
         # Loop body part
         loops = [LoopLevel(var, size, idx, tile_row=self.tile_row, vector_lane=self.vector_lane) for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
         # if len(loops) > 0:
