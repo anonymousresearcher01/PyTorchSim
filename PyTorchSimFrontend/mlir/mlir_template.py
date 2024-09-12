@@ -19,13 +19,20 @@ from PyTorchSimFrontend.mlir.mlir_common import MLIRKernelArgs, BaseMLIRHardware
 
 class MLIRTemplateKernel(Kernel, BaseMLIRHardwareInfo):
     overrides = OpOverrides
-    def __init__(self, kernel_name):
+    def __init__(self,
+                 kernel_name,
+                 outer_func_name=None,
+                 outer_func_render=None,
+                 kernel_arg_attributes=None) -> None:
         super().__init__(MLIRKernelArgs())
         self.kernel_name = kernel_name
         self.named_nodes = {}
         self.loop_info = {}
         self.load_desc = {}
         self.store_desc = {}
+        self.outer_func_name = outer_func_name
+        self.outer_func_render = outer_func_render
+        self.kernel_arg_attributes = kernel_arg_attributes
 
     def add_loop_info(self, mat_size, tile_size):
         for idx, (loop_size, stride) in enumerate(zip(mat_size, tile_size)):
@@ -33,7 +40,9 @@ class MLIRTemplateKernel(Kernel, BaseMLIRHardwareInfo):
 
     def meta_kernel(self):
         wrapper = V.graph.wrapper_code
-        _, _, arg_attributes, _ = self.args.mlir_argdefs()
+        arg_attributes = self.kernel_arg_attributes
+        if arg_attributes is None:
+            _, _, arg_attributes, _ = self.args.mlir_argdefs()
         wrapper.add_import_once('\nprint(f\'Wrapper Codegen Path = {__file__}\')')
         wrapper.add_import_once(f'\nfrom extension_codecache import CustomAsyncCompile')
         wrapper.add_import_once(f'\ncustom_async_compile = CustomAsyncCompile()')
@@ -47,7 +56,9 @@ class MLIRTemplateKernel(Kernel, BaseMLIRHardwareInfo):
         wrapper = V.graph.wrapper_code
         _, call_args, _, _ = self.args.mlir_argdefs()
        # generate the code to call this
-        wrapper.generate_kernel_call(kernel_name, call_args, cuda=False)
+        wrapper.generate_kernel_call(
+            kernel_name if self.outer_func_name is None else self.outer_func_name,
+            call_args, cuda=False)
 
     def def_kernel(
         self,
@@ -85,7 +96,9 @@ class MLIRTemplateKernel(Kernel, BaseMLIRHardwareInfo):
         return f"({', '.join(arg_defs)})"
 
     def def_function(self):
-        pass
+        _, call_args, _ = self.args.python_argdefs()
+        if self.outer_func_render is not None:
+            return self.outer_func_render(input_args=call_args)
 
 class MLIRTemplateCaller(CUDATemplateCaller):
     def __str__(self):
@@ -117,7 +130,10 @@ class MLIRTemplate(KernelTemplate):
     def generate(self, **kwargs) -> ChoiceCaller:
         kernel_name = f"mlir_{self.name}"
         with patch.object(V.graph, "get_dtype", self._fake_get_dtype(self.output_node)):
-            kernel  = MLIRTemplateKernel(kernel_name=kernel_name)
+            kernel  = MLIRTemplateKernel(kernel_name=kernel_name,
+                                         outer_func_name=self.function_name if hasattr(self, 'function_name') else None,
+                                         outer_func_render=self.outer_func_render if hasattr(self, 'outer_func_render') else None,
+                                         kernel_arg_attributes=self.get_arg_attributes() if hasattr(self, 'get_arg_attributes') else None)
             code = self.render(kernel=kernel, **kwargs)
 
         kernel_hash_name = f"mlir_{self.name}_{next(self.index_counter)}"
@@ -136,7 +152,13 @@ class MLIRTemplate(KernelTemplate):
             epilogue_nodes: Optional[List[IRNode]] = None,
         ):
             kernel = MLIRTemplateKernel(
-                kernel_name=kernel_hash_name
+                kernel_name=kernel_hash_name,
+                outer_func_name=self.function_name if hasattr(self, 'function_name') else None,
+                outer_func_render=functools.partial(
+                    self.outer_func_render,
+                    kernel_name=kernel_hash_name
+                ) if hasattr(self, 'outer_func_render') else None,
+                kernel_arg_attributes=self.get_arg_attributes() if hasattr(self, 'get_arg_attributes') else None
             )
             render = functools.partial(
                 self.render,

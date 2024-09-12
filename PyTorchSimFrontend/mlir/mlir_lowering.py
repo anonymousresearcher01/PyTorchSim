@@ -7,6 +7,7 @@ from torch._inductor import ir
 from torch._inductor.virtualized import V
 from torch._inductor.ir import TensorBox
 from PyTorchSimFrontend.mlir.mlir_gemm_template import MLIRGemmTemplate
+from PyTorchSimFrontend.mlir.mlir_conv_template import MLIRConvTemplate
 
 aten = torch.ops.aten
 
@@ -16,4 +17,68 @@ def tuned_mm(mat1, mat2, * ,layout=None):
 
     return mlir_template.generate().output_node()
 
+def conv_layout(
+    x: TensorBox,
+    weight: TensorBox,
+    bias: Optional[TensorBox],
+    stride: Sequence[int],
+    padding: tuple[int, ...],
+    dilation: tuple[int, ...],
+    transposed: bool,
+    output_padding: tuple[int, ...],
+    groups: int,
+) -> ir.Layout:
+    """Determine output layout for a convolution"""
+    with V.graph.fake_mode:
+        output = torch.ops.aten.convolution(
+            ir.ir_node_to_tensor(x, guard_shape=True),
+            ir.ir_node_to_tensor(weight, guard_shape=True),
+            ir.ir_node_to_tensor(bias, guard_shape=True),
+            stride,
+            tuple(V.graph.sizevars.size_hint(p) for p in padding),
+            dilation,
+            transposed,
+            tuple(V.graph.sizevars.size_hint(p) for p in output_padding),
+            groups,
+        )
+        sizes = ir.convert_shape_to_inductor(output.size())
+        stride = ir.convert_shape_to_inductor(output.stride())
+
+    return ir.FixedLayout(
+        x.get_device(),
+        x.get_dtype(),
+        sizes,
+        stride,
+    )
+
+def convolution(
+    x: TensorBox,
+    weight: TensorBox,
+    bias: TensorBox,
+    stride: List[int],
+    padding: List[int],
+    dilation: List[int],
+    transposed: bool,
+    output_padding: List[int],
+    groups: int,
+):
+    stride = tuple(stride)
+    padding = tuple(padding)
+    dilation = tuple(dilation)
+    output_padding = tuple(output_padding)
+
+    kwargs = {
+        "stride": stride,
+        "padding": padding,
+        "dilation": dilation,
+        "transposed": transposed,
+        "output_padding": output_padding,
+        "groups": groups,
+    }
+
+    layout = conv_layout(x, weight, None, **kwargs)
+    mlir_template = MLIRConvTemplate([x, weight, bias], layout, **kwargs)
+    return mlir_template.generate().output_node()
+
 lowerings.update({getattr(aten.mm, overload): tuned_mm for overload in aten.mm.overloads()})
+lowerings.update({getattr(aten.convolution,overload): convolution for overload in aten.convolution.overloads()})
