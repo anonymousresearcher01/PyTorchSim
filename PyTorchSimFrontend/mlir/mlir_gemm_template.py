@@ -10,8 +10,9 @@ from torch._inductor.codecache import write_atomic
 import extension_codecache
 
 GEMM_TEMPLATE = r"""
-#map0 = affine_map<(d0, d1) -> (d0 * {{ K }} + d1)>
-#map1 = affine_map<(d0, d1) -> (d0 * {{ N }} + d1)>
+{% if X_transposed %}#map0 = affine_map<(d0, d1) -> (d1 * {{ M }} + d0)>{% else %}#map0 = affine_map<(d0, d1) -> (d0 * {{ K }} + d1)>{% endif %}
+{% if W_transposed %}#map1 = affine_map<(d0, d1) -> (d1 * {{ K }} + d0)>{% else %}#map1 = affine_map<(d0, d1) -> (d0 * {{ N }} + d1)>{% endif %}
+#map2 = affine_map<(d0, d1) -> (d0 * {{ N }} + d1)>
 memref.global @X_spad : memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>
 memref.global @W_spad : memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>
 memref.global @Y_spad : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>
@@ -22,7 +23,10 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
   %c_mvin3 = arith.constant 14 : index{% endif %}
   %c_mvout = arith.constant 3 : index
   %c_set = arith.constant 2 : index
-  %c{{ TILE_K * 2 + 0}} = arith.constant {{ TILE_K * 2 + 0}} : index
+  %c{{ TILE_K * 2 + 0}} = arith.constant {{ TILE_K * 2 + 0}} : index{% if Bias_rank == 1 %}
+  %c0 = arith.constant 0 : index{% endif %}{% if X_transposed %}
+  %x_chunk = arith.constant {{ TILE_M * 2 + 0 }} : index{% endif %}{% if W_transposed %}
+  %w_chunk = arith.constant {{ TILE_K * 2 + 0 }} : index{% endif %}
   %M = arith.constant {{ M }} : index
   %N = arith.constant {{ N }} : index
   %K = arith.constant {{ K }} : index
@@ -34,20 +38,20 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
 
   affine.for %t_m = 0 to %M step {{ TILE_M }} {
     affine.for %t_n = 0 to %N step {{ TILE_N }} {
-      %index2 = affine.apply #map1(%t_m, %t_n){% if Bias %}
-      affine.dma_start %Bias[%index2], %Y_buffer[0, 0], %tag[0], %c_mvin3, %N, %c_set : memref<{{ M * N }}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>{% else %}
+      %index2 = affine.apply #map2(%t_m, %t_n){% if Bias %}
+      affine.dma_start %Bias[{% if Bias_rank == 2 %}%index2{% else %}%t_n{% endif %}], %Y_buffer[0, 0], %tag[0], %c_mvin3, %{% if Bias_rank == 2 %}N{% else %}c0{% endif %}, %c_set : memref<{% if Bias_rank == 2 %}{{ M * N }}{% else %}{{ N }}{% endif %}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>{% else %}
       affine.for %i = 0 to {{ TILE_M }} {
         affine.vector_store %v0, %Y_buffer[%i, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_N }}xf32>
       }{% endif %}
       affine.for %t_k = 0 to %K step {{ TILE_K }} {
         %index0 = affine.apply #map0(%t_m, %t_k)
         %index1 = affine.apply #map1(%t_k, %t_n)
-        affine.dma_start %X[%index0], %X_buffer[0, 0], %tag[0], %c_mvin, %K, %c_set : memref<{{ M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32>
-        affine.dma_start %W[%index1], %W_buffer[0, 0], %tag[0], %c_mvin2, %N, %c_set : memref<{{ K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
+        affine.dma_start %X[%index0], %X_buffer[0, 0], %tag[0], %c_mvin, {% if X_transposed %}%M, %x_chunk{% else %}%K, %c_set{% endif %} : memref<{{ M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32>
+        affine.dma_start %W[%index1], %W_buffer[0, 0], %tag[0], %c_mvin2, {% if W_transposed %}%K, %w_chunk{% else %}%M, %c_set{% endif %} : memref<{{ K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
         linalg.matmul ins(%X_buffer, %W_buffer : memref<{{ TILE_M }}x{{ TILE_K }}x{{ DATA_STYPE }}, 1>, memref<{{ TILE_K }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
                 outs(%Y_buffer : memref<{{ TILE_M }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
-        affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ M * N }}xf32>, memref<1xi32>
       } { outer_loop=true }
+      affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ M * N }}xf32>, memref<1xi32>
     } { outer_loop=true }
   } { outer_loop=true }
   return
@@ -82,7 +86,7 @@ class MLIRGemmTemplate(MLIRTemplate):
         Bias = None if len(self.input_nodes) == 2 else self.input_nodes[2]
 
         # Use BaseMLIRHardwareInfo
-        TILE_M = min(kernel.vector_lane, X.get_size()[0])
+        TILE_M = min(kernel.vector_lane, X.get_size()[0]) #FIXME: Tile Size is fixed, transpose is not supported
         TILE_N = min(kernel.vector_lane, W.get_size()[1])
         TILE_K = min(kernel.vector_lane, X.get_size()[1])
 
@@ -104,6 +108,7 @@ class MLIRGemmTemplate(MLIRTemplate):
             W = W,
             Y = Y,
             Bias = Bias,
+            Bias_rank = len(Bias.data.get_size()) if Bias is not None else 0,
             W_transposed = W_transposed,
             X_transposed = X_transposed,
             input_reorder = self.input_reorder
