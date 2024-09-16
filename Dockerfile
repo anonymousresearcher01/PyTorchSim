@@ -71,6 +71,16 @@ RUN git clone https://github.com/riscv-software-src/riscv-pk.git && cd riscv-pk 
     ../configure --prefix=$RISCV --host=riscv64-unknown-elf && make -j && make install
 
 # Install torchsim dependency
-RUN apt install ninja-build && pip install onnx && pip install --user conan==1.56.0
+RUN apt install ninja-build && pip install onnx matplotlib && pip install --user conan==1.56.0
+
+# Prepare ONNXim project
+RUN git clone https://github.com/PSAL-POSTECH/PyTorchSim.git --branch develop
+RUN cd PyTorchSim/PyTorchSimBackend && \
+    git submodule update --recursive --init && \
+    mkdir -p build && \
+    cd build && \
+    conan install .. --build=missing && \
+    cmake .. && \
+    make -j$(nproc)
 ENV PATH $PATH:/root/.local/bin
 ENV LD_LIBRARY_PATH /usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH

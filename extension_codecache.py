@@ -169,10 +169,6 @@ class MLIRCodeCache:
                 print("Error output:", e.output)
                 assert(0)
 
-        tile_graph_generator = tog_generator()
-        tile_graph_generator.load_file(raw_tog_path)
-        tile_graph_generator.generate_tile_graph(os.path.join(write_path, "basic_block.onnx"), list())
-
         # Generate MLIR kernel calller and binary for cycle calculation
         cycle_llvm_caller = MLIRKernelCallerCodeGen(False, arg_attributes)
         cycle_llvm_caller.generate_wrapper_file(write_path, cycle_wrapper_name)
@@ -184,6 +180,11 @@ class MLIRCodeCache:
         # Run cyclesim
         cyclesim = CycleSimulator()
         cycle_list = cyclesim.compile_and_simulate(os.path.join(write_path, cycle_binary_name), " ".join(array_size))
+
+        # Create TOG
+        tile_graph_generator = tog_generator()
+        tile_graph_generator.load_file(raw_tog_path)
+        tile_graph_generator.generate_tile_graph(os.path.join(write_path, "tile_graph.onnx"), cycle_list=cycle_list)
         return key
 
 class LLVMCodeCache:
@@ -293,6 +294,16 @@ class CustomAsyncCompile(AsyncCompile):
                                   os.path.join(result_path, self.validation_binary_name),
                                   kwargs['intermediate_op'] if 'intermediate_op' in kwargs else None,
                                   vectorlane_size=vectorlane_size, spad_info=spad_info)
+
+            onnx_path = os.path.join(result_path, "tile_graph.onnx")
+            cmd = get_backend_command(onnx_path)
+
+            try:
+                subprocess.check_call(shlex.split(cmd))
+            except subprocess.CalledProcessError as e:
+                print("Command failed with exit code", e.returncode)
+                print("Error output:", e.output)
+                assert(0)
         return dummy_simulator
 
     def llvm(self, source_code, arg_attributes={}, **kwargs):

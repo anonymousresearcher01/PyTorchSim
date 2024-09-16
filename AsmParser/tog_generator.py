@@ -141,7 +141,11 @@ class tog_generator:
             prev_node = end_node
 
     def generate_tile_graph(self, name="tile_graph", cycle_list=list):
-        onnx_node_list = [node.to_onnx() for node in list(self.node_dict.values())]
+        for iter_node in self.node_dict.values():
+            if isinstance(iter_node, compute_node):
+                iter_node.torchsim_cycle = cycle_list.pop(0)
+
+        onnx_node_list = [node.to_onnx() for node in list(self.node_dict.values())][1:] # Exclude root node
         dump_onnx_graph(name, onnx_node_list)
 
 if __name__ == "__main__":

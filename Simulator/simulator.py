@@ -106,15 +106,18 @@ class CycleSimulator():
         pass
 
     def compile_and_simulate(self, target_binary, array_size):
+        dir_path = os.path.join(os.path.dirname(target_binary), "m5out")
         try:
-            gem5_cmd = [extension_codecache.GEM5_PATH, extension_codecache.GEM5_SCRIPT_PATH, "-c", target_binary, "-o", array_size]
+            gem5_cmd = [extension_codecache.GEM5_PATH, "-d", dir_path, extension_codecache.GEM5_SCRIPT_PATH, "-c", target_binary, "-o", array_size]
             output = subprocess.check_output(gem5_cmd)
         except subprocess.CalledProcessError as e:
             print("Command failed with exit code", e.returncode)
             print("Error output:", e.output)
             assert(0)
 
-        with open("m5out/stats.txt", "r") as stat_file:
+        with open(f"{dir_path}/stats.txt", "r") as stat_file:
             raw_list = stat_file.readlines()
-            cycle_list = [int(line.split()[1]) for line in raw_list if "system.cpu.numCycles" in line]
+            cycle_per_tick = [int(line.split()[1]) for line in raw_list if "system.clk_domain.clock" in line][0]
+            cycle_list = [int(line.split()[1]) / cycle_per_tick for line in raw_list if "system.cpu.numCycles" in line]
+        cycle_list = [cycle_list[i+1] - cycle_list[i] for i in range(len(cycle_list)-1)]
         return cycle_list
