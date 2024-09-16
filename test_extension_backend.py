@@ -163,6 +163,9 @@ class ExtensionBackendTests(TestCase):
         # Softmax TEST
         # test_softmax(device)
 
+        # ReLU TEST
+        # test_ReLU(device)
+
         # CNN TEST
         # test_CNN(device)
 
@@ -439,6 +442,21 @@ def test_softmax(device):
         print("custom out: ", y.cpu())
         print("cpu out: ", cpu_y)
 
+def test_ReLU(device):
+    torch.manual_seed(0)
+    input = torch.randn(128, 128)
+    x1 = input.to(device=device)
+    x2 = input.to("cpu")
+    opt_fn = torch.compile()(torch.nn.functional.relu)
+    y = opt_fn(x1)
+    cpu_y = torch.nn.functional.relu(x2)
+    if torch.allclose(y.cpu(), cpu_y, rtol=1e-4, atol=1e-4):
+        print("--------------------------")
+        print("|ReLU Forward Test Passed|")
+        print("--------------------------")
+    else:
+        print("custom out: ", y.cpu())
+        print("cpu out: ", cpu_y)
 
 if __name__ == "__main__":
     from torch._dynamo.test_case import run_tests
