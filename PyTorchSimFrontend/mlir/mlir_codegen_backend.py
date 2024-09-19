@@ -164,6 +164,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.reduction_prefix = IndentedBuffer()
         self.reduction_suffix = IndentedBuffer()
         self.global_vars = IndentedBuffer()
+        self.global_vars_set = set()
         self.header = IndentedBuffer()
         self.reduction_vars = {}
         self.reduction_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_acc")
@@ -171,7 +172,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.init_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="init")
         self.init_vec_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="init_vec")
         self.map_cse = common.CSE("#", self.suffix, name_prefix="map")
-        self.spad_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="spad")
         self.consts = set()
         self.tags = set()
         self.loop_info = {}
@@ -303,7 +303,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(cv, name)
         # tile_size = min(self.tile_size, self.buffer_types[name][1])
         self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{self.tile_row}][{self.tile_col}] __attribute__ ((section(\".spad\")));")
-        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{tile_shape}x{type_name}, 1>", assignment = False)
+        if name not in self.global_vars_set:
+            self.global_vars_set.add(name)
+            self.global_vars.writeline(f"memref.global @{name}_spad : memref<{tile_shape}x{type_name}, 1>")
         buffer = self.cse.generate(self.loads, f"memref.get_global @{name}_spad : memref<{tile_shape}x{type_name}, 1>")
 
         # MVIN Encoding
@@ -339,7 +341,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         cv = self.get_constant_vector(index)
         stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(cv, name)
         self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{self.tile_row}][{self.tile_col}] __attribute__ ((section(\".spad\")));")
-        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{tile_shape}x{type_name}, 1>", assignment = False)
+        if name not in self.global_vars_set:
+            self.global_vars_set.add(name)
+            self.global_vars.writeline(f"memref.global @{name}_spad : memref<{tile_shape}x{type_name}, 1>")
         buffer = self.cse.generate(self.stores, f"memref.get_global @{name}_spad : memref<{tile_shape}x{type_name}, 1>")
 
         # MVOUT Encoding
@@ -405,7 +409,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         tile_row = self.vector_lane if len(self.itervars) > 1 else 1
         tile_col = self.tile_col_per_lane if len(self.itervars) > 1 else 1
         self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{tile_row}][{tile_col}] __attribute__ ((section(\".spad\")));")
-        self.spad_cse.generate(self.global_vars, f"memref.global @{name}_spad : memref<{tile_row}x{tile_col}x{type_name}, 1>", assignment = False)
+        if name not in self.global_vars_set:
+            self.global_vars_set.add(name)
+            self.global_vars.writeline(f"memref.global @{name}_spad : memref<{tile_row}x{tile_col}x{type_name}, 1>")
         buffer = self.cse.generate(self.reductions_suffix, f"memref.get_global @{name}_spad : memref<{tile_row}x{tile_col}x{type_name}, 1>")
         operation = "affine.vector_store" if self.buffer_types[name][1] > 1 else "affine.store"
         shape = f", vector<{tile_col}x{type_name}>" if self.buffer_types[name][1] > 1 else ""
