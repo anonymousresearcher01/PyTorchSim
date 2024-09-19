@@ -34,9 +34,58 @@ class TileGraph {
   const std::shared_ptr<Tile> peek_tile(int core_id);
   std::shared_ptr<Tile> get_tile(int core_id);
   void allocate_subgraph(int core_id);
+  void push_range(std::tuple<int, int, int> range) { _ranges.push_back(range); }
+
+  class Iterator {
+   public:
+    Iterator(const std::vector<std::tuple<int, int, int>>& ranges, bool end = false) : _ranges(ranges), finished_(end) {
+      if (!end)
+        for (const auto& range : _ranges)
+          indices_.push_back(std::get<0>(range));  // Start with the first element of each range
+    }
+
+    Iterator& operator++() {
+      for (int i = indices_.size() - 1; i >= 0; --i) {
+        int& current = indices_[i];
+        int step = std::get<2>(_ranges[i]);
+        int end = std::get<1>(_ranges[i]);
+
+        current += step;
+        if (current < end)
+            return *this;
+
+        // If the current range is exhausted, reset and move to the previous one
+        current = std::get<0>(_ranges[i]);
+      }
+
+      finished_ = true;  // All ranges are exhausted
+      return *this;
+    }
+
+    // Inequality operator to check if iteration is done
+    bool operator!=(const Iterator& other) const {
+      return finished_ != other.finished_;
+    }
+    std::vector<int> get_indices() { return indices_; }
+   private:
+    const std::vector<std::tuple<int, int, int>>& _ranges;
+    std::vector<int> indices_;
+    bool finished_ = false;
+  };
+
+  // Begin iterator
+  Iterator begin() const {
+    return Iterator(_ranges);
+  }
+
+  // End iterator
+  Iterator end() const {
+    return Iterator(_ranges, true);
+  }
 
  private:
   int _vec_index=0;
+  std::vector<std::tuple<int, int, int>> _ranges;
   std::vector<std::shared_ptr<TileSubGraph>> _subgraph_vec;
   std::map<int, std::shared_ptr<TileSubGraph>> _cpu_graph_map;
   static std::shared_ptr<Tile> null_tile;

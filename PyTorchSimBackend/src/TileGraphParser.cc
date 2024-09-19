@@ -56,7 +56,7 @@ void TileNode::print_node() {
 TileComputeNode::TileComputeNode(onnx::NodeProto& node) : TileNode(node) {
   for (auto attribute : node.attribute()) {
     if (attribute.name() == "torchsim_cycle") {
-      _cycle = attribute.i();
+      _cycle = int(attribute.f());
     }
   }
 }
@@ -118,7 +118,7 @@ TileLoopNode::TileLoopNode(onnx::NodeProto& node) : TileNode(node) {
   }
 }
 
-std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(int iter) {
+std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(std::vector<int>& iter) {
   std::vector<std::shared_ptr<Tile>> tile_vec;
   tile_vec.push_back(std::make_shared<Tile>(Tile::Status::INITIALIZED));
 
@@ -145,7 +145,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(int iter) {
     } else if (tile_node->get_type() == TileType::COMPUTE_NODE) {
       std::shared_ptr<TileComputeNode> compute_node = std::static_pointer_cast<TileComputeNode>(tile_node);
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
-        Opcode::COMP, 6, //compute_node->get_cycle(),
+        Opcode::COMP, compute_node->get_cycle(),
         0, 0,
         std::vector<size_t>(), std::vector<size_t>()
       );
@@ -182,7 +182,8 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(int iter) {
       parent->get_instructions().back()->set_free_sram_size(parent->get_required_sram_size());
 
       for (int i=start; i<end; i+=stride) {
-        std::vector<std::shared_ptr<Tile>> ret = loop_node->get_tiles_from_iter(i);
+        std::vector<int> inner_indices = {i};
+        std::vector<std::shared_ptr<Tile>> ret = loop_node->get_tiles_from_iter(inner_indices);
         parent->append_child(ret.front());
         ret.back()->append_child(child);
         for (const auto& inner_tile : ret)
@@ -239,7 +240,7 @@ TileGraphParser::TileGraphParser(std::string onnx_path) {
   for (onnx::NodeProto node_proto : model_proto.graph().node()) {
     std::string op_type = node_proto.op_type();
     TileType type = TileNode::get_tile_type(op_type);
-
+    std::cout << op_type << std::endl;
     /* Parse node */
     if (type == TileType::LOOP_INDEX_NODE) {
       std::shared_ptr<TileLoopNode> tile_node = std::make_shared<TileLoopNode>(node_proto);
@@ -276,13 +277,26 @@ TileGraphParser::TileGraphParser(std::string onnx_path) {
   }
 
   _tile_graph = std::make_unique<TileGraph>(TileGraph());
-  std::shared_ptr<TileLoopNode> outer_loop = std::static_pointer_cast<TileLoopNode>(_loop_nodes.at(0));
-  uint64_t start = outer_loop->get_start();
-  uint64_t stride = outer_loop->get_stride();
-  uint64_t end = outer_loop->get_end();
-  for (int i=start; i<end; i+=stride) {
+  int last_outer_idx = -1;
+  /* Extract outer loop */
+  for (int i=0;_loop_nodes.size();i++) {
+    std::shared_ptr<TileLoopNode> outer_loop = std::static_pointer_cast<TileLoopNode>(_loop_nodes.at(i));
+    if (outer_loop->get_loop_type() != TileLoopNode::PARALLEL_LOOP)
+      break;
+    last_outer_idx = i;
+    uint64_t start = outer_loop->get_start();
+    uint64_t end = outer_loop->get_end();
+    uint64_t stride = outer_loop->get_stride();
+    _tile_graph->push_range({start, end, stride});
+  }
+
+  /* Iterate outer loop and initialize inner loop */
+  for (auto iter=_tile_graph->begin(); iter!=_tile_graph->end(); ++iter) {
+    std::shared_ptr<TileLoopNode> outer_loop = std::static_pointer_cast<TileLoopNode>(_loop_nodes.at(last_outer_idx));
+    auto indices = iter.get_indices();
     std::shared_ptr<TileSubGraph> subgraph = std::make_shared<TileSubGraph>();
-    std::vector<std::shared_ptr<Tile>> sub_tiles = outer_loop->get_tiles_from_iter(i);
+    std::vector<std::shared_ptr<Tile>> sub_tiles = outer_loop->get_tiles_from_iter(indices);
+
     /* insert tiles to subgraph */
     for (const auto& sub_tile: sub_tiles){
       subgraph->add_tile(sub_tile);

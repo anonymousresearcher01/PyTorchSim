@@ -29,7 +29,7 @@ class TileNode {
   std::shared_ptr<TileNode> get_owner_loop() { return _owner_loop; }
   std::string get_name() { return _name; }
   void set_owner_loop(std::shared_ptr<TileNode> owner) { _owner_loop=std::move(owner); }
-  void print_node();
+  virtual void print_node();
   void set_depth(int depth) { _depth=depth; }
   int get_depth() { return _depth; }
 
@@ -62,7 +62,7 @@ class TileMemoryNode : public TileNode {
   size_t get_precision() { return _element_size; }
   std::vector<size_t> get_tile_size() { return _tile_size; }
   std::vector<size_t> get_tile_stride() { return _tile_stride; }
-  void print_node();
+  void print_node() override;
 
  private:
   std::vector<size_t> _tile_size;
@@ -82,12 +82,12 @@ class TileLoopNode : public TileNode {
   };
   TileLoopNode(onnx::NodeProto& node);
   void add_body(std::shared_ptr<TileNode> body) { _body_node.push_back(body); }
-  std::vector<std::shared_ptr<Tile>> get_tiles_from_iter(int iter);
+  std::vector<std::shared_ptr<Tile>> get_tiles_from_iter(std::vector<int>&);
   uint64_t get_start() { return _start; }
   uint64_t get_stride() { return _stride; }
   uint64_t get_end() { return _end; }
   LoopType get_loop_type() { return _loop_type; }
-  void print_node();
+  void print_node() override;
  private:
   std::string _tile_index_name;
   uint64_t _stride;
