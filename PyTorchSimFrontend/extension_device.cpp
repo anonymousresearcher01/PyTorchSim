@@ -272,6 +272,10 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
   m.impl("triu_indices", torch::CppFunction::makeFromBoxedFunction<&custom_cpu_fallback>());
   m.impl("neg.out", torch::CppFunction::makeFromBoxedFunction<&custom_cpu_fallback>());
   m.impl("sum.IntList_out", torch::CppFunction::makeFromBoxedFunction<&custom_cpu_fallback>());
+  m.impl("view", torch::CppFunction::makeFromBoxedFunction<&custom_cpu_fallback>());
+  m.impl("eq.Tensor", torch::CppFunction::makeFromBoxedFunction<&custom_cpu_fallback>());
+  m.impl("all.all_out", torch::CppFunction::makeFromBoxedFunction<&custom_cpu_fallback>());
+  m.impl("_local_scalar_dense", torch::CppFunction::makeFromBoxedFunction<&custom_cpu_fallback>());
 }
 
 // This basic implementation doesn't bother dealing with different device indices

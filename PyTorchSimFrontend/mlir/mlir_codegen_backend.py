@@ -136,8 +136,29 @@ class ExtensionOverrides(common.OpOverrides):
         return f'arith.maximumf %{operand1}, %{operand2} : {shape}'
 
     @staticmethod
+    def le(operand1, operand2, tile_size=16):
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'arith.cmpf ole, %{operand1}, %{operand2} : {shape}'
+
+    @staticmethod
     def relu(x, tile_size=16):
         return ops.maximum(x, ops.constant(0.0, torch.float32))
+
+    @staticmethod
+    def sigmoid(x, tile_size=16):
+        one = ops.constant(1, torch.float32)
+        return ops.truediv(one, ops.add(one, ops.exp(ops.neg(x))))
+
+    @staticmethod
+    def neg(x, tile_size=16):
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'arith.negf %{x} : {shape}'
+
+    @staticmethod
+    def where(condition, x, y, tile_size=16):
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        cond_shape = f"vector<{tile_size}xi1>," if tile_size > 1 else ""
+        return f"arith.select %{condition}, %{x}, %{y} : {cond_shape} {shape}"
 
 RTYPE_TO_MLIR = {
     "sum": "add",
@@ -185,18 +206,19 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.dma_cache = {}
         self.dma_counter = 1
         self.step = [self.tile_row, self.tile_col]
+        self.reduction_idx = {}
 
     def get_constant_vector(self, expr):
         constant_vector = [int(expr.coeff(var)) for var in self.itervars]
         return constant_vector
 
-    def get_dma_info(self, cv, name):
+    def get_dma_info(self, cv, name, index):
         tile_size_per_lane = min(self.tile_size_per_lane, self.buffer_types[name][1])
         chunk_size = tile_size_per_lane if self.tiling_idx >= self.reduction_depth else self.tile_col_per_lane
         stride = self.tile_col if len(self.itervars) == 1 else reduce(mul, cv, 1)
         is_col_major = 1 if self.tiling_idx >= self.reduction_depth and len(self.itervars) > 1 else 0
         tile_shape = self.tile_shape
-        if len(self.itervars) == 1: # FIXME: 1D vectors use only 1 vector lane
+        if len(self.itervars) == 1 and index in self.reduction_idx:
             chunk_size = self.tile_size
             is_col_major = 0
             stride = self.tile_size
@@ -279,6 +301,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         with self as kernel:
             for node in nodes:
                 vars, reduction_vars = kernel.set_ranges(group, reduction_group)
+                self.reduction_idx = {var: i for i, var in enumerate(reduction_vars)}
                 node.run(vars, reduction_vars)
 
         src_code = self.codegen_kernel(kernel_name=kernel_name)
@@ -300,8 +323,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dtype = V.graph.get_dtype(name)
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
         cv = self.get_constant_vector(index)
-        stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(cv, name)
-        # tile_size = min(self.tile_size, self.buffer_types[name][1])
+        stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(cv, name, index)
         self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{self.tile_row}][{self.tile_col}] __attribute__ ((section(\".spad\")));")
         if name not in self.global_vars_set:
             self.global_vars_set.add(name)
@@ -339,7 +361,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dtype = V.graph.get_dtype(name)
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
         cv = self.get_constant_vector(index)
-        stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(cv, name)
+        stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(cv, name, index)
         self.header.writeline(f"{mlir_common.DTYPE_TO_C[dtype]} {name}_spad[{self.tile_row}][{self.tile_col}] __attribute__ ((section(\".spad\")));")
         if name not in self.global_vars_set:
             self.global_vars_set.add(name)

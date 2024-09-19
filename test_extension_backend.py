@@ -174,11 +174,12 @@ class MLP(nn.Module):
         super(MLP, self).__init__()
         self.linear1 = nn.Linear(64, 64)
         self.linear2 = nn.Linear(64, 64)
+        self.relu = nn.ReLU()
         self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
-        x = self.linear1(x)
-        x = self.linear2(nn.functional.relu(x))
+        x = self.linear1(self.relu(x))
+        x = self.linear2(self.relu(x))
         x = self.softmax(x)
         return x
 
@@ -289,24 +290,24 @@ def test_single_perceptron(device):
     else:
         print("custom grad: ", b1.grad.cpu())
         print("cpu grad: ", b2.grad)
-    for i in range(50):
-        y = opt_mlp(w1, x1, b1)
-        # loss = opt_loss(y, y1)
-        # print(loss.cpu().item()) # check loss
-        loss.to(device=device)
-        loss.backward()
-        with torch.no_grad():
-            w1.copy_(opt_w(w1, w1.grad, lr))
-            b1.copy_(opt_w(b1, b1.grad, lr))
-        w1.grad.zero_()
-        b1.grad.zero_()
-    # plot input and output on 2D plane, and plot the y = w*x + b line
-    plt.scatter(x1.cpu().numpy(), y1.cpu().numpy(), c='#c80151')
-    x = np.linspace(-3, 3, 100)
-    y = w1.cpu().item() * x + b1.cpu().item()
-    plt.plot(x, y, '-k')
-    plt.show()
-    plt.savefig('result.png')
+    # for i in range(50):
+    #     y = opt_mlp(w1, x1, b1)
+    #     loss = opt_loss(y, y1)
+    #     # print(loss.cpu().item()) # check loss
+    #     loss.to(device=device)
+    #     loss.backward()
+    #     with torch.no_grad():
+    #         w1.copy_(opt_w(w1, w1.grad, lr))
+    #         b1.copy_(opt_w(b1, b1.grad, lr))
+    #     w1.grad.zero_()
+    #     b1.grad.zero_()
+    # # plot input and output on 2D plane, and plot the y = w*x + b line
+    # plt.scatter(x1.cpu().numpy(), y1.cpu().numpy(), c='#c80151')
+    # x = np.linspace(-3, 3, 100)
+    # y = w1.cpu().item() * x + b1.cpu().item()
+    # plt.plot(x, y, '-k')
+    # plt.show()
+    # plt.savefig('result.png')
 
 def test_matmul(device):
     def custom_matmul(a, b):
@@ -383,6 +384,20 @@ def test_mlp(device):
     else:
         print("custom grad: ", model.linear1.bias.grad.cpu())
         print("cpu grad: ", cpu_model.linear1.bias.grad)
+    if torch.allclose(model.linear2.weight.grad.cpu(), cpu_model.linear2.weight.grad, rtol=1e-4, atol=1e-4):
+        print("----------------------------")
+        print("|MLP Backward Test 3 Passed|")
+        print("----------------------------")
+    else:
+        print("custom grad: ", model.linear2.weight.grad.cpu())
+        print("cpu grad: ", cpu_model.linear2.weight.grad)
+    if torch.allclose(model.linear2.bias.grad.cpu(), cpu_model.linear2.bias.grad, rtol=1e-4, atol=1e-4):
+        print("----------------------------")
+        print("|MLP Backward Test 4 Passed|")
+        print("----------------------------")
+    else:
+        print("custom grad: ", model.linear2.bias.grad.cpu())
+        print("cpu grad: ", cpu_model.linear2.bias.grad)
 
 def test_CNN(device):
     torch.manual_seed(0)
