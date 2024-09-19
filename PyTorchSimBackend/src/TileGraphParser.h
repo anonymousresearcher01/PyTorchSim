@@ -75,19 +75,25 @@ class TileMemoryNode : public TileNode {
 
 class TileLoopNode : public TileNode {
  public:
+  enum LoopType {
+    NORMAL_LOOP,
+    PARALLEL_LOOP,
+    ACCUMULATION_LOOP
+  };
   TileLoopNode(onnx::NodeProto& node);
   void add_body(std::shared_ptr<TileNode> body) { _body_node.push_back(body); }
   std::vector<std::shared_ptr<Tile>> get_tiles_from_iter(int iter);
   uint64_t get_start() { return _start; }
   uint64_t get_stride() { return _stride; }
   uint64_t get_end() { return _end; }
+  LoopType get_loop_type() { return _loop_type; }
   void print_node();
-
  private:
   std::string _tile_index_name;
   uint64_t _stride;
   uint64_t _start;
   uint64_t _end;
+  LoopType _loop_type;
   std::vector<std::shared_ptr<TileNode>> _body_node;
 };
 

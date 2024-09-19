@@ -106,6 +106,14 @@ TileLoopNode::TileLoopNode(onnx::NodeProto& node) : TileNode(node) {
       _stride = attribute.i();
     } else if (attribute.name() == "torchsim_loop_idx") {
       _tile_index_name = attribute.s();
+    } else if (attribute.name() == "torchsim_loop_type") {
+      if (attribute.s() == "outer_loop")
+        _loop_type = PARALLEL_LOOP;
+      else if (attribute.s() == "accumulation_loop") {
+        _loop_type = ACCUMULATION_LOOP;
+      } else {
+        _loop_type = NORMAL_LOOP;
+      }
     }
   }
 }
