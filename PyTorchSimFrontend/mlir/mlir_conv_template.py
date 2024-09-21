@@ -69,7 +69,7 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
         affine.dma_start %Y[%index2], %Y_buffer[0, 0], %tag[0], %c_mvin3, %N, %c_set : memref<{{ M * N }}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
 
         // Accumulate
-        affine.for %r = 0 to {{ M }} {
+        affine.for %r = 0 to {{ TILE_M }} {
             %B_vec = affine.vector_load %B_buffer[%r, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_N }}xf32>
             %Y_vec = affine.vector_load %Y_buffer[%r, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_N }}xf32>
             %acc_vec = arith.addf %Y_vec, %B_vec : vector<{{ TILE_N }}xf32>
