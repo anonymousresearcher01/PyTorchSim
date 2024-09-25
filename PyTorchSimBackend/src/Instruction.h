@@ -20,7 +20,8 @@ std::string opcode_to_string(Opcode opcode);
 class Instruction {
  public:
   Instruction(Opcode opcode, cycle_type compute_cycle, size_t num_parents, addr_type dram_addr,
-              std::vector<size_t> tile_size, std::vector<size_t> tile_stride, size_t precision=0);
+              std::vector<size_t> tile_size, std::vector<size_t> tile_stride, size_t precision,
+              std::vector<int> &idx_list);
   void finish_instruction();
   void add_child(std::shared_ptr<Instruction> child);
   bool check_ready() { return ready_counter == 0; }
@@ -46,16 +47,29 @@ class Instruction {
     auto get_tile_address = [this](size_t i, size_t j) -> addr_type {
       return dram_addr + (i * tile_stride[0] + j) * _precision;
     };
-    return get_tile_address(row, col);
+    if (_idx_list.size() == 2) {
+      return get_tile_address(_idx_list.at(0) + row, _idx_list.at(1) + col);
+    } else if (_idx_list.size() == 1) {
+      return get_tile_address(row, _idx_list.at(0) + col);
+    } else {
+      spdlog::error("Calculating DRAM address error...");
+      exit(EXIT_FAILURE);
+    }
   }
   size_t get_free_sram_size() { return _free_sram_size; }
   void set_free_sram_size(size_t sram_size) { _free_sram_size=sram_size; }
+  void* get_owner() { return _owner; }
+  void set_owner(void *owner) { _owner = owner;}
+  void set_compute_type(int type) { _compute_type = type; }
+  int get_compute_type() { return _compute_type; }
+  std::vector<int>& get_idx_list() { return _idx_list; }
 
   cycle_type start_cycle;
   cycle_type finish_cycle;
 
   bool finished=false;
  private:
+  void *_owner;
   Opcode opcode;
   cycle_type compute_cycle;
   size_t ready_counter;
@@ -67,4 +81,6 @@ class Instruction {
   size_t _precision=0;
   size_t _free_sram_size=0;
   addr_type dram_addr;
+  int _compute_type = 0;
+  std::vector<int> _idx_list;
 };

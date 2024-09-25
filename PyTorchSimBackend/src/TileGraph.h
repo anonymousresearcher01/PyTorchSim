@@ -34,11 +34,15 @@ class TileGraph {
   const std::shared_ptr<Tile> peek_tile(int core_id);
   std::shared_ptr<Tile> get_tile(int core_id);
   void allocate_subgraph(int core_id);
-  void push_range(std::tuple<int, int, int> range) { _ranges.push_back(range); }
+  void push_range(std::string loop_idx, std::tuple<int, int, int> range) {
+    _loop_index_list.push_back(loop_idx);
+    _ranges.push_back(range);
+  }
 
   class Iterator {
    public:
-    Iterator(const std::vector<std::tuple<int, int, int>>& ranges, bool end = false) : _ranges(ranges), finished_(end) {
+    Iterator(const std::vector<std::tuple<int, int, int>>& ranges, const std::vector<std::string>& loop_index_list, bool end = false) :
+      _ranges(ranges), _loop_index_list(loop_index_list), finished_(end) {
       if (!end)
         for (const auto& range : _ranges)
           indices_.push_back(std::get<0>(range));  // Start with the first element of each range
@@ -66,8 +70,14 @@ class TileGraph {
     bool operator!=(const Iterator& other) const {
       return finished_ != other.finished_;
     }
-    std::vector<int> get_indices() { return indices_; }
+    std::map<std::string, int> get_indices() {
+      std::map<std::string, int> result;
+      for (int i=0; i<_loop_index_list.size();i++)
+        result[_loop_index_list.at(i)] = indices_.at(i);
+      return result;
+    }
    private:
+    const std::vector<std::string>& _loop_index_list;
     const std::vector<std::tuple<int, int, int>>& _ranges;
     std::vector<int> indices_;
     bool finished_ = false;
@@ -75,16 +85,17 @@ class TileGraph {
 
   // Begin iterator
   Iterator begin() const {
-    return Iterator(_ranges);
+    return Iterator(_ranges, _loop_index_list);
   }
 
   // End iterator
   Iterator end() const {
-    return Iterator(_ranges, true);
+    return Iterator(_ranges, _loop_index_list, true);
   }
 
  private:
   int _vec_index=0;
+  std::vector<std::string> _loop_index_list;
   std::vector<std::tuple<int, int, int>> _ranges;
   std::vector<std::shared_ptr<TileSubGraph>> _subgraph_vec;
   std::map<int, std::shared_ptr<TileSubGraph>> _cpu_graph_map;

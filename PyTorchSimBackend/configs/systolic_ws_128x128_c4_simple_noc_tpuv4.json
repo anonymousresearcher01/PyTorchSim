@@ -1,7 +1,8 @@
 {
-  "num_cores" : 4,
+  "num_cores" : 1,
   "core_freq" : 1000,
   "sram_size" : 65536,
+  "core_print_interval" : 1000,
 
   "dram_type" : "ramulator",
   "dram_freq" : 877,
@@ -14,7 +15,7 @@
   "icnt_type" : "simple",
   "icnt_latency" : 1,
   "icnt_freq" : 2000,
-  "icnt_print_interval" : 10000,
+  "icnt_print_interval" : 0,
   "icnt_config_path" : "../configs/booksim2_configs/fly_c4_m32.icnt",
 
   "precision" : 2,

@@ -14,7 +14,6 @@ void TMA::issue_tile(std::shared_ptr<Instruction> inst) {
     spdlog::error("[TMA {}] issued tile is not [y,x] format..", _id);
     exit(EXIT_FAILURE);
   }
-
   _tile_size_x = tile_size.at(1);
   _tile_size_y = tile_size.at(0);
   _tile_idx_stride = std::min(size_t(_dram_req_size / _current_inst->get_precision()), size_t(_tile_size_x));
@@ -30,6 +29,7 @@ MemoryAccess* TMA::get_memory_access() {
     return nullptr;
 
   addr_type addr = _current_inst->get_dram_address(_tile_idx / _tile_size_x, _tile_idx % _tile_size_x);
+  addr -= addr & (_dram_req_size - 1);
   MemoryAccess* access = new MemoryAccess({
     .id = generate_mem_access_id(),
     .dram_address = addr,

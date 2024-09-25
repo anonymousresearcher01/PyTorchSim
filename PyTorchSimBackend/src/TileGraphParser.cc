@@ -58,6 +58,9 @@ TileComputeNode::TileComputeNode(onnx::NodeProto& node) : TileNode(node) {
     if (attribute.name() == "torchsim_cycle") {
       _cycle = int(attribute.f());
     }
+    if (attribute.name() == "torchsim_compute_type") {
+      _compute_type = attribute.i();
+    }
   }
 }
 
@@ -82,6 +85,9 @@ TileMemoryNode::TileMemoryNode(onnx::NodeProto& node) : TileNode(node) {
     } else if (attribute.name() == "torchsim_tile_stride") {
       for (int i = 0; i < attribute.ints_size(); i++)
         _tile_stride.push_back(attribute.ints(i));
+    } else if (attribute.name() == "torchsim_loop_idx_list") {
+      for (int i = 0; i < attribute.strings_size(); i++)
+        _loop_idx_list.push_back(attribute.strings(i));
     }
   }
 }
@@ -118,7 +124,7 @@ TileLoopNode::TileLoopNode(onnx::NodeProto& node) : TileNode(node) {
   }
 }
 
-std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(std::vector<int>& iter) {
+std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphParser* tog_parser, std::map<std::string, int>& iter) {
   std::vector<std::shared_ptr<Tile>> tile_vec;
   tile_vec.push_back(std::make_shared<Tile>(Tile::Status::INITIALIZED));
 
@@ -126,29 +132,52 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(std::vector
   for (auto& tile_node: _body_node) {
     if (tile_node->get_type() == TileType::LOAD_NODE) {
       std::shared_ptr<TileMemoryNode> mem_node = std::static_pointer_cast<TileMemoryNode>(tile_node);
+      auto base_addr_name = mem_node->get_base_addr_name();
+      /* Lookup given name's address */
+      addr_type base_addr = tog_parser->lookup(base_addr_name);
+      std::vector<int> iter_list;
+      for (auto loop_idx: mem_node->get_loop_idx_list()) {
+        auto iter_value = iter.at(loop_idx);
+        iter_list.push_back(iter_value);
+      }
+
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::MOVIN, 0,
-        0, mem_node->get_base_addr(),
-        mem_node->get_tile_size(), mem_node->get_tile_stride(), mem_node->get_precision()
+        0, base_addr,
+        mem_node->get_tile_size(), mem_node->get_tile_stride(), mem_node->get_precision(),
+        iter_list
       );
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
     } else if (tile_node->get_type() == TileType::STORE_NODE) {
       std::shared_ptr<TileMemoryNode> mem_node = std::static_pointer_cast<TileMemoryNode>(tile_node);
+      auto base_addr_name = mem_node->get_base_addr_name();
+      /* Lookup given name's address */
+      addr_type base_addr = tog_parser->lookup(base_addr_name);
+      std::vector<int> iter_list;
+      for (auto loop_idx: mem_node->get_loop_idx_list()) {
+        auto iter_value = iter.at(loop_idx);
+        iter_list.push_back(iter_value);
+      }
+
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::MOVOUT, 0,
-        0, mem_node->get_base_addr(),
-        mem_node->get_tile_size(), mem_node->get_tile_stride(), mem_node->get_precision()
+        0, base_addr,
+        mem_node->get_tile_size(), mem_node->get_tile_stride(), mem_node->get_precision(),
+        iter_list
       );
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
     } else if (tile_node->get_type() == TileType::COMPUTE_NODE) {
       std::shared_ptr<TileComputeNode> compute_node = std::static_pointer_cast<TileComputeNode>(tile_node);
+      std::vector<int> iter_list;
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::COMP, compute_node->get_cycle(),
         0, 0,
-        std::vector<size_t>(), std::vector<size_t>()
+        std::vector<size_t>(), std::vector<size_t>(), 0,
+        iter_list
       );
+      inst->set_compute_type(compute_node->get_compute_type());
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
     } else if (tile_node->get_type() == TileType::LOOP_INDEX_NODE) {
@@ -181,9 +210,10 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(std::vector
       /* Set last instruction's free sram size */
       parent->get_instructions().back()->set_free_sram_size(parent->get_required_sram_size());
 
+      std::map<std::string, int> inner_indices = iter;
       for (int i=start; i<end; i+=stride) {
-        std::vector<int> inner_indices = {i};
-        std::vector<std::shared_ptr<Tile>> ret = loop_node->get_tiles_from_iter(inner_indices);
+        inner_indices[loop_node->get_idx_name()] = i;
+        std::vector<std::shared_ptr<Tile>> ret = loop_node->get_tiles_from_iter(tog_parser, inner_indices);
         parent->append_child(ret.front());
         ret.back()->append_child(child);
         for (const auto& inner_tile : ret)
@@ -228,19 +258,31 @@ void TileLoopNode::print_node() {
   spdlog::debug("{} stride: {} ", spaces, _stride);
 }
 
-TileGraphParser::TileGraphParser(std::string onnx_path) {
+TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
   /* Note: this parsing algorithm assume that all node are sorted in topological-order */
   std::ifstream model_istream(onnx_path);
   google::protobuf::io::IstreamInputStream zero_copy_input(&model_istream);
   onnx::ModelProto model_proto;
 
+  /* Attribute parsing */
+  _attribute_json = attribute_json;
+  if (_attribute_json.contains("address_info")) {
+    auto address_info = _attribute_json["address_info"];
+    for (auto it = address_info.begin(); it != address_info.end(); ++it) {
+      int value = it.value();
+      _arg_to_address[it.key()] = value;
+      spdlog::info("[TOGPaser] Address Attribute key: {} address: 0x{:x}", it.key(), value);
+    }
+  }
+
+  /* ONNX file parsing */
+  _tog_path = onnx_path;
   model_proto.ParseFromZeroCopyStream(&zero_copy_input) && model_istream.eof();
 
   auto input = model_proto.graph().input();
   for (onnx::NodeProto node_proto : model_proto.graph().node()) {
     std::string op_type = node_proto.op_type();
     TileType type = TileNode::get_tile_type(op_type);
-    std::cout << op_type << std::endl;
     /* Parse node */
     if (type == TileType::LOOP_INDEX_NODE) {
       std::shared_ptr<TileLoopNode> tile_node = std::make_shared<TileLoopNode>(node_proto);
@@ -284,10 +326,11 @@ TileGraphParser::TileGraphParser(std::string onnx_path) {
     if (outer_loop->get_loop_type() != TileLoopNode::PARALLEL_LOOP)
       break;
     last_outer_idx = i;
+    std::string loop_idx = outer_loop->get_idx_name();
     uint64_t start = outer_loop->get_start();
     uint64_t end = outer_loop->get_end();
     uint64_t stride = outer_loop->get_stride();
-    _tile_graph->push_range({start, end, stride});
+    _tile_graph->push_range(loop_idx, {start, end, stride});
   }
 
   /* Iterate outer loop and initialize inner loop */
@@ -295,7 +338,7 @@ TileGraphParser::TileGraphParser(std::string onnx_path) {
     std::shared_ptr<TileLoopNode> outer_loop = std::static_pointer_cast<TileLoopNode>(_loop_nodes.at(last_outer_idx));
     auto indices = iter.get_indices();
     std::shared_ptr<TileSubGraph> subgraph = std::make_shared<TileSubGraph>();
-    std::vector<std::shared_ptr<Tile>> sub_tiles = outer_loop->get_tiles_from_iter(indices);
+    std::vector<std::shared_ptr<Tile>> sub_tiles = outer_loop->get_tiles_from_iter(this, indices);
 
     /* insert tiles to subgraph */
     for (const auto& sub_tile: sub_tiles){
@@ -346,87 +389,12 @@ std::shared_ptr<TileNode> TileGraphParser::get_top_loop() {
   return _loop_nodes.at(_loop_stack_pointer-1);
 }
 
-//void TileGraphParser::initialize_tile(std::string op_type) {
-//  if (op_type == "load_node") {
-//    addr_type dest = _config.align_address(SPAD_BASE + _base_addr);
-//    uint32_t memory_req_size = (_tile_size[0] * _tile_size[1] * _precision - 1) / _config.dram_req_size + 1;
-//    _instructions.push_back(
-//      Instruction{.opcode = Opcode::MOVIN,
-//                  .dest_addr = dest,
-//                  .src_addr = _base_addr,
-//                  .size = memory_req_size,
-//                  .base_addr = 0});
-//    _src_addrs.push_back(dest);
-//    _base_addr_update();
-//  } else if (op_type == "compute_node") {
-//    _instructions.push_back(
-//      Instruction{.opcode = Opcode::COMP,
-//                  .compute_cycle = _cycle,
-//                  .dest_addr = _base_addr,
-//                  .size = 1,
-//                  .src_addrs = _src_addrs});
-//  } else if (op_type == "store_node") {
-//    uint32_t memory_req_size = (_tile_size[0] * _tile_size[1] * _precision - 1) / _config.dram_req_size + 1;
-//    _instructions.push_back(
-//      Instruction{.opcode = Opcode::MOVOUT,
-//                  .dest_addr = _base_addr,
-//                  .src_addr = _base_addr,
-//                  .size = memory_req_size,
-//                  .base_addr = SPAD_BASE});
-//    _base_addr_update();
-//  }
-//}
-//
-//// make several tiles from tile graph infos
-//void TileGraphParser::_tile_generate() {
-//  _tile_index_generate();
-//  for (auto index : _tile_index) {
-//    _tiles.push_back(
-//      Tile{.status = Tile::Status::INITIALIZED,
-//            .optype = "example",
-//            .layer_id = _root_node_id,
-//            .batch = 0,
-//            .Q = 0, // TODO: remove legacy information
-//            .P = 0,
-//            .M = 0,
-//            .C = 0,
-//            .S = _tile_size[0],
-//            .R = _tile_size[1]});
-//    uint32_t offset = index * _precision;
-//    for (auto inst : _instructions) {
-//      Instruction new_inst = inst; // copy instruction
-//      for (auto &addr : new_inst.src_addrs)
-//        addr = addr + offset;
-//      new_inst.src_addr = new_inst.src_addr + offset;
-//      new_inst.dest_addr = new_inst.dest_addr + offset;
-//      _tiles.back().instructions.push_back(new_inst);
-//    }
-//  }
-//}
-//
-//void TileGraphParser::_base_addr_update() {
-//  uint64_t tensor_size = 1;
-//  for (int i = 0; i < _start.size(); i++) {
-//    tensor_size *= (_end[i] - _start[i]);
-//  }
-//  _base_addr += (tensor_size * _precision);
-//  if (_base_addr_map.find(_base_addr_ptr) == _base_addr_map.end())
-//    _base_addr_map[_base_addr_ptr] = _base_addr;
-//  else
-//    _base_addr = _base_addr_map[_base_addr_ptr];
-//}
-//
-//void TileGraphParser::_tile_index_generate() {
-//  for (int i = _start[0]; i < _end[0]; i += _stride[0]) // initialize inner most loop
-//    _tile_index.push_back(i);
-//  uint32_t loop_size = 0;
-//  for (int i = 1; i < _start.size(); i++) { // make tile index from inner to outer
-//    loop_size += _end[i - 1] - _start[i - 1];
-//    std::vector<uint32_t> temp;
-//    for (int j = _start[i]; j < _end[i]; j++) {
-//      for (auto k : _tile_index)
-//        temp.push_back(j * loop_size + k);
-//    }
-//    _tile_index = temp;
-//  }
-//}
+addr_type TileGraphParser::lookup(std::string key) {
+  try {
+    return _arg_to_address.at(key);
+  } catch (const std::out_of_range& e) {
+    spdlog::warn("[TOGParser] Key not found {} in the \"{}\"", key, _tog_path);
+    _arg_to_address[key] = 0;
+    return 0;
+  }
+}

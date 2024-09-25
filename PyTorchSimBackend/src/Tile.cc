@@ -18,6 +18,8 @@ void Tile::dec_ready_counter() {
 
 void Tile::append_instuction(std::shared_ptr<Instruction>& inst) {
   /* Move instructions */
+  _nr_insts++;
+  inst->set_owner(this);
   _instructions.push_back(inst);
 }
 

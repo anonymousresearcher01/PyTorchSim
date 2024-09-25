@@ -4,14 +4,11 @@ Core::Core(uint32_t id, SimulationConfig config)
     : _id(id),
       _config(config),
       _core_cycle(0),
-      _stat_compute_cycle(0),
-      _stat_idle_cycle(0),
       _stat_tma_cycle(0),
-      _stat_issued_cycle(0),
-      _compute_memory_stall_cycle(0),
       _tma(id, config.dram_req_size) {
   _sram_size = _config.sram_size * 1024;
   _used_sram_size = 0;
+  _compute_pipeline.resize(NR_COMPUTE_UNIT);
 }
 
 bool Core::can_issue(const std::shared_ptr<Tile>& op) {
@@ -35,12 +32,16 @@ std::shared_ptr<Tile> Core::pop_finished_tile() {
 }
 
 void Core::compute_cycle() {
-  if (!_compute_pipeline.empty()) {
-    _stat_compute_cycle++;
-    if(_compute_pipeline.front()->finish_cycle <= _core_cycle) {
-      finish_instruction(_compute_pipeline.front());
-      _compute_pipeline.pop();
-    }
+  for (int i=0; i<NR_COMPUTE_UNIT; i++) {
+    auto& target_pipeline = _compute_pipeline.at(i);
+    if (!target_pipeline.empty()) {
+      _stat_compute_cycle[i]++;
+      if(target_pipeline.front()->finish_cycle <= _core_cycle) {
+        finish_instruction(target_pipeline.front());
+        target_pipeline.pop();
+      }
+    } else
+      _stat_compute_idle_cycle[i]++;
   }
 }
 
@@ -87,6 +88,7 @@ void Core::dma_cycle() {
       _st_inst_queue.pop();
     } else {
       /* TMA is idle */
+      _stat_tma_idle_cycle++;
       return;
     }
   }
@@ -120,10 +122,8 @@ void Core::cycle() {
 
   for (int i=0; i<_tiles.size() && !issued; i++) {
     auto& instructions = _tiles[i]->get_instructions();
-    if (instructions.size()==0) {
-      spdlog::error("[Core {}][{}] tile has non instructions...", _id, _core_cycle);
-      exit(EXIT_FAILURE);
-    }
+    if (instructions.size() == 0)
+      continue;
 
     std::shared_ptr<Instruction> inst = instructions.front();
     /* Skip instruction is not ready */
@@ -142,13 +142,16 @@ void Core::cycle() {
         issued = true;
         break;
       case Opcode::COMP:
-        if (_compute_pipeline.empty())
-          inst->finish_cycle = _core_cycle + inst->get_compute_cycle();
-        else
-          inst->finish_cycle = _compute_pipeline.back()->finish_cycle + inst->get_compute_cycle();
-        spdlog::trace("[Core {}][{}] compute instruction issued", _id, _core_cycle);
-        _compute_pipeline.push(inst);
-        issued = true;
+        {
+          auto& target_pipeline = _compute_pipeline.at(inst->get_compute_type());
+          if (target_pipeline.empty())
+            inst->finish_cycle = _core_cycle + inst->get_compute_cycle();
+          else
+            inst->finish_cycle = target_pipeline.back()->finish_cycle + inst->get_compute_cycle();
+          spdlog::trace("[Core {}][{}] compute instruction[{}] issued, finsh at {}", _id, _core_cycle, inst->get_compute_type(), inst->finish_cycle);
+          target_pipeline.push(inst);
+          issued = true;
+        }
         break;
       default:
         spdlog::error("Undefined instruction opcode type");
@@ -158,15 +161,27 @@ void Core::cycle() {
     if (issued) {
       instructions.pop_front();
       if (instructions.empty()) {
-        _tiles[i]->set_status(Tile::Status::FINISH);
-        _finished_tiles.push(std::move(_tiles[i]));
-        _tiles.erase(_tiles.begin() + i); // FIXME. Inefficient data structure
-      }
+     }
     }
   }
 
-  /* Increate issue stall cycle */
-  _stat_issued_cycle += (int)issued;
+  /* Remove finshed tiles */
+  bool retry = true;
+  while (retry) {
+    for (int i=0; i<_tiles.size() && !issued; i++) {
+      if (_tiles[i]->all_insts_finshed()) {
+        _tiles[i]->set_status(Tile::Status::FINISH);
+        _finished_tiles.push(std::move(_tiles[i]));
+        _tiles.erase(_tiles.begin() + i); // FIXME. Inefficient data structure
+        /* Let's retry */
+        break;
+      }
+    }
+    retry = false;
+  }
+  if(_config.core_print_interval && _core_cycle % _config.core_print_interval == 0) {
+    print_current_stats();
+  }
 }
 
 void Core::finish_instruction(std::shared_ptr<Instruction>& inst) {
@@ -176,6 +191,7 @@ void Core::finish_instruction(std::shared_ptr<Instruction>& inst) {
     exit(EXIT_FAILURE);
   }
   inst->finish_instruction();
+  static_cast<Tile*>(inst->get_owner())->inc_finished_inst();
   spdlog::trace("[Core {}][{}] Used sram: {}, Release sram: {}, inst: {}", _id, _core_cycle, _used_sram_size, inst->get_free_sram_size(), opcode_to_string(inst->get_opcode()));
   _used_sram_size -= free_sram_size;
 }
@@ -183,7 +199,8 @@ void Core::finish_instruction(std::shared_ptr<Instruction>& inst) {
 bool Core::running() {
   bool running = false;
   running = running || _tiles.size() > 0;
-  running = running || !_compute_pipeline.empty();
+  for (int i=0; i<NR_COMPUTE_UNIT;i++)
+    running = running || !_compute_pipeline.at(i).empty();
   running = running || !_dma_waiting_queue.empty();
   running = running || !_tma.empty();
   running = running || !_ld_inst_queue.empty();
@@ -212,6 +229,47 @@ bool Core::can_issue_compute(std::shared_ptr<Instruction>& inst) {
 }
 
 void Core::print_stats() {
-  spdlog::info("[Core {}] : Total tma {}, Compute {}, Idle cycle {}", _id, _stat_tma_cycle, _stat_compute_cycle, _stat_idle_cycle);
-  spdlog::info("[Core {}] : Total cycle: {}", _id, _core_cycle);
+  update_stats();
+  spdlog::info(
+      "Core [{}] : MatMul active cycle {} Vector active cycle {} ",
+      _id, _stat_tot_compute_cycle[SYSTOLIC_ARRAY], _stat_tot_compute_cycle[VECTOR_UNIT]);
+  spdlog::info(
+      "Core [{}] : TMA active cycle {} TMA idle cycle {} Systolic Array idle cycle {} Vector unit idle cycle {}",
+      _id, _stat_tot_tma_cycle, _stat_tot_tma_idle_cycle, _stat_tot_compute_idle_cycle[SYSTOLIC_ARRAY], _stat_compute_idle_cycle[VECTOR_UNIT]);
+  spdlog::info("Core [{}] : Systolic Array Utilization(%) {:.2f}, Vector Unit Utilization(%) {:.2f}, Total cycle: {}",
+    _id, static_cast<float>(_stat_tot_compute_cycle[SYSTOLIC_ARRAY] * 100) / _core_cycle,
+    static_cast<float>(_stat_tot_compute_cycle[VECTOR_UNIT] * 100) / _core_cycle, _core_cycle);
+}
+
+void Core::print_current_stats() {
+  auto level = spdlog::level::info;
+  if(_id != 0)
+    level = spdlog::level::debug;
+  spdlog::log(level,
+      "Core [{}] : MatMul active cycle {} Vector active cycle {} ",
+      _id, _stat_compute_cycle[SYSTOLIC_ARRAY], _stat_compute_cycle[VECTOR_UNIT]);
+  spdlog::log(level,
+      "Core [{}] : TMA active cycle {} TMA idle cycle {} Systolic Array idle cycle {} Vector unit idle cycle {}",
+      _id, _stat_tma_cycle, _stat_tma_idle_cycle, _stat_compute_idle_cycle[SYSTOLIC_ARRAY], _stat_compute_idle_cycle[VECTOR_UNIT]);
+  spdlog::log(level,
+      "Core [{}] : Systolic Array Utilization(%) {:.2f}, Vector Unit Utilization(%) {:.2f}, Total cycle: {}",
+      _id, static_cast<float>(_stat_compute_cycle[SYSTOLIC_ARRAY] * 100) / _config.core_print_interval,
+      static_cast<float>(_stat_compute_cycle[VECTOR_UNIT] * 100) / _config.core_print_interval, _core_cycle);
+  update_stats();
+}
+
+void Core::update_stats() {
+  _stat_tot_compute_cycle[SYSTOLIC_ARRAY] += _stat_compute_cycle[SYSTOLIC_ARRAY];
+  _stat_tot_compute_cycle[VECTOR_UNIT] += _stat_compute_cycle[VECTOR_UNIT];
+  _stat_tot_tma_cycle += _stat_tma_cycle;
+  _stat_tot_tma_idle_cycle += _stat_tma_idle_cycle;
+  _stat_tot_compute_idle_cycle[SYSTOLIC_ARRAY] += _stat_compute_idle_cycle[SYSTOLIC_ARRAY];
+  _stat_compute_idle_cycle[VECTOR_UNIT] += _stat_compute_idle_cycle[VECTOR_UNIT];
+
+  _stat_compute_cycle[SYSTOLIC_ARRAY] = 0;
+  _stat_compute_cycle[VECTOR_UNIT] = 0;
+  _stat_tma_cycle = 0;
+  _stat_tma_idle_cycle = 0;
+  _stat_compute_idle_cycle[SYSTOLIC_ARRAY] = 0;
+  _stat_compute_idle_cycle[VECTOR_UNIT] = 0;
 }

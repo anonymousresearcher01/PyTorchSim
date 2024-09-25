@@ -23,7 +23,6 @@ Simulator::Simulator(SimulationConfig config)
                                        .append("configs")
                                        .append(config.dram_config_path)
                                        .string();
-    spdlog::info("Ramulator config: {}", ramulator_config);
     config.dram_config_path = ramulator_config;
     _dram = std::make_unique<DramRamulator>(config);
   } else {

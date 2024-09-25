@@ -9,6 +9,19 @@
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
 
+bool loadConfig(const std::string& config_path, json& config_json) {
+  std::ifstream config_file(config_path);
+  if (config_file.is_open()) {
+      config_file >> config_json;
+      config_file.close();
+      spdlog::info("[LoadConfig] Success to open \"{}\"", config_path);
+      return true;
+  } else {
+    spdlog::error("[LoadConfig] Failed to open \"{}\"", config_path);
+    return false;
+  }
+}
+
 int main(int argc, char** argv) {
   auto start = std::chrono::high_resolution_clock::now();
   // parse command line argumnet
@@ -17,6 +30,8 @@ int main(int argc, char** argv) {
       "config", "Path for hardware configuration file");
   cmd_parser.add_command_line_option<std::string>(
       "models_list", "Path for the models list file");
+  cmd_parser.add_command_line_option<std::string>(
+      "attributes_list", "Path for the models list file");
   cmd_parser.add_command_line_option<std::string>(
       "log_level", "Set for log level [trace, debug, info], default = info");
   cmd_parser.add_command_line_option<std::string>(
@@ -45,19 +60,21 @@ int main(int argc, char** argv) {
     spdlog::set_level(spdlog::level::info);
 
   std::string config_path;
-  cmd_parser.set_if_defined("config", &config_path);
+  std::string onnx_path;
+  std::string attribute_path;
+  json config_json, attribute_json;
 
-  json config_json;
-  std::ifstream config_file(config_path);
-  config_file >> config_json;
-  config_file.close();
+  cmd_parser.set_if_defined("config", &config_path);
+  cmd_parser.set_if_defined("models_list", &onnx_path);
+  cmd_parser.set_if_defined("attributes_list", &attribute_path);
+
+  loadConfig(config_path, config_json);
+  loadConfig(attribute_path, attribute_json);
+
   SimulationConfig config = initialize_config(config_json);
 
-  std::string onnx_path;
-  cmd_parser.set_if_defined("models_list", &onnx_path);
-
   auto simulator = std::make_unique<Simulator>(config);
-  auto graph_praser = TileGraphParser(onnx_path);
+  auto graph_praser = TileGraphParser(onnx_path, attribute_json);
   std::unique_ptr<TileGraph>& tile_graph = graph_praser.get_tile_graph();
   spdlog::info("Register graph: {}", onnx_path);
 

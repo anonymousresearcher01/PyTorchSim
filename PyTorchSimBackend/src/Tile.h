@@ -34,12 +34,20 @@ class Tile {
   bool is_ready() { return _ready_counter==0; }
   std::deque<std::shared_ptr<Instruction>>& get_instructions() { return _instructions; } 
   void print();
+  size_t nr_insts() { return _nr_insts; }
+  size_t nr_finshed_insts() { return _nr_finished_insts; }
+  void inc_finished_inst() {
+    _nr_finished_insts++;
+  };
+  bool all_insts_finshed() { return _nr_insts == _nr_finished_insts; }
   
  protected:
   TileSubGraph* _onwer_graph;
   Status _status = Status::EMPTY;
   size_t _required_sram_size=0;
   size_t _ready_counter=0;
+  size_t _nr_insts = 0;
+  size_t _nr_finished_insts = 0;
   std::deque<std::shared_ptr<Instruction>> _instructions;
   std::vector<std::shared_ptr<Tile>> _child_tiles;
 };

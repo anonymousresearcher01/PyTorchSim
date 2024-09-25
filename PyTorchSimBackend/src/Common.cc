@@ -5,6 +5,15 @@ uint32_t generate_id() {
   return id_counter++;
 }
 
+template <typename T>
+T get_config_value(json config, std::string key) {
+  if (config.contains(key)) {
+    return config[key];
+  } else {
+    throw std::runtime_error(fmt::format("Config key {} not found", key));
+  }
+}
+
 SimulationConfig initialize_config(json config) {
   SimulationConfig parsed_config;
 
@@ -12,6 +21,7 @@ SimulationConfig initialize_config(json config) {
   parsed_config.num_cores = config["num_cores"];
   parsed_config.core_freq = config["core_freq"];
   parsed_config.sram_size = config["sram_size"];
+  parsed_config.core_print_interval = get_config_value<uint32_t>(config, "core_print_interval");
 
   /* DRAM config */
   if ((std::string)config["dram_type"] == "simple")
