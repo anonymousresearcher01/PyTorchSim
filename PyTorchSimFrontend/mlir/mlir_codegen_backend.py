@@ -15,7 +15,9 @@ from torch._inductor.scheduler import BaseScheduling
 from torch._inductor.virtualized import V, _ops as ops
 from torch._inductor.utils import IndentedBuffer
 from torch._inductor.codecache import write_atomic, write
+from Simulator.simulator import BackendSimulator
 import extension_codecache
+
 
 from . import mlir_common
 from . import mlir_lowering
@@ -91,7 +93,7 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
                 alloc_from_pool = torch.ops.inductor._alloc_from_pool
                 reinterpret_tensor = torch.ops.aten._reinterpret_tensor
                 async_compile = CustomAsyncCompile()
-
+                os.environ["TORCHSIM_LAST_COMPILED_MODULE"] = __file__
             """
         )
 
@@ -647,7 +649,12 @@ class MLIRScheduling(BaseScheduling):
         src_code = ex_kernel.codegen_nodes(nodes, kernel_name)
         self.define_kernel(src_code, kernel_name, ex_kernel.vector_lane, ex_kernel.spad_info)
         ex_kernel.call_kernel(kernel_name)
-
+        _, args, _, _ = ex_kernel.args.mlir_argdefs()
+        args = ", ".join(args)
+        if (bool(os.getenv(BackendSimulator.BACKENDSIM_EAGER_MODE, False))):
+            V.graph.wrapper_code.writeline(
+                f"yield ({kernel_name}, ({args}))"
+            )
     def codegen_sync(self):
         pass
 
@@ -694,3 +701,9 @@ class MLIRScheduling(BaseScheduling):
             kernel_name = self.define_kernel(src_code, kernel.kernel_name, kernel.vector_lane, kernel.spad_info)
             self.define_function(kernel)
         kernel.call_kernel(kernel_name)
+        _, args, _, _ = kernel.args.mlir_argdefs()
+        args = ", ".join(args)
+        if (bool(os.getenv(BackendSimulator.BACKENDSIM_EAGER_MODE, False))):
+            V.graph.wrapper_code.writeline(
+                f"yield ({kernel_name}, ({args}))"
+            )
