@@ -1,13 +1,14 @@
 import os
 import shlex
 import subprocess
+import re
 
 import torch
 import numpy as np
 
 from PyTorchSimFrontend.llvm.llvm_common import LLVMKernelArgs
-import extension_codecache
 
+TORCHSIM_DIR = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
 TORCH_TO_NUMPY = {
     torch.float32: np.float32,
     torch.float64: np.float64,
@@ -107,13 +108,17 @@ class FunctionalSimulator():
                 self.load_tensor(arg, arg_name, arg_attribute, path)
 
 class CycleSimulator():
+    GEM5_PATH = os.environ.get('GEM5_PATH',
+                           default = f"/workspace/gem5/build/RISCV/gem5.opt")
+    GEM5_SCRIPT_PATH = os.environ.get('GEM5_SCRIPT_PATH',
+                                  default = f"{TORCHSIM_DIR}/gem5_script/script.py")
     def __init__(self) -> None:
         pass
 
     def compile_and_simulate(self, target_binary, array_size):
         dir_path = os.path.join(os.path.dirname(target_binary), "m5out")
         try:
-            gem5_cmd = [extension_codecache.GEM5_PATH, "-d", dir_path, extension_codecache.GEM5_SCRIPT_PATH, "-c", target_binary, "-o", array_size]
+            gem5_cmd = [self.GEM5_PATH, "-d", dir_path, self.GEM5_SCRIPT_PATH, "-c", target_binary, "-o", array_size]
             output = subprocess.check_output(gem5_cmd)
         except subprocess.CalledProcessError as e:
             print("Command failed with exit code", e.returncode)
@@ -126,3 +131,150 @@ class CycleSimulator():
             cycle_list = [int(line.split()[1]) / cycle_per_tick for line in raw_list if "system.cpu.numCycles" in line]
         cycle_list = [cycle_list[i+1] - cycle_list[i] for i in range(len(cycle_list)-1)]
         return cycle_list
+
+class BackendSimulator():
+    BACKEND_RESULT_PATH_KEY = "BACKEND_RESULT_PATH"
+    BACKENDSIM_DRYRUN = "BACKENDSIM_DRYRUN"
+    BACKENDSIM_EAGER_MODE = "BACKENDSIM_EAGER_MODE"
+    FINISH_STR = "Simulation Finished"
+    def __init__(self, backend_path, config_path) -> None:
+        self.base_dir = backend_path
+        self.config_path = config_path
+        self.process = None
+
+    def get_backend_command(self):
+        bin = os.path.join(self.base_dir, "build/bin/Simulator")
+        config = os.path.join(self.base_dir, self.config_path)
+        cmd = f"{bin} --config {config}"
+        return cmd
+
+    def simulation(self, model_path):
+        cmd = f"{self.get_backend_command()} --models_list {model_path}"
+        try:
+            result = subprocess.check_output(shlex.split(cmd))
+        except subprocess.CalledProcessError as e:
+            print("Command failed with exit code", e.returncode)
+            print("Error output:", e.output)
+            assert(0)
+
+        result_path = os.getenv(self.BACKEND_RESULT_PATH_KEY)
+        if result_path is None:
+            print(result)
+            return
+
+        # Save result to result_path
+        os.makedirs(result_path, exist_ok=True)
+        file_name = str(len(os.listdir(result_path)))
+        with open(os.path.join(result_path, file_name), "w") as f:
+            f.write(result.decode())
+            print(f'[BackendSimulator] Simulation of "{model_path}" is stored to "{os.path.join(result_path, file_name)}"')
+
+    def interactive_simulation(self):
+        cmd = f"{self.get_backend_command()} --mode interactive"
+        if self.process is None:
+            self.process = subprocess.Popen(
+                shlex.split(cmd),
+                stdin=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+        else:
+            print("Simulator is already running.")
+
+    def stop(self):
+        if self.process:
+            self.process.terminate()
+            self.process = None
+
+    def send_command(self, command):
+        if self.process:
+            try:
+                print(command)
+                self.process.stdin.write(command + '\n')
+                self.process.stdin.flush()
+                ret = self.process.stderr.readline().strip()
+                return ret
+            except BrokenPipeError:
+                err = self.process.stderr.readlines()
+                for line in err:
+                    print(line)
+                self.process = None
+                exit(1)
+        else:
+            print("Simulator is not running.")
+            return None
+
+    def launch(self, onnx_path, attribute_path, arrival_time=0, partion_id=0):
+        command = f"launch {onnx_path} {attribute_path} {arrival_time} {partion_id}"
+        ret = self.send_command(command)
+        return 0
+
+    def cycle(self):
+        ret = self.send_command("cycle")
+        return int(ret.split(" ")[-1])
+
+    def until(self, until_cycle):
+        command = f"until {until_cycle}"
+        ret = self.send_command(command)
+        return int(ret.split(" ")[-1])
+
+    @staticmethod
+    def get_result_from_file(result_path):
+        core_metrics = {}
+        dram_channel_bw = {}
+        avg_dram_bw = None
+        simulation_time = None
+
+        # Read and find total stat position
+        with open(result_path, "r") as f:
+            lines = f.readlines()
+
+        simulation_finished_idx = -1
+        simulation_finished = False
+        for idx, line in enumerate(lines):
+            if BackendSimulator.FINISH_STR in line:
+                simulation_finished = True
+                simulation_finished_idx = idx
+                break
+
+        if simulation_finished_idx == -1:
+            print("[BackendSimulator] Treid to parsing wrong formated output file!")
+            return core_metrics, dram_channel_bw, avg_dram_bw, simulation_time
+
+        total_stat_lines = lines[simulation_finished_idx:]
+
+        for line in total_stat_lines:
+            # Parse core metrics (MatMul active cycle, Vector active cycle, etc.)
+            if 'Core' in line:
+                if 'MatMul active cycle' in line:
+                    matmul_cycle = re.search(r'MatMul active cycle (\d+)', line).group(1)
+                    vector_cycle = re.search(r'Vector active cycle (\d+)', line).group(1)
+                    core_metrics['MatMul_active_cycle'] = int(matmul_cycle)
+                    core_metrics['Vector_active_cycle'] = int(vector_cycle)
+                elif 'Systolic Array Utilization' in line:
+                    systolic_util = re.search(r'Systolic Array Utilization\(%\) (\d+\.?\d*)', line).group(1)
+                    vector_util = re.search(r'Vector Unit Utilization\(%\) (\d+\.?\d*)', line).group(1)
+                    total_cycle = re.search(r'Total cycle: (\d+)', line).group(1)
+                    core_metrics['Systolic_Array_Utilization'] = float(systolic_util)
+                    core_metrics['Vector_Unit_Utilization'] = float(vector_util)
+                    core_metrics['Total_cycle'] = int(total_cycle)
+
+            # Parse DRAM channel bandwidth utilization
+            if 'DRAM CH' in line:
+                channel = re.search(r'DRAM CH\[(\d+)\]', line).group(1)
+                bw_util = re.search(r'AVG BW Util (\d+\.?\d*)%', line).group(1)
+                dram_channel_bw[f'CH[{channel}]'] = float(bw_util)
+
+            # Parse average DRAM bandwidth
+            if 'DRAM: AVG BW Util' in line:
+                avg_dram_bw = float(re.search(r'AVG BW Util (\d+\.?\d*)%', line).group(1))
+
+            # Parse total simulation time
+            if 'Simulation time' in line:
+                simulation_time = float(re.search(r'Simulation time: (\d+\.?\d*) seconds', line).group(1))
+        return core_metrics, dram_channel_bw, avg_dram_bw, simulation_time
+
+if __name__ == "__main__":
+    sim = BackendSimulator("/workspace/PyTorchSim/PyTorchSimBackend", "/workspace/PyTorchSim/PyTorchSimBackend/configs/systolic_ws_128x128_c4_simple_noc_tpuv4.json")
+    sim.interactive_simulation()
+    sim.until(4000)
