@@ -132,7 +132,12 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def constant(value, dtype, tile_size=16):
+<<<<<<< HEAD
         return f'arith.constant {format(value, ".6f")} : f32'
+=======
+        dtype = mlir_common.DTYPE_TO_MLIR[dtype]
+        return f'arith.constant {value} : {dtype}'
+>>>>>>> e469ebc (math operations)
 
     @staticmethod
     def exp(operand, tile_size=16):
@@ -143,6 +148,16 @@ class ExtensionOverrides(common.OpOverrides):
     def maximum(operand1, operand2, tile_size=16):
         shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
         return f'arith.maximumf %{operand1}, %{operand2} : {shape}'
+
+    @staticmethod
+    def sqrt(x, tile_size=16):
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'math.sqrt %{x} : {shape}'
+
+    @staticmethod
+    def ne(operand1, operand2, tile_size=16):
+        shape = f"vector<{tile_size}xi1>" if tile_size > 1 else "i1"
+        return f'arith.cmpi one, %{operand1}, %{operand2} : {shape}'
 
     @staticmethod
     def le(operand1, operand2, tile_size=16):
@@ -170,27 +185,29 @@ class ExtensionOverrides(common.OpOverrides):
         return f"arith.select %{condition}, %{x}, %{y} : {cond_shape} {shape}"
 
     @staticmethod
-    def sqrt(operand, tile_size=16):
-        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
-        return f"math.sqrt %{operand} : {shape}"
-
-    @staticmethod
-    def rsqrt(operand, tile_size=16):
-        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
-        return f"math.rsqrt %{operand} : {shape}"
-
-    @staticmethod
-    def powf(operand, power, tile_size=16):
-        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
-        return f"math.powf %{operand}, %{power} : {shape}"
-
-    @staticmethod
     def logical_not(operand, tile_size=16):
         tile_size=16
         shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
         result_shape = f"vector<{tile_size}xi1>" if tile_size > 1 else "i1"
         assert(0)
         return f"arith.cmpf oeq, %{operand}, %zero_vec{tile_size} : {shape} -> {result_shape}"
+    def rsqrt(x, tile_size=16):
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'math.rsqrt %{x} : {shape}'
+
+    @staticmethod
+    def pow(a, b, tile_size=16):
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f"math.powf %{a}, %{b} : {shape}"
+
+    @staticmethod
+    def log(x, tile_size=16):
+        shape = f"vector<{tile_size}xf32>" if tile_size > 1 else "f32"
+        return f'math.log %{x} : {shape}'
+
+    @staticmethod
+    def reciprocal(a, tile_size=16):
+        return ops.div(ops.constant(1.0, torch.float32), a)
 
 RTYPE_TO_MLIR = {
     "sum": "add",
