@@ -26,6 +26,8 @@ class LLVMKernelCallerCodeGen():
         self.arg_attributes = arg_attributes
         self.arg_use_count = 1
         self.load_args = {}
+        self.kernel_start_addr = ""
+        self.kernel_end_addr = ""
 
     def get_argv_idx(self):
         self.arg_use_count += 1

@@ -27,7 +27,6 @@ class FunctionalSimulator():
         self.key = key
 
     def load_tensor(self, arg, arg_name, arg_attribute, path):
-        # path = os.path.join(dump_path, arg_name, f'{n_call}.raw')
         with open(path, 'rb') as f:
             np_array = np.fromfile(f, dtype=TORCH_TO_NUMPY[arg.dtype])
             if (arg.dtype == torch.bool):
@@ -67,11 +66,21 @@ class FunctionalSimulator():
                 path = os.path.join(dump_path, arg_name)
                 os.makedirs(path, exist_ok=True)
                 file_path.append(os.path.join(path, f'{self.get_biggest_filename(path)}.raw'))
+
         return array_size, file_path
 
-    def run_spike(self, args, arg_attributes, target_binary, intermediate_op=None, vectorlane_size=4, spad_info=None):
+    def run_spike(self, args, arg_attributes, path, binary, intermediate_op=None, vectorlane_size=4, spad_info=None):
         load_path = self.path
         dump_path = self.path
+
+        target_binary = os.path.join(path, binary)
+        objdump = f"riscv64-unknown-elf-objdump -d {target_binary} > {os.path.join(path, 'binary.dump')}"
+        kernel_start = f"nm {target_binary} | grep 'kernel' | awk 'NR==1 {{print $1}}'"
+        kernel_end = f"nm {target_binary} | grep 'kernel' | awk 'NR==1 {{print $1}}' | xargs -I {{}} awk '/{{}}/,0' {os.path.join(path, 'binary.dump')} | grep ret | awk 'NR==1 {{print $1}}' | awk '{{gsub(/:$/, \"\"); print}}'"
+
+        subprocess.run(objdump, shell=True)
+        kernel_start_addr = subprocess.run(kernel_start, shell=True, stdout=subprocess.PIPE).stdout.strip().decode('utf-8')
+        kernel_end_addr = subprocess.run(kernel_end, shell=True, stdout=subprocess.PIPE).stdout.strip().decode('utf-8')
 
         if intermediate_op is not None:
             os.makedirs(os.path.join(self.path, "intermediate"), exist_ok=True)
@@ -92,7 +101,8 @@ class FunctionalSimulator():
             f"--scratchpad-base-vaddr={spad_info['spad_vaddr']} " + \
             f"--scratchpad-size={spad_info['spad_size']}"
         vectorlane_option = f"--vectorlane-size={vectorlane_size}"
-        run = f'spike --isa rv64gcv {vectorlane_option} {spad_option} /workspace/riscv-pk/build/pk {target_binary} {array_size_str} {file_path_str}'
+        kernel_address = f"--kernel-addr={kernel_start_addr}:{kernel_end_addr}"
+        run = f'spike --isa rv64gcv {vectorlane_option} {spad_option} {kernel_address} /workspace/riscv-pk/build/pk {target_binary} {array_size_str} {file_path_str}'
 
         print("Spike cmd > ", run)
         run_cmd = shlex.split(run)

@@ -64,7 +64,7 @@ def llvm_compile_command(input, output):
 def mlir_compile_command(filename, vectorlane_size):
     return [re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/mlir-opt -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size}' -lower-affine -lower-vector-multi-reduction -convert-vector-to-llvm -test-memref-to-gemmini="vectorlane-stride={vectorlane_size}" -finalize-memref-to-llvm -convert-arith-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm -convert-index-to-llvm -reconcile-unrealized-casts {filename}.mlir -o {filename}_llvm.mlir
+            {TORCHSIM_LLVM_PATH}/mlir-opt -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size}' -lower-affine -lower-vector-multi-reduction -convert-vector-to-llvm -test-memref-to-gemmini="vectorlane-stride={vectorlane_size}" -finalize-memref-to-llvm -convert-arith-to-llvm -convert-math-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm -convert-index-to-llvm -reconcile-unrealized-casts {filename}.mlir -o {filename}_llvm.mlir
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",
@@ -284,14 +284,14 @@ class CustomAsyncCompile(AsyncCompile):
             if TORCHSIM_VALIDATION_MODE:
                 funcsim = FunctionalSimulator(result_path, key)
                 funcsim.run_spike(args, arg_attributes,
-                                  os.path.join(result_path, self.validation_binary_name),
+                                  result_path, self.validation_binary_name,
                                   kwargs['intermediate_op'] if 'intermediate_op' in kwargs else None,
                                   vectorlane_size=vectorlane_size, spad_info=spad_info)
 
-            onnx_path = os.path.join(result_path, "tile_graph.onnx")
-            backend_path = os.path.join(TORCHSIM_DIR, "PyTorchSimBackend")
-            backsim = BackendSimulator(backend_path, TORCHSIM_BACKEND_CONFIG)
-            backsim.simulation(onnx_path)
+            # onnx_path = os.path.join(result_path, "tile_graph.onnx")
+            # backend_path = os.path.join(TORCHSIM_DIR, "PyTorchSimBackend")
+            # backsim = BackendSimulator(backend_path, TORCHSIM_BACKEND_CONFIG)
+            # backsim.simulation(onnx_path)
 
         def dryrun_simulator(*args, **kwargs):
             key = future.result()
