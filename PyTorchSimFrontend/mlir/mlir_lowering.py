@@ -7,6 +7,7 @@ from torch._inductor import ir
 from torch._inductor.virtualized import V
 from torch._inductor.ir import TensorBox
 from PyTorchSimFrontend.mlir.mlir_gemm_template import MLIRGemmTemplate
+from PyTorchSimFrontend.mlir.mlir_bmm_template import MLIRBMMTemplate
 from PyTorchSimFrontend.mlir.mlir_conv_template import MLIRConvTemplate
 
 aten = torch.ops.aten
@@ -20,6 +21,12 @@ def tuned_mm(mat1, mat2, * ,layout=None):
 def tuned_addmm(inp, mat1, mat2, *, alpha=1, beta=1, layout=None):
     m, n, k, layout, mat1, mat2, inp_expanded = mm_args(mat1, mat2, inp, layout=layout)
     mlir_template = MLIRGemmTemplate([mat1, mat2, inp_expanded], layout)
+
+    return mlir_template.generate().output_node()
+
+def tuned_bmm(mat1, mat2, *, layout=None):
+    m, n, k, layout, mat1, mat2 = mm_args(mat1, mat2, layout=layout)
+    mlir_template = MLIRBMMTemplate([mat1, mat2], layout)
 
     return mlir_template.generate().output_node()
 
@@ -89,3 +96,4 @@ def convolution(
 lowerings.update({getattr(aten.mm, overload): tuned_mm for overload in aten.mm.overloads()})
 lowerings.update({getattr(aten.addmm, overload): tuned_addmm for overload in aten.addmm.overloads()})
 lowerings.update({getattr(aten.convolution,overload): convolution for overload in aten.convolution.overloads()})
+lowerings.update({getattr(aten.bmm, overload): tuned_bmm for overload in aten.bmm.overloads()})
