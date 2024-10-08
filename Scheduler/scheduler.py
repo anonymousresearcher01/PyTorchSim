@@ -152,7 +152,8 @@ class ExecutionEngine:
         os.environ[BackendSimulator.BACKENDSIM_DRYRUN] = "1"
         os.environ[BackendSimulator.BACKENDSIM_EAGER_MODE] = "1"
 
-    def setup_device(self):
+    @staticmethod
+    def setup_device():
         source_file_path = os.path.dirname(os.path.abspath(__file__))
         source_file = os.path.join(
             source_file_path, f"{TORCHSIM_DIR}/PyTorchSimFrontend/extension_device.cpp"
