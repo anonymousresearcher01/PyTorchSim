@@ -81,7 +81,8 @@ class FunctionalSimulator():
         if tile_size[0] > 1:
             for idx, arg in enumerate(args):
                 keys = list(arg_attributes.keys())
-                for i in range(len(arg.shape)):
+                dims_to_pad = [0] if len(arg.shape) == 1 else [-2, -1]
+                for i in dims_to_pad:
                     if arg.shape[i] > 1 and arg.shape[i] % tile_size[i] != 0:
                         pad_shape = list(arg.shape)
                         pad_shape[i] = tile_size[i] - arg.shape[i] % tile_size[i] # diff

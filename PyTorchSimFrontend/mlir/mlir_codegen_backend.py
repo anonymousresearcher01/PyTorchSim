@@ -208,7 +208,7 @@ class ExtensionOverrides(common.OpOverrides):
         tile_size=16
         shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
         result_shape = f"vector<{tile_size}xi1>" if tile_size > 1 else "i1"
-        assert(0) # FIXME: implement
+        raise NotImplementedError("logical_not")
         return f"arith.cmp{dtype[0]} oeq, %{operand}, %zero_vec{tile_size} : {shape} -> {result_shape}"
 
     @staticmethod
@@ -282,7 +282,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if len(V.graph.graph_inputs) == 1 and len(V.graph.buffers):
             input_shape = list(V.graph.graph_inputs.values())[0].layout.size
             output_shape = V.graph.buffers[0].layout.size
-            if input_shape[-1] == output_shape[-2] and input_shape[-2] == output_shape[-1]:
+            if len(input_shape) > 1 and len(output_shape) > 1 and input_shape[-1] == output_shape[-2] and input_shape[-2] == output_shape[-1]:
                 self.is_transpose = True
 
     def get_constant_vector(self, expr):
@@ -603,9 +603,11 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
     def codegen_init(self):
         code = IndentedBuffer()
-        for tag in self.tags:
+        tags = sorted(self.tags)
+        consts = sorted(self.consts)
+        for tag in tags:
             code.writeline(f"%{tag} = memref.alloc() : memref<1xi32>")
-        for const in self.consts:
+        for const in consts:
             code.writeline(f"%c{const} = arith.constant {const} : index")
         return code
 

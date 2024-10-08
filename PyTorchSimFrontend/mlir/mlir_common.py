@@ -104,7 +104,7 @@ class MLIRKernelArgs(common.KernelArgs):
                 if hasattr(arg, "data") and hasattr(arg.data, "layout") and arg.data.layout.size[1] > 1:
                     arg.data.layout.size[1] = ((arg.data.get_size()[1] + self.tile_col - 1) // self.tile_col) * self.tile_col
 
-    def mlir_argdefs(self, only_args=False, extra_node=dict()):
+    def mlir_argdefs(self, extra_node=dict()):
         buffer_types = {}
         for x in V.graph.buffers:
             origin_x_size = x.get_size()
@@ -117,12 +117,18 @@ class MLIRKernelArgs(common.KernelArgs):
             if hasattr(x, "data") and hasattr(x.data, "layout"):
                 x.data.layout.size = origin_x_data_size
         for name, val in V.graph.graph_inputs.items():
+            origin_val_size = val.get_size()
+            if hasattr(val, "data"):
+                origin_val_data_size = val.data.get_size()
             if self.tile_row is not None and self.tile_row > 1:
                 self.pad_args(val)
             if isinstance(val, sympy.Expr):
                 buffer_types[name] = [get_sympy_Expr_dtype(val), 1]
             else:
                 buffer_types[name] = [val.get_dtype(), val.get_numel()]
+            val.layout.size = origin_val_size
+            if hasattr(val, "data") and hasattr(val.data, "layout"):
+                val.data.layout.size = origin_val_data_size
         buffer_types.update(
             {name: val.dtype for name, val in V.graph.constants.items()}
         )

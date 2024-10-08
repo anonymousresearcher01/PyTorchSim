@@ -92,7 +92,7 @@ class MLIRTemplateKernel(Kernel, BaseMLIRHardwareInfo):
                 self.args.output_buffers[node.get_name()] = name
                 extra_node[node.get_name()] = node
 
-        arg_defs, *_ = self.args.mlir_argdefs(only_args=True, extra_node=extra_node)
+        arg_defs, *_ = self.args.mlir_argdefs(extra_node=extra_node)
         return f"({', '.join(arg_defs)})"
 
     def def_function(self):
