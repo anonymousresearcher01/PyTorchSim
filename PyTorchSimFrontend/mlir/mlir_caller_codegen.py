@@ -1,5 +1,5 @@
 import torch
-from PyTorchSimFrontend.llvm.llvm_common import LLVMKernelArgs
+from PyTorchSimFrontend.mlir.mlir_common import MLIRKernelArgs
 from PyTorchSimFrontend.llvm.llvm_caller_codegen import LLVMKernelCallerCodeGen
 from PyTorchSimFrontend.mlir.mlir_common import DTYPE_TO_C
 
@@ -12,15 +12,47 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
         super().write_header()
         self.writeline(f"#include \"global_var.h\"")
 
+    def is_in_arg(self, value):
+        return MLIRKernelArgs.is_mlir_arg_in(value)
+
+    def is_out_arg(self, value):
+        return MLIRKernelArgs.is_mlir_arg_out(value)
+
+    def is_inout_arg(self, value):
+        return MLIRKernelArgs.is_mlir_arg_inout(value)
+
+    def load_arg(self):
+        for arg_name, arg_attribute in self.arg_attributes:
+            if self.is_in_arg(arg_attribute[0]):
+                argv_idx = self.get_argv_idx() if arg_name not in self.load_args else self.load_args[arg_name]
+                self.load_args[arg_name] = argv_idx
+                self.writeline(f'if(load_arg({arg_name}, sizeof({arg_name}), argv[{argv_idx}]) == -1){self.open_bracket}')
+                with self.code.indent():
+                    self.writeline(f'return -1{self.ending}')
+                self.writeline(self.closed_bracket)
+
+    def dump_arg(self):
+        for arg_name, arg_attribute in self.arg_attributes:
+            if self.is_out_arg(arg_attribute[0]):
+                argv_idx = self.get_argv_idx() if not self.is_inout_arg(arg_attribute[0]) else self.load_args[arg_name]
+                self.writeline(f'if(dump_arg({arg_name}, sizeof({arg_name}), argv[{argv_idx}]) == -1){self.open_bracket}')
+                with self.code.indent():
+                    self.writeline(f'return -1{self.ending}')
+                self.writeline(self.closed_bracket)
+
     def generate_kernel_declare(self):
         # memref to llvm arguments (memref -> ptr, ptr, i64, <?xi64>, <?xi64>) allocated pointer, aligned pointer, offset, size, stride
-        args_type_p = [f'{DTYPE_TO_C[arg_type[1]]}*, {DTYPE_TO_C[arg_type[1]]}*, int64_t, int64_t, int64_t' for arg_type in self.arg_attributes.values()]
+        args_type_p = [f'{DTYPE_TO_C[arg_type[1]]}*, {DTYPE_TO_C[arg_type[1]]}*, int64_t, int64_t, int64_t' for (_, arg_type) in self.arg_attributes]
 
         self.writeline(f"void {self.kernel_name}({', '.join(args_type_p)}){self.ending}{self.newline}")
 
     def generate_args_define(self):
-        for arg_name, (_, arg_type, arg_shape) in self.arg_attributes.items():
-            self.writeline(f'{DTYPE_TO_C[arg_type]} {arg_name}[atoi(argv[{self.get_argv_idx()}])] __attribute__ ((aligned (4096))){self.ending}')
+        name_set = set()
+        for arg_name, (_, arg_type, _) in self.arg_attributes:
+            idx = self.get_argv_idx()
+            if not arg_name in name_set:
+                self.writeline(f'{DTYPE_TO_C[arg_type]} {arg_name}[atoi(argv[{idx}])] __attribute__ ((aligned (4096))){self.ending}')
+                name_set.add(arg_name)
         self.writeline(self.newline)
 
     def generate_main(self):
@@ -31,7 +63,7 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
                 self.load_arg()
                 self.writeline(self.newline)
 
-            func_arguments = [f"{arg_name}, {arg_name}, 0, {arg_shape}, 1" if arg_type != torch.bool else f"{arg_name}, {arg_name}, 0, {(arg_shape + 7) // 8}, 1" for arg_name, (_, arg_type, arg_shape) in self.arg_attributes.items()]
+            func_arguments = [f"{arg_name}, {arg_name}, 0, {arg_shape}, 1" if arg_type != torch.bool else f"{arg_name}, {arg_name}, 0, {(arg_shape + 7) // 8}, 1" for arg_name, (_, arg_type, arg_shape) in self.arg_attributes]
             self.writeline(f"{self.kernel_name}({', '.join(func_arguments)}){self.ending}{self.newline}")
 
             if self.validation:

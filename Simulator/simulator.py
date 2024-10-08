@@ -61,7 +61,7 @@ class FunctionalSimulator():
     def dump_args(self, args, arg_attributes, load_path, dump_path):
         array_size = []
         file_path = []
-        for (arg_name, arg_attribute), arg in zip(arg_attributes.items(), args):
+        for (arg_name, arg_attribute), arg in zip(arg_attributes, args):
             size = arg_attribute[2] if arg_attribute[1] != torch.bool else (arg_attribute[2] + 7) // 8
             array_size.append(size)
             if LLVMKernelArgs.is_llvm_arg_in(arg_attribute[0]):
@@ -80,7 +80,6 @@ class FunctionalSimulator():
         original_args = args
         if tile_size[0] > 1:
             for idx, arg in enumerate(args):
-                keys = list(arg_attributes.keys())
                 dims_to_pad = [0] if len(arg.shape) == 1 else [-2, -1]
                 for i in dims_to_pad:
                     if arg.shape[i] > 1 and arg.shape[i] % tile_size[i] != 0:
@@ -91,8 +90,7 @@ class FunctionalSimulator():
                         args = list(args)
                         args[idx] = pad_arg
                         args = tuple(args)
-                        # update arg_attibutes
-                        arg_attributes[keys[idx]][2] = pad_arg.numel()
+                        arg_attributes[idx][1][2] = pad_arg.numel()
 
         target_binary = os.path.join(path, binary)
         objdump = f"riscv64-unknown-elf-objdump -d {target_binary} > {os.path.join(path, 'binary.dump')}"
@@ -109,7 +107,7 @@ class FunctionalSimulator():
                 load_path = os.path.join(self.path, "intermediate")
             if intermediate_op & 0b01: # output dumps to intermediate
                 dump_path = os.path.join(self.path, "intermediate")
-                for name, attr in arg_attributes.items():
+                for name, attr in arg_attributes:
                     if attr[0] == 2:
                         os.makedirs(os.path.join(dump_path, name), exist_ok=True)
 
@@ -134,7 +132,7 @@ class FunctionalSimulator():
             print("Error output:", e.output)
             assert(0)
 
-        for (arg_name, arg_attribute), arg, path, original_arg in zip(arg_attributes.items(), args, file_path, original_args):
+        for (arg_name, arg_attribute), arg, path, original_arg in zip(arg_attributes, args, file_path, original_args):
             if LLVMKernelArgs.is_llvm_arg_out(arg_attribute[0]):
                 self.load_tensor(arg, arg_name, arg_attribute, path, original_arg)
 

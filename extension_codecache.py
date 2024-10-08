@@ -44,7 +44,7 @@ def dump_metadata(args, arg_attributes, path):
         return
 
     with open(meta_path, "a") as file:
-        for (arg_name, arg_attribute), arg in zip(arg_attributes.items(), args):
+        for (arg_name, arg_attribute), arg in zip(arg_attributes, args):
             file.write(f'{arg_name}=({arg_attribute[0]}, {arg.dtype}, {arg.shape})\n')
     return
 
@@ -114,7 +114,7 @@ class MLIRCodeCache:
              validation_binary_name="validation_bin",
              cycle_wrapper_name="cycle_wrapper",
              cycle_binary_name="cycle_bin",
-             arg_attributes={}, vectorlane_size=16, spad_info=None, **kwargs):
+             arg_attributes=[], vectorlane_size=16, spad_info=None, **kwargs):
         write_path = get_write_path(source_code)
         key, input_path = write(source_code, "mlir", specified_dir=write_path)
         new_input_path = os.path.splitext(input_path)[0]
@@ -175,7 +175,7 @@ class MLIRCodeCache:
         cycle_llvm_caller.generate_wrapper_file(write_path, cycle_wrapper_name)
         cycle_llvm_caller.compile_wih_kernel(write_path, key + "_sample", cycle_wrapper_name, cycle_binary_name, link_option)
         array_size = []
-        for (arg_name, arg_attribute) in arg_attributes.items():
+        for (arg_name, arg_attribute) in arg_attributes:
             array_size.append(str(arg_attribute[2]))
 
         # Run cyclesim
@@ -202,7 +202,7 @@ class LLVMCodeCache:
              validation_binary_name="validation_bin",
              cycle_wrapper_name="cycle_wrapper",
              cycle_binary_name="cycle_bin",
-             arg_attributes={}, loop_info={},
+             arg_attributes=[], loop_info={},
              load_tile_info={}, store_tile_info={}, **kwargs):
         write_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(source_code.strip())))
         key, input_path = write(source_code, "ll", specified_dir=write_path)
@@ -245,7 +245,7 @@ class LLVMCodeCache:
             cycle_llvm_caller.generate_wrapper_file(write_path, cycle_wrapper_name)
             cycle_llvm_caller.compile_wih_kernel(write_path, key + "_sample", cycle_wrapper_name, cycle_binary_name)
             array_size = []
-            for (arg_name, arg_attribute) in arg_attributes.items():
+            for (arg_name, arg_attribute) in arg_attributes:
                 array_size.append(str(arg_attribute[2]))
 
             # Run cyclesim
@@ -264,7 +264,7 @@ class CustomAsyncCompile(AsyncCompile):
         self.cycle_wrapper_name = "cycle_wrapper"
         self.cycle_binary_name = "cycle_binary"
 
-    def mlir(self, source_code, arg_attributes={}, vectorlane_size=16, tile_size=(4, 16), spad_info=None, **kwargs):
+    def mlir(self, source_code, arg_attributes=[], vectorlane_size=16, tile_size=(4, 16), spad_info=None, **kwargs):
         def task():
             key = MLIRCodeCache.load(source_code,
                                           valdiation_wrapper_name=self.validation_binary_name,
@@ -302,7 +302,7 @@ class CustomAsyncCompile(AsyncCompile):
         target_simulator.future = future
         return target_simulator
 
-    def llvm(self, source_code, arg_attributes={}, **kwargs):
+    def llvm(self, source_code, arg_attributes=[], **kwargs):
         def task():
             key = LLVMCodeCache.load(source_code,
                                           valdiation_wrapper_name=self.validation_binary_name,

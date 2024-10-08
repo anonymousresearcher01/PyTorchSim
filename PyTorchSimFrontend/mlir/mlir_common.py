@@ -92,6 +92,10 @@ class MLIRKernelArgs(common.KernelArgs):
     def is_mlir_arg_out(value):
         return (MLIRKernelArgs.MLIR_ARGS_OUT & value) | (MLIRKernelArgs.MLIR_ARGS_INOUT & value)
 
+    @staticmethod
+    def is_mlir_arg_inout(value):
+        return MLIRKernelArgs.MLIR_ARGS_INOUT & value
+
     def pad_args(self, arg):
         if self.tile_row is not None and self.tile_col is not None and len(arg.layout.size) > 1:
             if arg.layout.size[0] > 1:
@@ -138,11 +142,11 @@ class MLIRKernelArgs(common.KernelArgs):
 
         call_args = []
         arg_defs = []
-        arg_attributes = {}
+        arg_attributes = []
         def set_info(outer, inner, arg_type):
             arg_defs.append(f"%{inner}: memref<{buffer_types[outer][1]}x{DTYPE_TO_MLIR[buffer_types[outer][0]]}>")
             call_args.append(outer)
-            arg_attributes[outer] = [arg_type] + buffer_types[outer]
+            arg_attributes.append([outer] + [[arg_type] + buffer_types[outer]])
 
         for inplaced in unique(self.inplace_buffers.values()):
             if self._buffer_is_marked_removed(inplaced):
