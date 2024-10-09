@@ -78,7 +78,7 @@ class FunctionalSimulator():
         load_path = self.path
         dump_path = self.path
         original_args = args
-        if tile_size[0] > 1:
+        if list(tile_size.values())[0] > 1:
             for idx, arg in enumerate(args):
                 dims_to_pad = [0] if len(arg.shape) == 1 else [-2, -1]
                 for t, i in enumerate(dims_to_pad):

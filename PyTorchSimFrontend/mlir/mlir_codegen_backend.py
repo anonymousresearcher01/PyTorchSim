@@ -358,7 +358,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             chunk_size, mm_stride, t_row, t_col, tile_size_per_lane = 1, 1, 1, 1, 1
         # Case 1. Tile is 1-D vector type
         elif len(cv) == 1 and len(cv) <= self.reduction_depth:
-            is_vector_lane_row_major = False
             is_col_major = True # Actually it is not needed in vector case
             t_row = 1
             t_col = self.tile_desc.get_tile_size()
@@ -367,7 +366,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         # Case 2. Tile is 1-D vector type with reduction
         elif len(cv) == 1 and len(cv) == self.reduction_depth + 1:
             # Use only one vectorlane to reduce a vector
-            is_vector_lane_row_major = True
             is_col_major = False
             t_row = 1
             t_col = self.tile_desc.get_tile_size()
@@ -411,6 +409,18 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                     raise NotImplementedError()
                     t_row = self.vector_lane
                     t_col = self.tile_desc.get_cols_per_lane()
+        elif len(cv) == 3:
+            is_col_major = True # Actually it is not needed in vector case
+            mm_stride = cv[-1]
+            # When t_col stride is 1, we can access row vector
+            if mm_stride == 1:
+                t_row = 1
+                t_col = self.tile_desc.get_tile_size()
+            # if t_col stride is not 1, we have to access in a column vector
+            else:
+                t_row = self.tile_desc.get_tile_size()
+                t_col = 1
+            chunk_size = self.tile_desc.get_tile_size_per_lane()
         else:
             raise NotImplementedError()
 
@@ -427,15 +437,16 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.tile_desc.update_axis_stride(cv)
         tile_size = self.tile_desc.get_axis_and_tile_info()
 
-        for iter_axis, itervars in enumerate(self.itervars[-2:]):
-            dram_axis = self.tile_desc.reverse_axis_dict[iter_axis]
+        dim_offset = -2 if self.tile_desc.n_row == 1 else -1
+        for iter_axis, itervars in enumerate(self.itervars[-dim_offset:]):
+            dram_axis = self.tile_desc.reverse_axis_dict[len(self.itervars[:-dim_offset]) + iter_axis]
             if (dram_axis == len(self.itervars) - 1):
                 continue
             if (dram_axis == len(self.itervars) - 2):
                 new_coeff = ((expr.coeff(itervars) + tile_size[dram_axis + 1] - 1) // tile_size[dram_axis + 1]) * tile_size[dram_axis + 1]
                 expr = expr.subs(expr.coeff(itervars), new_coeff)
-            else:
-                raise NotImplementedError()
+            #else:
+            #    raise NotImplementedError()
 
         # Extract index var
         expr_str = str(expr)
@@ -699,7 +710,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         #if (self.tiling_idx < self.reduction_depth and len(self.reduction_idx) > 0):
         #    tile_row, tile_col = self.tile_desc.n_col, self.tile_desc.n_row
         tile_row = self.tile_desc.get_tile_size() if len(self.itervars) == 1 else tile_row
-        loops = [LoopLevel(var, size, idx, tile_row=tile_row, tile_col=tile_col) for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
+        loops = [LoopLevel(var, size, idx-len(self.itervars), tile_row=tile_row, tile_col=tile_col) for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
         loops, reductions = [LoopNest(loops[: self.reduction_depth]),
                              LoopNest(loops[self.reduction_depth :])]
         reductions.mark_reduction(self.reduction_vars)
@@ -769,12 +780,22 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         return code
 
     def adjust_tile_size(self):
+        # Case 1. vector kernel
         if len(self.itervars) == 1:
             self.tile_desc.n_col = self.tile_desc.get_tile_size()
             self.tile_desc.n_row = 1
         elif len(self.itervars) == 0:
             self.tile_desc.n_col = 1
             self.tile_desc.n_row = 1
+
+        # Case 2. 3-D tensor kernel without reduction. Access vector granule!
+        if len(self.itervars) == 3 and self.reduction_depth == len(self.itervars):
+            self.tile_desc.n_col = self.tile_desc.get_tile_size()
+            self.tile_desc.n_row = 1
+
+        # Case 3. N-D tensor kernel with reduction. Not implemented. Need this?
+        if len(self.itervars) >= 3 and self.reduction_depth < len(self.itervars):
+            raise NotImplementedError()
 
     def pad_ranges(self):
         if len(self.itervars) == 1:
@@ -830,9 +851,9 @@ class LoopLevel:
 
     def lines(self):
         step = 1
-        if self.idx == 0:
+        if self.idx == -2:
             step = self.tile_row
-        elif self.idx == 1:
+        elif self.idx == -1:
             step = self.tile_col
         if self.reduction_vars:
             acc = ', '.join([f"%{acc.name}" for acc in self.reduction_vars.keys()])
