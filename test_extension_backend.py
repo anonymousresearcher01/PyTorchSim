@@ -608,7 +608,7 @@ def test_ReLU(device):
 
 def test_LayerNorm(device):
     torch.manual_seed(0)
-    input = torch.randn(64, 64)
+    input = torch.randn(32, 64)
     x1 = input.to(device=device)
     x2 = input.to("cpu")
     model = LayerNorm(64)

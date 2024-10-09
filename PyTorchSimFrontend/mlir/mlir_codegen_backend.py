@@ -506,7 +506,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             raise NotImplementedError() #TODO: argmin, argmax
         elif is_welford_reduction(reduction_type):
             if reduction_type == "welford_combine":
-                pass
+                raise NotImplementedError("welford_combine")
             else:
                 assert reduction_type == "welford_reduce"
                 type_name = mlir_common.DTYPE_TO_MLIR[dtype]
@@ -567,18 +567,21 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         buffer = self.cse.generate(self.reductions_suffix, f"memref.get_global @{name}_spad : memref<{tile_row}x{tile_col}x{type_name}, 1>")
         if self.welford_reduce_out is not None:
             sum, sqr_sum, _ = self.welford_reduce_out
-
+            shape = f"vector<{self.tile_col_per_lane}x{type_name}>" if self.buffer_types[name][1] > 1 else type_name
             # mean
-            self.cse.generate(self.reductions_suffix, f"%f{self.buffer_types[name][1]} = arith.constant {float(self.buffer_types[name][1])} : f32", assignment=False)
-            divider_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %f{self.buffer_types[name][1]} : f32 to vector<{self.tile_col_per_lane}x{type_name}>")
-            mean = self.cse.generate(self.reductions_suffix, f"arith.divf %{sum}, %{divider_vec} : vector<{self.tile_col_per_lane}x{type_name}>")
+            self.cse.generate(self.reductions_suffix, f"%f{self.ranges[self.reduction_depth]} = arith.constant {float(self.ranges[self.reduction_depth])} : f32", assignment=False)
+            if self.buffer_types[name][1] > 1:
+                divider_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %f{self.ranges[self.reduction_depth]} : f32 to vector<{self.tile_col_per_lane}x{type_name}>")
+            else:
+                divider_vec = f"f{self.buffer_types[name][1]}"
+            mean = self.cse.generate(self.reductions_suffix, f"arith.divf %{sum}, %{divider_vec} : {shape}")
 
             # m2 = (E(X^2) - E(X)^2) * N
-            sqr_mean = self.cse.generate(self.reductions_suffix, f"arith.divf %{sqr_sum}, %{divider_vec} : vector<{self.tile_col_per_lane}x{type_name}>")
-            mean_sqr = self.cse.generate(self.reductions_suffix, f"arith.mulf %{mean}, %{mean} : vector<{self.tile_col_per_lane}x{type_name}>")
-            variance = self.cse.generate(self.reductions_suffix, f"arith.subf %{sqr_mean}, %{mean_sqr} : vector<{self.tile_col_per_lane}x{type_name}>")
-            m2 = self.cse.generate(self.reductions_suffix, f"arith.mulf %{variance}, %{divider_vec} : vector<{self.tile_col_per_lane}x{type_name}>")
-            if name == "buf0":
+            sqr_mean = self.cse.generate(self.reductions_suffix, f"arith.divf %{sqr_sum}, %{divider_vec} : {shape}")
+            mean_sqr = self.cse.generate(self.reductions_suffix, f"arith.mulf %{mean}, %{mean} : {shape}")
+            variance = self.cse.generate(self.reductions_suffix, f"arith.subf %{sqr_mean}, %{mean_sqr} : {shape}")
+            m2 = self.cse.generate(self.reductions_suffix, f"arith.mulf %{variance}, %{divider_vec} : {shape}")
+            if name == "buf0": # FIXME: check which is mean or m2
                 value = mean
             else:
                 value = m2
