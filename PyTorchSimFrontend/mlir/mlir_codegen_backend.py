@@ -304,7 +304,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.map_cse = common.CSE("#", self.suffix, name_prefix="map")
         self.consts = set()
         self.tags = set()
-        self.tiling_indices = [0, 1]
         self.tile_desc = MLIRTile(self.tile_row, self.tile_col, self.vector_lane)
         self.dma_cache = {}
         self.dma_counter = 1
@@ -735,6 +734,11 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             code.splice(self.codegen_loops())
         return code
 
+    def adjust_tile_size(self):
+        if len(self.itervars) == 1:
+            self.tile_desc.n_col = self.tile_desc.get_tile_size()
+            self.tile_desc.n_row = 1
+
     def set_ranges(self, lengths, reduction_lengths):
         if self.call_ranges:
             assert self.call_ranges == tuple(lengths) + tuple(
@@ -746,11 +750,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             self.ranges = [self.rename_indexing(x) for x in self.call_ranges]
             self.itervars = [sympy.Symbol(f"index{n}") for n in range(len(self.ranges))]
             self.reduction_depth = len(lengths)
-        # do vertical reduction as the tail loop
-        # FIXME. Why?
-        # if len(self.itervars) > 1:
-        #    self.tile_desc.n_col = self.tile_desc.get_tile_size()
-        #    self.tile_desc.n_col = 1
+
+        # Adjust time size when it is vector
+        self.adjust_tile_size()
 
         # TODO.
         #if len(self.itervars):
@@ -851,7 +853,7 @@ class MLIRScheduling(BaseScheduling):
         kernel_name = f"extension_kernel_{self.count}"
         self.count += 1
         src_code = ex_kernel.codegen_nodes(nodes, kernel_name)
-        self.define_kernel(src_code, kernel_name, ex_kernel.vector_lane, (ex_kernel.tile_row, ex_kernel.tile_col), ex_kernel.spad_info)
+        self.define_kernel(src_code, kernel_name, ex_kernel.vector_lane, (ex_kernel.tile_desc.n_row, ex_kernel.tile_desc.n_col), ex_kernel.spad_info)
         ex_kernel.call_kernel(kernel_name)
         _, args, _, _ = ex_kernel.args.mlir_argdefs()
         args = ", ".join(args)
