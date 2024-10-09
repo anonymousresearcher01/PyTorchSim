@@ -8,6 +8,7 @@ from functools import reduce
 from operator import mul
 from typing import List
 from typing import Dict
+from collections import OrderedDict
 import torch
 from torch._inductor import dependencies
 from torch._inductor.codegen import cpp, wrapper, common
@@ -247,7 +248,9 @@ class MLIRTile():
         self.n_row = n_row
         self.n_col = n_col
         self.vector_lane = vector_lane
-        self.axis_strides= {}
+        self.axis_strides = []
+        self.axis_dict = {} # dram_axis : iter_axix
+        self.reverse_axis_dict = {} # iter_axis : dram_axis
 
     def get_tile_size(self):
         return self.n_row * self.n_col
@@ -286,12 +289,18 @@ class MLIRTile():
         if any([i==0 for i in cv]):
             return
 
-        for axis, stride in enumerate(cv.values()):
-            self.axis_strides[axis] = stride
+        for axis, stride in enumerate(cv):
+            self.axis_strides.append([axis, stride])
+        self.axis_strides = sorted(self.axis_strides, key=lambda x: x[1])
+        self.axis_dict = {}
+        self.reverse_axis_dict = {}
+        for dram_axis, (iter_axis, _) in enumerate(self.axis_strides):
+            self.axis_dict[dram_axis] = iter_axis
+            self.reverse_axis_dict[iter_axis] = dram_axis
 
     def get_axis_and_tile_info(self):
         axis = list(self.axis_strides.keys())
-        return {axis[-2]: self.n_row, axis[-1]: self.n_col}
+        return {self.reverse_axis_dict[len(axis)-2]: self.n_row, self.axis_dict[len(axis)-1]: self.n_col}
 
 class MLIRKernel(mlir_common.BaseMLIRKernel):
     overrides = ExtensionOverrides
@@ -349,7 +358,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
     def get_dma_info(self, name, index, dtype, is_store):
         cv = self.get_constant_vector(index)
         tile_size_per_lane = min(self.tile_desc.get_tile_size_per_lane(), self.buffer_types[name][1])
-        self.tile_desc.update_axis_stride(cv)
 
         # Case 0. Tile is 0-D scalar
         if len(cv) == 0:
@@ -423,12 +431,30 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
     def parse_indices(self, expr):
         if len(expr.args) == 0:
             return expr, expr
-        for itervars in self.itervars:
-            new_coeff = ((expr.coeff(itervars) + self.tile_desc.n_col - 1) // self.tile_desc.n_col) * self.tile_desc.n_col
-            expr = expr.subs(expr.coeff(itervars), new_coeff)
+
+        # update cv
+        cv = self.get_constant_vector(expr)
+        self.tile_desc.update_axis_stride(cv)
+
+        # Extract index var
         expr_str = str(expr)
         pattern = r'index\d+'
-        indices = set(re.findall(pattern, expr_str))
+        indices = OrderedDict()
+        for index in re.findall(pattern, expr_str):
+            indices[index] = None
+        indices = list(indices.keys())
+
+        for iter_axis, itervars in enumerate(self.itervars[-2:]):
+            dram_axis = self.tile_desc.reverse_axis_dict[iter_axis]
+            if (dram_axis == len(self.itervars) - 1):
+                new_coeff = ((expr.coeff(itervars) + self.tile_desc.n_col - 1) // self.tile_desc.n_col) * self.tile_desc.n_col
+                expr = expr.subs(expr.coeff(itervars), new_coeff)
+            elif (dram_axis == len(self.itervars) - 2):
+                new_coeff = ((expr.coeff(itervars) + self.tile_desc.n_row - 1) // self.tile_desc.n_row) * self.tile_desc.n_row
+                expr = expr.subs(expr.coeff(itervars), new_coeff)
+            else:
+                raise NotImplementedError()
+
         args = ", ".join(map(str, indices))
         if "//" in expr_str:
             expr_str = expr_str.replace("//", " floordiv ")
