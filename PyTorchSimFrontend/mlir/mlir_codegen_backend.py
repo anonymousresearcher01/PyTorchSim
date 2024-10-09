@@ -243,31 +243,31 @@ DMA_TYPE = {
 }
 
 class MLIRTile():
-    def __init__(self, tile_row, tile_col, vector_lane) -> None:
-        self.tile_row = tile_row
-        self.tile_col = tile_col
+    def __init__(self, n_row, n_col, vector_lane) -> None:
+        self.n_row = n_row
+        self.n_col = n_col
         self.vector_lane = vector_lane
 
     def get_tile_size(self):
-        return self.tile_row * self.tile_col
+        return self.n_row * self.n_col
 
     def get_rows_per_lane(self):
-        if self.tile_row % self.vector_lane != 0:
-            print("[Warning] tile_row % vector_lane != 0")
-        return self.tile_row // self.vector_lane
+        if self.n_row % self.vector_lane != 0:
+            print("[Warning] n_row % vector_lane != 0")
+        return self.n_row // self.vector_lane
 
     def get_cols_per_lane(self):
-        if self.tile_col % self.vector_lane != 0:
-            print("[Warning] tile_col % vector_lane != 0")
-        return self.tile_col // self.vector_lane
+        if self.n_col % self.vector_lane != 0:
+            print("[Warning] n_col % vector_lane != 0")
+        return self.n_col // self.vector_lane
 
     def get_tile_size_per_lane(self):
         if self.get_tile_size() % self.vector_lane != 0:
-            print("[Warning] tile_col % vector_lane != 0")
+            print("[Warning] n_col % vector_lane != 0")
         return self.get_tile_size() // self.vector_lane
 
     def get_tile_shape(self):
-        return f"{self.tile_row}x{self.tile_col}"
+        return f"{self.n_row}x{self.n_col}"
 
     def get_chunk_size(self, is_vector_lane_row_major):
         if self.is_vector():
@@ -279,7 +279,7 @@ class MLIRTile():
         return chunk_size
 
     def is_vector(self):
-        return self.tile_row == 1
+        return self.n_row == 1
 
 class MLIRKernel(mlir_common.BaseMLIRKernel):
     overrides = ExtensionOverrides
@@ -369,12 +369,12 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 is_reduction = self.reduction_depth == 1
                 is_transposed = cv[0] < cv[1]
                 if is_transposed:
-                    t_row = self.tile_desc.tile_col
-                    t_col = self.tile_desc.tile_row
+                    t_row = self.tile_desc.n_col
+                    t_col = self.tile_desc.n_row
                     mm_stride = self.ranges[0]
                 else:
-                    t_row = self.tile_desc.tile_row
-                    t_col = self.tile_desc.tile_col
+                    t_row = self.tile_desc.n_row
+                    t_col = self.tile_desc.n_col
                     mm_stride = self.ranges[1]
                 if is_reduction and is_transposed:
                     is_col_major = False
@@ -384,9 +384,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                     chunk_size = self.tile_desc.get_tile_size() // self.vector_lane
                 else:
                     raise NotImplementedError()
-                # Calculate chunk size
-                #if not is_col_major:
-                #    chunk_size = t_col // self.vector_lane
             else:
                 # Broadcast pattern
                 chunk_size = self.tile_desc.get_cols_per_lane()
@@ -410,7 +407,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if len(expr.args) == 0:
             return expr, expr
         for itervars in self.itervars:
-            new_coeff = ((expr.coeff(itervars) + self.tile_col - 1) // self.tile_col) * self.tile_col
+            new_coeff = ((expr.coeff(itervars) + self.tile_desc.n_col - 1) // self.tile_desc.n_col) * self.tile_desc.n_col
             expr = expr.subs(expr.coeff(itervars), new_coeff)
         expr_str = str(expr)
         pattern = r'index\d+'
@@ -440,7 +437,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         with self as kernel:
             for node in nodes:
                 vars, reduction_vars = kernel.set_ranges(group, reduction_group)
-                self.args = mlir_common.MLIRKernelArgs(self.tile_row, self.tile_col)
+                self.args = mlir_common.MLIRKernelArgs(self.tile_desc.n_row, self.tile_desc.n_col)
                 _, _, _, self.buffer_types = self.args.mlir_argdefs()
                 self.reduction_idx = {var: i for i, var in enumerate(reduction_vars)}
                 node.run(vars, reduction_vars)
@@ -465,7 +462,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
         stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(name, index, dtype, 0)
         tile_shape = f"{tile_shape[0]}x{tile_shape[1]}"
-        self.define_scratchpad_buffer(dtype, name, self.tile_row, self.tile_col)
+        self.define_scratchpad_buffer(dtype, name, self.tile_desc.n_row, self.tile_desc.n_col)
         if dtype == torch.bool:
             mapping = self.map_cse.generate(self.global_vars, f"affine_map<({indices}) -> ({indices} floordiv 8)>")
             indices = self.cse.generate(self.loads, f"affine.apply #{mapping}(%{indices})")
@@ -506,7 +503,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
         stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(name, index, dtype, 1)
         tile_shape = f"{tile_shape[0]}x{tile_shape[1]}"
-        self.define_scratchpad_buffer(dtype, name, self.tile_row, self.tile_col)
+        self.define_scratchpad_buffer(dtype, name, self.tile_desc.n_row, self.tile_desc.n_col)
         if dtype == torch.bool:
             mapping = self.map_cse.generate(self.global_vars, f"affine_map<({indices}) -> ({indices} floordiv 8)>")
             indices = self.cse.generate(self.loads, f"affine.apply #{mapping}(%{indices})")
@@ -565,9 +562,11 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             reduced_shape = type_name
             self.reduction_prefix.writeline(f"%{init} = arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
             if len(self.ranges) == 2:
-                vec_len = self.tile_desc.get_rows_per_lane()
+                vec_len = self.tile_desc.n_row // self.tile_desc.get_rows_per_lane()
                 flattened_size = f"vector<{self.tile_desc.get_tile_size_per_lane()}x{type_name}>"
-                expaned_size = f"vector<{vec_len}x{self.tile_desc.get_tile_size_per_lane()//vec_len}x{type_name}>"
+
+                # It is column majored per lane tile
+                expaned_size = f"vector<{self.tile_desc.get_tile_size_per_lane()//vec_len}x{vec_len}x{type_name}>"
                 value = self.cse.generate(self.compute, f"vector.shape_cast %{value} : {flattened_size} to {expaned_size}")
                 shape = expaned_size
 
@@ -602,7 +601,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         indices, index = self.parse_indices(index)
         prefix = "" if index.is_number else "%"
 
-        tile_col = self.tile_desc.tile_row
+        tile_col = self.tile_desc.n_col
         tile_row = 1
         self.define_scratchpad_buffer(dtype, name, tile_row, tile_col)
         if name not in self.global_vars_set:
@@ -674,10 +673,10 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
     def codegen_loops(self):
         code = mlir_common.ParallelLoopBuffer()
         # Loop body part
-        tile_row, tile_col = self.tile_row, self.tile_col
+        tile_row, tile_col = self.tile_desc.n_row, self.tile_desc.n_col
         # FIXME.
         #if (self.tiling_idx < self.reduction_depth and len(self.reduction_idx) > 0):
-        #    tile_row, tile_col = self.tile_col, self.tile_row
+        #    tile_row, tile_col = self.tile_desc.n_col, self.tile_desc.n_row
         tile_row = self.tile_desc.get_tile_size() if len(self.itervars) == 1 else tile_row
         loops = [LoopLevel(var, size, idx, tile_row=tile_row, tile_col=tile_col, is_transpose=self.is_transpose) for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
         loops, reductions = [LoopNest(loops[: self.reduction_depth]),
@@ -762,19 +761,19 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         # do vertical reduction as the tail loop
         # FIXME. Why?
         # if len(self.itervars) > 1:
-        #    self.tile_desc.tile_col = self.tile_desc.get_tile_size()
-        #    self.tile_desc.tile_row = 1
+        #    self.tile_desc.n_col = self.tile_desc.get_tile_size()
+        #    self.tile_desc.n_col = 1
 
         # TODO.
         #if len(self.itervars):
         #    if self.tiling_idx < self.reduction_depth and len(reduction_lengths) > 0:#self.reduction_depth > 0:
-        #        self.ranges[-1] = (self.ranges[-1] + self.tile_row - 1) // self.tile_row * self.tile_row
+        #        self.ranges[-1] = (self.ranges[-1] + self.tile_desc.n_row - 1) // self.tile_desc.n_row * self.tile_desc.n_row
         #        if len(self.itervars) > 1:
-        #            self.ranges[-2] = (self.ranges[-2] + self.tile_col - 1) // self.tile_col * self.tile_col
+        #            self.ranges[-2] = (self.ranges[-2] + self.tile_desc.n_col - 1) // self.tile_desc.n_col * self.tile_desc.n_col
         #    else:
-        #        self.ranges[-1] = (self.ranges[-1] + self.tile_col - 1) // self.tile_col * self.tile_col
+        #        self.ranges[-1] = (self.ranges[-1] + self.tile_desc.n_col - 1) // self.tile_desc.n_col * self.tile_desc.n_col
         #        if len(self.itervars) > 1:
-        #            self.ranges[-2] = (self.ranges[-2] + self.tile_row - 1) // self.tile_row * self.tile_row
+        #            self.ranges[-2] = (self.ranges[-2] + self.tile_desc.n_row - 1) // self.tile_desc.n_row * self.tile_desc.n_row
         return (
             self.itervars[: self.reduction_depth],
             self.itervars[self.reduction_depth :],
