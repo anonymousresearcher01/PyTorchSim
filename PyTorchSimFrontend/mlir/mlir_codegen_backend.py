@@ -439,6 +439,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         dim_offset = -2 if self.tile_desc.n_row == 1 else -1
         for iter_axis, itervars in enumerate(self.itervars[-dim_offset:]):
+            if len(self.itervars[:-dim_offset]) + iter_axis not in self.tile_desc.reverse_axis_dict:
+                print("[Warning] cant padding axis")
+                continue
             dram_axis = self.tile_desc.reverse_axis_dict[len(self.itervars[:-dim_offset]) + iter_axis]
             if (dram_axis == len(self.itervars) - 1):
                 continue
@@ -957,7 +960,7 @@ class MLIRScheduling(BaseScheduling):
         with V.set_kernel_handler(kernel):
             node_schedule = [template_node, *epilogue_nodes]
             kernel.meta_kernel()
-            kernel_name = self.define_kernel(src_code, kernel.kernel_name, kernel.vector_lane, (kernel.vector_lane, kernel.vector_lane), kernel.spad_info)
+            kernel_name = self.define_kernel(src_code, kernel.kernel_name, kernel.vector_lane, {0:kernel.vector_lane, 1:kernel.vector_lane}, kernel.spad_info)
             self.define_function(kernel)
         kernel.call_kernel(kernel_name)
         _, args, _, _ = kernel.args.mlir_argdefs()
