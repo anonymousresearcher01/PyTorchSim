@@ -278,6 +278,16 @@ class my_Decoder(nn.Module):
         # custom transformer decoder
         super(my_Decoder, self).__init__()
 
+def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
+    message = f"|{name} Test Passed|"
+    if torch.allclose(out.cpu(), cpu_out, rtol=rtol, atol=atol):
+        print("-" * len(message))
+        print(message)
+        print("-" * len(message))
+    else:
+        print("custom out: ", out.cpu())
+        print("cpu out: ", cpu_out)
+
 def test_vectoradd(device, size=(128, 128)):
     def vectoradd(a, b):
         return a + b
@@ -286,13 +296,7 @@ def test_vectoradd(device, size=(128, 128)):
     opt_fn = torch.compile()(vectoradd)
     res = opt_fn(x, y)
     out = vectoradd(x.cpu(), y.cpu())
-    if torch.allclose(res.cpu(), out, rtol=1e-4, atol=1e-4):
-        print("-----------------------")
-        print("|VectorAdd Test Passed|")
-        print("-----------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", out)
+    test_result("VectorAdd", res, out)
 
 def test_reduce_sum(device, size, dim, keepdim=False):
     def reduce_sum(a, b, dim, keepdim):
@@ -302,13 +306,7 @@ def test_reduce_sum(device, size, dim, keepdim=False):
     opt_fn = torch.compile()(reduce_sum)
     res = opt_fn(x, y, dim, keepdim)
     out = reduce_sum(x.cpu(), y.cpu(), dim, keepdim)
-    if torch.allclose(res.cpu(), out, rtol=1e-4, atol=1e-4):
-        print("-----------------------")
-        print("|ReduceSum Test Passed|")
-        print("-----------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", out)
+    test_result("ReduceSum", res, out)
 
 def test_single_perceptron(device):
     def perceptron(a, b, c):
@@ -345,34 +343,10 @@ def test_single_perceptron(device):
     cpu_y = perceptron(x2, w2, b2)
     cpu_loss = torch.nn.MSELoss()(cpu_y, y2)
     cpu_loss.backward()
-    if torch.allclose(y.cpu(), cpu_y, rtol=1e-4, atol=1e-4):
-        print("-------------------------------")
-        print("|Single Perceptron Test Passed|")
-        print("-------------------------------")
-    else:
-        print("custom out: ", y.cpu())
-        print("cpu out: ", cpu_y)
-    if torch.allclose(loss.cpu(), cpu_loss, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|Loss Function Test Passed |")
-        print("----------------------------")
-    else:
-        print("custom loss: ", loss.cpu())
-        print("cpu loss: ", cpu_loss)
-    if torch.allclose(w1.grad.cpu(), w2.grad, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|Weight Update Test Passed |")
-        print("----------------------------")
-    else:
-        print("custom grad: ", w1.grad.cpu())
-        print("cpu grad: ", w2.grad)
-    if torch.allclose(b1.grad.cpu(), b2.grad, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|  Bias Update Test Passed |")
-        print("----------------------------")
-    else:
-        print("custom grad: ", b1.grad.cpu())
-        print("cpu grad: ", b2.grad)
+    test_result("Perceptron", y, cpu_y)
+    test_result("Loss", loss, cpu_loss)
+    test_result("Weight Update", w1.grad, w2.grad)
+    test_result("Bias Update", b1.grad, b2.grad)
     # for i in range(50):
     #     y = opt_mlp(w1, x1, b1)
     #     loss = opt_loss(y, y1)
@@ -408,13 +382,7 @@ def test_matmul(device):
     opt_fn = torch.compile()(custom_matmul)
     res = opt_fn(b1, x1, w1)
     y = custom_matmul(b2, x2, w2)
-    if torch.allclose(res.cpu(), y, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|Matmul Forward Test Passed|")
-        print("----------------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", y)
+    test_result("Matmul Forward", res, y)
 
 def test_mlp(device, batch_size=64, input_size=64, hidden_size=32, output_size=8):
     torch.manual_seed(0)
@@ -438,48 +406,12 @@ def test_mlp(device, batch_size=64, input_size=64, hidden_size=32, output_size=8
     cpu_loss = loss_fn(cpu_y, y2)
     loss.backward()
     cpu_loss.backward()
-    if torch.allclose(y.cpu(), cpu_y, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("| MLP Forward Test Passed  |")
-        print("----------------------------")
-    else:
-        print("custom out: ", y.cpu())
-        print("cpu out: ", cpu_y)
-    if torch.allclose(loss.cpu(), cpu_loss, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|Loss Function Test Passed |")
-        print("----------------------------")
-    else:
-        print("custom loss: ", loss.cpu())
-        print("cpu loss: ", cpu_loss)
-    if torch.allclose(model.linear1.weight.grad.cpu(), cpu_model.linear1.weight.grad, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|MLP Backward Test 1 Passed|")
-        print("----------------------------")
-    else:
-        print("custom grad: ", model.linear1.weight.grad.cpu())
-        print("cpu grad: ", cpu_model.linear1.weight.grad)
-    if torch.allclose(model.linear1.bias.grad.cpu(), cpu_model.linear1.bias.grad, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|MLP Backward Test 2 Passed|")
-        print("----------------------------")
-    else:
-        print("custom grad: ", model.linear1.bias.grad.cpu())
-        print("cpu grad: ", cpu_model.linear1.bias.grad)
-    if torch.allclose(model.linear2.weight.grad.cpu(), cpu_model.linear2.weight.grad, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|MLP Backward Test 3 Passed|")
-        print("----------------------------")
-    else:
-        print("custom grad: ", model.linear2.weight.grad.cpu())
-        print("cpu grad: ", cpu_model.linear2.weight.grad)
-    if torch.allclose(model.linear2.bias.grad.cpu(), cpu_model.linear2.bias.grad, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|MLP Backward Test 4 Passed|")
-        print("----------------------------")
-    else:
-        print("custom grad: ", model.linear2.bias.grad.cpu())
-        print("cpu grad: ", cpu_model.linear2.bias.grad)
+    test_result("MLP Forward", y, cpu_y)
+    test_result("Loss", loss, cpu_loss)
+    test_result("MLP Weight1 Backward", model.linear1.weight.grad, cpu_model.linear1.weight.grad)
+    test_result("MLP Bias1 Backward", model.linear1.bias.grad, cpu_model.linear1.bias.grad)
+    test_result("MLP Weight2 Backward", model.linear2.weight.grad, cpu_model.linear2.weight.grad)
+    test_result("MLP Bias2 Backward", model.linear2.bias.grad, cpu_model.linear2.bias.grad)
 
 def test_CNN(device):
     torch.manual_seed(0)
@@ -492,13 +424,7 @@ def test_CNN(device):
     y = opt_fn(x1)
     cpu_model = model.to("cpu")
     cpu_y = cpu_model(x2)
-    if torch.allclose(y.cpu(), cpu_y, rtol=2e-1, atol=2e-1):
-        print("-------------------------")
-        print("|CNN Forward Test Passed|")
-        print("-------------------------")
-    else:
-        print("custom out: ", y.cpu())
-        print("cpu out: ", cpu_y)
+    test_result("CNN Forward", y, cpu_y, rtol=2e-1, atol=2e-1)
     print("Max diff > ", torch.max(torch.abs(y.cpu() - cpu_y)))
 
 def test_conv2d(device):
@@ -514,13 +440,7 @@ def test_conv2d(device):
     opt_fn = torch.compile()(custom_conv2d)
     res = opt_fn(conv_input, conv_kernel)
     out = custom_conv2d(conv_input.cpu(), conv_kernel.cpu())
-    if torch.allclose(res.cpu(), out, rtol=1e-1, atol=1e-1):
-        print("----------------------------")
-        print("|Conv2d Forward Test Passed|")
-        print("----------------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", out)
+    test_result("Conv2d Forward", res, out, rtol=1e-1, atol=1e-1)
     print("Max diff > ", torch.max(torch.abs(res.cpu() - out)))
 
 def test_softmax(device, size=(128, 128)):
@@ -531,13 +451,7 @@ def test_softmax(device, size=(128, 128)):
     opt_fn = torch.compile()(torch.nn.functional.softmax)
     y = opt_fn(x1, dim=1)
     cpu_y = torch.nn.functional.softmax(x2, dim=1)
-    if torch.allclose(y.cpu(), cpu_y, rtol=1e-4, atol=1e-4):
-        print("-----------------------------")
-        print("|Softmax Forward Test Passed|")
-        print("-----------------------------")
-    else:
-        print("custom out: ", y.cpu())
-        print("cpu out: ", cpu_y)
+    test_result("Softmax", y, cpu_y)
 
 def test_ReLU(device, size=(128, 128)):
     torch.manual_seed(0)
@@ -547,13 +461,7 @@ def test_ReLU(device, size=(128, 128)):
     opt_fn = torch.compile()(torch.nn.functional.relu)
     y = opt_fn(x1)
     cpu_y = torch.nn.functional.relu(x2)
-    if torch.allclose(y.cpu(), cpu_y, rtol=1e-4, atol=1e-4):
-        print("--------------------------")
-        print("|ReLU Forward Test Passed|")
-        print("--------------------------")
-    else:
-        print("custom out: ", y.cpu())
-        print("cpu out: ", cpu_y)
+    test_result("ReLU", y, cpu_y)
 
 def test_LayerNorm(device, size=(64, 64)):
     torch.manual_seed(0)
@@ -566,13 +474,7 @@ def test_LayerNorm(device, size=(64, 64)):
     y = opt_fn(x1)
     cpu_model = model.to("cpu")
     cpu_y = cpu_model(x2)
-    if torch.allclose(y.cpu(), cpu_y, rtol=1e-4, atol=1e-4):
-        print("-------------------------------")
-        print("|LayerNorm Forward Test Passed|")
-        print("-------------------------------")
-    else:
-        print("custom out: ", y.cpu())
-        print("cpu out: ", cpu_y)
+    test_result("LayerNorm Forward", y, cpu_y)
 
 def test_BatchNorm(device, size=(1, 16, 64, 64)):
     torch.manual_seed(0)
@@ -585,13 +487,7 @@ def test_BatchNorm(device, size=(1, 16, 64, 64)):
     y = opt_fn(x1)
     cpu_model = model.to("cpu")
     cpu_y = cpu_model(x2)
-    if torch.allclose(y.cpu(), cpu_y, rtol=1e-4, atol=1e-4):
-        print("-------------------------------")
-        print("|BatchNorm Forward Test Passed|")
-        print("-------------------------------")
-    else:
-        print("custom out: ", y.cpu())
-        print("cpu out: ", cpu_y)
+    test_result("BatchNorm Forward", y, cpu_y)
 
 def test_Attention(device):
     def attention(query, key, value):
@@ -610,14 +506,7 @@ def test_Attention(device):
     res, p_attn = opt_fn(query, key, value)
 
     cpu_res, cpu_p_attn = attention(query.cpu(), key.cpu(), value.cpu())
-
-    if torch.allclose(res.cpu(), cpu_res, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|Attention Forward Test Passed|")
-        print("----------------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", cpu_res)
+    test_result("Attention Forward", res, cpu_res)
 
 def test_MultiAttention(device):
     torch.manual_seed(0)
@@ -637,14 +526,7 @@ def test_MultiAttention(device):
 
     cpu_multihead_attn = multihead_attn.to("cpu")
     cpu_res = cpu_multihead_attn(query.cpu(), key.cpu(), value.cpu())
-
-    if torch.allclose(res.cpu(), cpu_res, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|Multihead Attention Forward Test Passed|")
-        print("----------------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", cpu_res)
+    test_result("Multihead Attention Forward", res, cpu_res)
 
 def test_BMM(device):
     def bmm(a, b):
@@ -655,13 +537,7 @@ def test_BMM(device):
     opt_fn = torch.compile()(bmm)
     res = opt_fn(a, b)
     out = bmm(a.cpu(), b.cpu())
-    if torch.allclose(res.cpu(), out, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|BMM Forward Test Passed|")
-        print("----------------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", out)
+    test_result("BMM Forward", res, out)
 
 def test_Transpose2D(device, size=(16, 32)):
     def transpose(a):
@@ -672,13 +548,7 @@ def test_Transpose2D(device, size=(16, 32)):
     opt_fn = torch.compile()(transpose)
     res = opt_fn(x)
     out = transpose(x.cpu())
-    if torch.allclose(res.cpu(), out, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|Transpose Forward Test Passed|")
-        print("----------------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", out)
+    test_result("Transpose Forward", res, out)
 
 def test_Transpose2D_2(device, size=(16, 32)):
     def transpose(a, b):
@@ -691,13 +561,7 @@ def test_Transpose2D_2(device, size=(16, 32)):
     opt_fn = torch.compile()(transpose)
     res = opt_fn(x, y)
     out = transpose(x.cpu(), y.cpu())
-    if torch.allclose(res.cpu(), out, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|Transpose2 Forward Test Passed|")
-        print("----------------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", out)
+    test_result("Transpose2 Forward", res, out)
 
 def test_Transpose3D_1(device, size=(4, 16, 32)):
     def transpose(a, b):
@@ -710,13 +574,7 @@ def test_Transpose3D_1(device, size=(4, 16, 32)):
     opt_fn = torch.compile()(transpose)
     res = opt_fn(x, y)
     out = transpose(x.cpu(), y.cpu())
-    if torch.allclose(res.cpu(), out, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|Transpose 3D (1,2) Forward Test Passed|")
-        print("----------------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", out)
+    test_result("Transpose 3D Forward", res, out)
 
 def test_Transpose3D_2(device, size=(4, 16, 32)):
     def transpose(a, b):
@@ -729,13 +587,7 @@ def test_Transpose3D_2(device, size=(4, 16, 32)):
     opt_fn = torch.compile()(transpose)
     res = opt_fn(x, y)
     out = transpose(x.cpu(), y.cpu())
-    if torch.allclose(res.cpu(), out, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|Transpose 3D (0,2) Forward Test Passed|")
-        print("----------------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", out)
+    test_result("Transpose 3D Forward", res, out)
 
 def test_Transpose3D_3(device, size=(4, 16, 32)):
     def transpose(a, b):
@@ -748,13 +600,7 @@ def test_Transpose3D_3(device, size=(4, 16, 32)):
     opt_fn = torch.compile()(transpose)
     res = opt_fn(x, y)
     out = transpose(x.cpu(), y.cpu())
-    if torch.allclose(res.cpu(), out, rtol=1e-4, atol=1e-4):
-        print("----------------------------")
-        print("|Transpose 3D (0,1) Forward Test Passed|")
-        print("----------------------------")
-    else:
-        print("custom out: ", res.cpu())
-        print("cpu out: ", out)
+    test_result("Transpose 3D Forward", res, out)
 
 def MLP_MNIST(device):
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
@@ -798,7 +644,7 @@ def MLP_MNIST(device):
 
 def test_optimizer(device):
     torch.manual_seed(0)
-    model = MLP().to(device=device)
+    model = MLP(input_size=16, hidden_size=16, output_size=16).to(device=device)
     cpu_model = copy.deepcopy(model).to("cpu")
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     cpu_optimizer = torch.optim.Adam(cpu_model.parameters(), lr=0.001)
@@ -816,13 +662,31 @@ def test_optimizer(device):
     cpu_loss.backward()
     opt_step()
     cpu_optimizer.step()
-    if torch.allclose(model.linear1.weight.cpu(), cpu_model.linear1.weight, rtol=1e-4, atol=1e-4):
-        print("-----------------------")
-        print("|Optimizer Test Passed|")
-        print("-----------------------")
-    else:
-        print("custom out: ", model.linear1.weight.cpu())
-        print("cpu out: ", cpu_model.linear1.weight)
+    test_result("Optimizer", model.linear1.weight, cpu_model.linear1.weight)
+
+def test_maxpool(device):
+    def maxpool(a):
+        return torch.nn.functional.max_pool2d(a, kernel_size=3, stride=2, padding=1)
+    torch.manual_seed(0)
+    input = torch.randn(1, 8, 64, 64).to(device=device)
+    x1 = input.to(device=device)
+    x2 = input.to("cpu")
+    opt_fn = torch.compile()(maxpool)
+    res = opt_fn(x1)
+    out = maxpool(x2)
+    test_result("Maxpool Forward", res, out)
+
+def test_avgpool(device):
+    def avgpool(a):
+        return nn.AdaptiveAvgPool2d((1, 1))(a)
+    torch.manual_seed(0)
+    input = torch.randn(1, 16, 64, 64).to(device=device) #FIXME: channel 8 does not work (range padding issue)
+    x1 = input.to(device=device)
+    x2 = input.to("cpu")
+    opt_fn = torch.compile()(avgpool)
+    res = opt_fn(x1)
+    out = avgpool(x2)
+    test_result("Avgpool Forward", res, out)
 
 if __name__ == "__main__":
     #from torch._dynamo.test_case import run_tests
