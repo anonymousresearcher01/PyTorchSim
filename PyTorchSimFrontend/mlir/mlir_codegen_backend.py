@@ -133,6 +133,7 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def to_dtype(x, dtype, src_dtype=None, tile_size=16):
+        raise NotImplementedError()
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
         src_mlir_dtype = mlir_common.DTYPE_TO_MLIR[src_dtype]
 
@@ -373,8 +374,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             chunk_size = self.tile_desc.get_tile_size()
         # Case 3. Tile is 2-D tile
         elif len(cv) == 2:
+            is_reduction = self.reduction_depth == 1
             if cv[0] != 0 and cv[1] != 0:
-                is_reduction = self.reduction_depth == 1
                 is_transposed = cv[0] < cv[1]
                 if is_transposed:
                     t_row = self.tile_desc.n_col
@@ -400,16 +401,21 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                     chunk_size = self.tile_desc.get_cols_per_lane()
             else:
                 # Broadcast pattern
-                chunk_size = self.tile_desc.get_cols_per_lane()
                 is_col_major = False
                 mm_stride = 0
-                if cv[1] == 0:
+                if is_reduction:
                     t_row = self.vector_lane
-                    t_col = self.tile_desc.get_cols_per_lane()
-                else: # cv[0] == 0
-                    raise NotImplementedError()
-                    t_row = self.vector_lane
-                    t_col = self.tile_desc.get_cols_per_lane()
+                    t_col = tile_size_per_lane
+                    chunk_size = self.tile_desc.get_rows_per_lane()
+                else:
+                    if cv[0] == 0:
+                        t_row = tile_size_per_lane
+                        t_col = self.vector_lane
+                        chunk_size = t_col // self.vector_lane
+                    else: # cv[1] == 0
+                        t_row = self.vector_lane
+                        t_col = tile_size_per_lane
+                        chunk_size = t_col
         elif len(cv) == 3:
             is_col_major = True # Actually it is not needed in vector case
             mm_stride = cv[-1]
