@@ -193,6 +193,24 @@ class MultiheadAttention(nn.Module):
     def forward(self, x):
         return multihead_attn(x, x, x)
 
+class DecoderBlock(nn.Module):
+    def __init__(self, embed_dim, num_heads):
+        super(DecoderBlock, self).__init__()
+        self.multihead_attn = my_MultiheadAttention(num_heads, embed_dim)
+        self.layer_norm = nn.LayerNorm(embed_dim)
+        self.ffn1 = nn.Linear(embed_dim, embed_dim*3)
+        self.act = nn.ReLU()
+        self.ffn2 = nn.Linear(embed_dim*3, embed_dim)
+
+    def forward(self, x):
+        result = self.multihead_attn(x, x, x)
+        result = self.layer_norm(result+x)
+
+        ffn1_result = self.ffn1(result)
+        act_result = self.act(ffn1_result)
+        ffn2_result = self.ffn2(act_result)
+        return self.layer_norm(ffn2_result + result)
+
 import math
 def clones(module, N):
     "Produce N identical layers."
@@ -253,7 +271,6 @@ class my_MultiheadAttention(nn.Module):
             print("Softmax CPU > ")
             print(p_attn)
         x = torch.matmul(p_attn, value)
-
         if query.device == torch.device("cpu"):
             print("Attention Result in CPU >")
             print("CPU X > ", x)
@@ -273,6 +290,7 @@ class my_MultiheadAttention(nn.Module):
         del key
         del value
         return self.linears[-1](x)
+
 class my_Decoder(nn.Module):
     def __init__(self):
         # custom transformer decoder
@@ -510,23 +528,39 @@ def test_Attention(device):
 
 def test_MultiAttention(device):
     torch.manual_seed(0)
-    query = torch.randn(16, 128).to(device=device)
-    key = torch.randn(16, 128).to(device=device)
-    value = torch.randn(16, 128).to(device=device)
+    cpu_query = torch.randn(16, 128)
+    cpu_key = torch.randn(16, 128)
+    cpu_value = torch.randn(16, 128)
 
-    print("Model Input Print >>>>>> ")
-    print("Query > ", query.cpu())
-    print("Key > ", key.cpu())
-    print("Value > ", value.cpu())
+    query = cpu_query.clone().to(device=device)
+    key = cpu_key.clone().to(device=device)
+    value = cpu_value.clone().to(device=device)
+
+    #print("Model Input Print >>>>>> ")
+    #print("Query > ", query.cpu())
+    #print("Key > ", key.cpu())
+    #print("Value > ", value.cpu())
 
     multihead_attn = my_MultiheadAttention(8, 128)
+    cpu_multihead_attn = multihead_attn.to("cpu")
+    cpu_res = cpu_multihead_attn(cpu_query, cpu_key, cpu_value)
     multihead_attn.to(device=device)
     opt_fn = torch.compile()(multihead_attn)
     res = opt_fn(query, key, value)
 
-    cpu_multihead_attn = multihead_attn.to("cpu")
-    cpu_res = cpu_multihead_attn(query.cpu(), key.cpu(), value.cpu())
     test_result("Multihead Attention Forward", res, cpu_res)
+
+def test_DecoderBlock(device):
+    cpu_query = torch.randn(16, 128)
+    decoder_block = DecoderBlock(128, 8)
+    cpu_res = decoder_block(cpu_query)
+
+    query = cpu_query.clone().to(device=device)
+    decoder_block.to(device=device)
+    opt_fn = torch.compile()(decoder_block)
+    res = opt_fn(query)
+
+    test_result("Decoder Block Forwrad", res, cpu_res)
 
 def test_BMM(device):
     def bmm(a, b):
@@ -689,6 +723,17 @@ def test_avgpool(device):
     out = avgpool(x2)
     test_result("Avgpool Forward", res, out)
 
+def test_view3D_2D(device):
+    def view3D_2D(a):
+        return a.view(16, 128).contiguous()
+    torch.manual_seed(0)
+    cpu_input = torch.randn(16, 8, 16)
+    input = cpu_input.clone().to(device=device)
+    opt_fn = torch.compile()(view3D_2D)
+    res = opt_fn(input)
+    out = view3D_2D(input)
+    test_result("view 3D->2D", res, out)
+
 if __name__ == "__main__":
     #from torch._dynamo.test_case import run_tests
     #from torch.testing._internal.inductor_utils import HAS_CPU
@@ -706,8 +751,10 @@ if __name__ == "__main__":
     test_Transpose3D_1(device, [64, 64, 64])
     test_Transpose3D_2(device, [64, 64, 64])
     test_Transpose3D_3(device, [64, 64, 64])
+    test_view3D_2D(device)
     test_maxpool(device)
     test_avgpool(device)
     test_softmax(device, (64, 128), dim=1)
     test_BatchNorm(device)
     test_CNN(device)
+    test_DecoderBlock(device)
