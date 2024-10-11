@@ -918,6 +918,7 @@ class MLIRScheduling(BaseScheduling):
         self.scheduler = scheduler
         self.get_kernel_group()
         self._ready_to_flush = False
+        self.outer_function = set()
 
     def _set_flush_status(self, status: bool):
         self._ready_to_flush = status
@@ -969,10 +970,11 @@ class MLIRScheduling(BaseScheduling):
         self._set_flush_status(False)
 
     def define_function(self, kernel):
-        code = kernel.def_function()
-        if code is not None:
+        code, function_name = kernel.def_function()
+        if code is not None and function_name not in self.outer_function:
             wrapper = V.graph.wrapper_code
             wrapper.header.writeline(code)
+            self.outer_function.add(function_name)
 
     def define_kernel(self, src_code, kernel_name, vector_lane, tile_size, spad_info):
         wrapper = V.graph.wrapper_code

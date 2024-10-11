@@ -147,7 +147,10 @@ class MLIRConvTemplate(MLIRTemplate):
         self.padding = kwargs["padding"]
         self.dilation = kwargs["dilation"]
         weight_shape = [str(i) for i in input_nodes[1].layout.size]
-        self.function_name = "Conv2D_" + "_".join(weight_shape)
+        self.function_name = "Conv2D_" + "_".join(weight_shape)+ "_" \
+            + "_".join([str(i) for i in self.stride]) \
+            + "_" + "_".join([str(i) for i in self.padding]) \
+            + "_" + "_".join([str(i) for i in self.dilation])
         self.gemm_args = ['input', 'weight', 'bias', 'output']
 
         self.calculate_gemm_shape()
@@ -249,7 +252,7 @@ class MLIRConvTemplate(MLIRTemplate):
             HASH_VALUE=self.hash_value
         )
         code = self._template_from_string(CONV2D_FUNC_TEMPLATE).render(**options)
-        return code
+        return code, self.function_name
 
     def get_arg_attributes(self):
         arg_attributes = []
