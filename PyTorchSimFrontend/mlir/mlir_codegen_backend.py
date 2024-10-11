@@ -10,7 +10,7 @@ from typing import List
 from typing import Dict
 from collections import OrderedDict
 import torch
-from torch._inductor import dependencies
+from torch._inductor import dependencies, config
 from torch._inductor.codegen import cpp, wrapper, common
 from torch._inductor.scheduler import BaseScheduling
 from torch._inductor.virtualized import V, _ops as ops
@@ -920,6 +920,7 @@ class MLIRScheduling(BaseScheduling):
         self.get_kernel_group()
         self._ready_to_flush = False
         self.outer_function = set()
+        config.inplace_buffers = False # FIXME. inout kernel makes trouble.. So disabled it!
 
     def _set_flush_status(self, status: bool):
         self._ready_to_flush = status
@@ -946,8 +947,8 @@ class MLIRScheduling(BaseScheduling):
         ).group
         ex_kernel = self.target_kernel(self.kernel_group)
 
-        kernel_name = f"extension_kernel_{self.count}"
-        self.count += 1
+        kernel_name = f"extension_kernel_{MLIRScheduling.count}"
+        MLIRScheduling.count += 1
         src_code = ex_kernel.codegen_nodes(nodes, kernel_name)
         self.define_kernel(src_code, kernel_name, ex_kernel.vector_lane, ex_kernel.tile_desc.get_axis_and_tile_info(), ex_kernel.spad_info)
         ex_kernel.call_kernel(kernel_name)
