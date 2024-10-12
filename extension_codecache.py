@@ -297,7 +297,9 @@ class CustomAsyncCompile(AsyncCompile):
             onnx_path = os.path.join(result_path, "tile_graph.onnx")
             backend_path = os.path.join(TORCHSIM_DIR, "PyTorchSimBackend")
             backsim = BackendSimulator(backend_path, TORCHSIM_BACKEND_CONFIG)
-            backsim.simulation(onnx_path)
+            result_path = backsim.simulation(onnx_path)
+            result = BackendSimulator.get_result_from_file(result_path)
+            return result
 
         def dryrun_simulator(*args, **kwargs):
             key = future.result()
@@ -347,5 +349,7 @@ class CustomAsyncCompile(AsyncCompile):
             onnx_path = os.path.join(result_path, "tile_graph.onnx")
             backend_path = os.path.join(TORCHSIM_DIR, "PyTorchSimBackend")
             backsim = BackendSimulator(backend_path, TORCHSIM_BACKEND_CONFIG)
-            backsim.simulation(onnx_path)
+            result_path = backsim.simulation(onnx_path)
+            result = BackendSimulator.get_result_from_file(result_path)
+            return result
         return dummy_simulator

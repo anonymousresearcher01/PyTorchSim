@@ -128,8 +128,8 @@ class FunctionalSimulator():
         try:
             subprocess.check_call(run_cmd)
         except subprocess.CalledProcessError as e:
-            print("Command failed with exit code", e.returncode)
-            print("Error output:", e.output)
+            print("[SpikeSimulator] Command failed with exit code", e.returncode)
+            print("[SpikeSimulator] Error output:", e.output)
             assert(0)
 
         for (arg_name, arg_attribute), arg, path, original_arg in zip(arg_attributes, args, file_path, original_args):
@@ -150,8 +150,8 @@ class CycleSimulator():
             gem5_cmd = [self.GEM5_PATH, "-d", dir_path, self.GEM5_SCRIPT_PATH, "-c", target_binary, "-o", array_size]
             output = subprocess.check_output(gem5_cmd)
         except subprocess.CalledProcessError as e:
-            print("Command failed with exit code", e.returncode)
-            print("Error output:", e.output)
+            print("[Gem5Simulator] Command failed with exit code", e.returncode)
+            print("[Gem5Simulator] Error output:", e.output)
             assert(0)
 
         with open(f"{dir_path}/stats.txt", "r") as stat_file:
@@ -182,21 +182,20 @@ class BackendSimulator():
         try:
             result = subprocess.check_output(shlex.split(cmd))
         except subprocess.CalledProcessError as e:
-            print("Command failed with exit code", e.returncode)
-            print("Error output:", e.output)
+            print("[BackendSimulator] Command failed with exit code", e.returncode)
+            print("[BackendSimulator] Error output:", e.output)
             assert(0)
 
-        result_path = os.getenv(self.BACKEND_RESULT_PATH_KEY)
-        if result_path is None:
-            print(result)
-            return
+        result_path = os.getenv(self.BACKEND_RESULT_PATH_KEY, os.path.join(os.path.dirname(model_path), "backendsim_result"))
 
         # Save result to result_path
         os.makedirs(result_path, exist_ok=True)
         file_name = str(len(os.listdir(result_path)))
-        with open(os.path.join(result_path, file_name), "w") as f:
+        result_path = os.path.join(result_path, file_name)
+        with open(result_path, "w") as f:
             f.write(result.decode())
-            print(f'[BackendSimulator] Simulation of "{model_path}" is stored to "{os.path.join(result_path, file_name)}"')
+            print(f'[BackendSimulator] Simulation of "{model_path}" is stored to "{result_path}"')
+        return result_path
 
     def interactive_simulation(self):
         cmd = f"{self.get_backend_command()} --mode interactive"
@@ -208,7 +207,7 @@ class BackendSimulator():
                 universal_newlines=True
             )
         else:
-            print("Simulator is already running.")
+            print("[BackendSimulator] Simulator is already running.")
 
     def stop(self):
         if self.process:
