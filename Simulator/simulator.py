@@ -188,6 +188,7 @@ class BackendSimulator():
                 tail = "." * i + " " * (3-i)
                 sys.stdout.write("\r[BackendSimulator] Simulation is still running." + tail)
                 time.sleep(1)
+            print("\n")
 
         # Create progress thread
         finished = False
