@@ -11,6 +11,7 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
     def write_header(self):
         super().write_header()
         self.writeline(f"#include \"global_var.h\"")
+        self.generate_args_define()
 
     def is_in_arg(self, value):
         return MLIRKernelArgs.is_mlir_arg_in(value)
@@ -48,17 +49,15 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
 
     def generate_args_define(self):
         name_set = set()
-        for arg_name, (_, arg_type, _) in self.arg_attributes:
-            idx = self.get_argv_idx()
+        for arg_name, (_, arg_type, arg_size) in self.arg_attributes:
             if not arg_name in name_set:
-                self.writeline(f'{DTYPE_TO_C[arg_type]} {arg_name}[atoi(argv[{idx}])] __attribute__ ((aligned (4096))){self.ending}')
+                self.writeline(f'{DTYPE_TO_C[arg_type]} {arg_name}[{arg_size}]{self.ending}')
                 name_set.add(arg_name)
         self.writeline(self.newline)
 
     def generate_main(self):
         self.writeline(f'{self.newline}int main(int argc, char *argv[]) {self.open_bracket}{self.newline}')
         with self.code.indent():
-            self.generate_args_define()
             if self.validation:
                 self.load_arg()
                 self.writeline(self.newline)

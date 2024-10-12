@@ -114,8 +114,7 @@ class FunctionalSimulator():
                     if attr[0] == 2:
                         os.makedirs(os.path.join(dump_path, name), exist_ok=True)
 
-        array_size, file_path = self.dump_args(args, arg_attributes, load_path, dump_path)
-        array_size_str = ' '.join(map(str, array_size))
+        _, file_path = self.dump_args(args, arg_attributes, load_path, dump_path)
         file_path_str = ' '.join(file_path)
 
         # Set hardware information
@@ -124,7 +123,7 @@ class FunctionalSimulator():
             f"--scratchpad-size={spad_info['spad_size']}"
         vectorlane_option = f"--vectorlane-size={vectorlane_size}"
         kernel_address = f"--kernel-addr={kernel_start_addr}:{kernel_end_addr}"
-        run = f'spike --isa rv64gcv {vectorlane_option} {spad_option} {kernel_address} /workspace/riscv-pk/build/pk {target_binary} {array_size_str} {file_path_str}'
+        run = f'spike --isa rv64gcv {vectorlane_option} {spad_option} {kernel_address} /workspace/riscv-pk/build/pk {target_binary} {file_path_str}'
 
         print("Spike cmd > ", run)
         run_cmd = shlex.split(run)
@@ -150,7 +149,7 @@ class CycleSimulator():
     def compile_and_simulate(self, target_binary, array_size):
         dir_path = os.path.join(os.path.dirname(target_binary), "m5out")
         try:
-            gem5_cmd = [self.GEM5_PATH, "-d", dir_path, self.GEM5_SCRIPT_PATH, "-c", target_binary, "-o", array_size]
+            gem5_cmd = [self.GEM5_PATH, "-d", dir_path, self.GEM5_SCRIPT_PATH, "-c", target_binary]
             output = subprocess.check_output(gem5_cmd)
         except subprocess.CalledProcessError as e:
             print("[Gem5Simulator] Command failed with exit code", e.returncode)

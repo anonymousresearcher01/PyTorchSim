@@ -118,7 +118,6 @@ class LLVMKernelCallerCodeGen():
     def generate_main(self):
         self.writeline(f'{self.newline}int main(int argc, char *argv[]) {self.open_bracket}{self.newline}')
         with self.code.indent():
-            self.generate_args_define()
             if self.validation:
                 self.load_arg()
                 self.writeline(self.newline)
