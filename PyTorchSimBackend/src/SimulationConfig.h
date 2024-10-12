@@ -46,4 +46,8 @@ struct SimulationConfig {
   uint64_t align_address(uint64_t addr) {
     return addr - (addr % dram_req_size);
   }
+
+  float max_dram_bandwidth() {
+    return dram_freq * dram_channels * dram_req_size / 1000; // GB/s
+  }
 };
