@@ -10,7 +10,7 @@ from torch._inductor.codecache import write_atomic
 import extension_codecache
 
 # This template only represents the DMA operations
-TEMPLATE = r"""#map0 = affine_map<(d0, d1, d2, d3) -> (d0 * {{ C * H * W }} + d1 * {{ H * W }} + d2 * {{ W }} + d3)>
+TEMPLATE = r"""#map0 = affine_map<(d0, d1) -> (d0 * {{ W }} + d1)>
 memref.global @X_spad : memref<{{ in_tile }}x{{ in_tile }}xf32, 1>
 memref.global @Y_spad : memref<{{ out_tile }}x{{ out_tile }}xf32, 1>
 
@@ -18,24 +18,18 @@ func.func @{{ KERNEL_NAME }} {{kernel.def_kernel(inputs=[X], outputs=[Y], names_
   %c_mvin = arith.constant 2 : index
   %c_mvout = arith.constant 3 : index
   %dummy = arith.constant 2 : index
-  %B = arith.constant {{ B }} : index
-  %C = arith.constant {{ C }} : index
-  %H = arith.constant {{ H }} : index
+  %BCH = arith.constant {{ BCH }} : index
   %W = arith.constant {{ W }} : index
   %in_chunk = arith.constant {{ in_tile * 2}} : index
   %out_chunk = arith.constant {{ out_tile * 2}} : index
   %X_buffer = memref.get_global @X_spad : memref<{{ in_tile }}x{{ in_tile }}xf32, 1>
   %Y_buffer = memref.get_global @Y_spad : memref<{{ out_tile }}x{{ out_tile }}xf32, 1>
   %tag = memref.alloc() : memref<1xi32>
-  affine.for %b = 0 to %B {
-    affine.for %c = 0 to %C {
-      affine.for %h = 0 to %H step {{ out_tile }} {
-        affine.for %w = 0 to %W step {{ out_tile }} {
-          %index0 = affine.apply #map0(%b, %c, %h, %w)
-          affine.dma_start %X[%index0], %X_buffer[0, 0], %tag[0], %c_mvin, %dummy, %in_chunk : memref<{{ IN }}xf32>, memref<{{ in_tile }}x{{ in_tile }}xf32, 1>, memref<1xi32>
-          affine.dma_start %Y_buffer[0, 0], %Y[%index0], %tag[0], %c_mvout, %dummy, %out_chunk : memref<{{ out_tile }}x{{ out_tile }}xf32, 1>, memref<{{ OUT }}xf32>, memref<1xi32>
-        } { outer_loop=true }
-      } { outer_loop=true }
+  affine.for %i = 0 to %BCH step {{ out_tile }} {
+    affine.for %j = 0 to %W step {{ out_tile }} {
+      %index0 = affine.apply #map0(%i, %j)
+      affine.dma_start %X[%index0], %X_buffer[0, 0], %tag[0], %c_mvin, %dummy, %in_chunk : memref<{{ IN }}xf32>, memref<{{ in_tile }}x{{ in_tile }}xf32, 1>, memref<1xi32>
+      affine.dma_start %Y_buffer[0, 0], %Y[%index0], %tag[0], %c_mvout, %dummy, %out_chunk : memref<{{ out_tile }}x{{ out_tile }}xf32, 1>, memref<{{ OUT }}xf32>, memref<1xi32>
     } { outer_loop=true }
   } { outer_loop=true }
   return
@@ -64,6 +58,11 @@ class MLIRMaxPoolTemplate(MLIRTemplate):
         Y = self.output_node
         out_tile = kernel.vector_lane
         in_tile = self.stride[0] * (out_tile - 1) + self.dilation[0] * (self.kernel_size[0] - 1) + 1 # padding should be considered? - 2 * self.padding
+        B = Y.get_size()[0]
+        C = Y.get_size()[1]
+        H = Y.get_size()[2]
+        W = Y.get_size()[3]
+        BCH = B * C * H
         options = {
           "KERNEL_NAME" : self.name,
           "kernel" : kernel,
@@ -71,10 +70,8 @@ class MLIRMaxPoolTemplate(MLIRTemplate):
           "OUT" : Y.get_numel(),
           "X" : X,
           "Y" : Y,
-          "B" : Y.get_size()[0],
-          "C" : Y.get_size()[1],
-          "H" : Y.get_size()[2],
-          "W" : Y.get_size()[3],
+          "BCH" : BCH,
+          "W" : W,
           "in_tile" : in_tile,
           "out_tile" : out_tile,
         }
