@@ -2,6 +2,7 @@ import os
 import torch
 from torch._inductor.codegen import common
 from torch._inductor.virtualized import V
+from torch._inductor.ir import MultiOutputLayout
 import sympy
 import contextlib
 
@@ -118,15 +119,16 @@ class MLIRKernelArgs(common.KernelArgs):
     def mlir_argdefs(self, extra_node=dict()):
         buffer_types = {}
         for x in V.graph.buffers:
-            origin_x_size = x.get_size()
-            if hasattr(x, "data"):
-                origin_x_data_size = x.data.get_size()
-            if self.tile_row is not None and self.tile_row > 1:
-                self.pad_args(x)
-            buffer_types[x.get_name()] = [x.get_dtype(), x.get_numel()]
-            x.layout.size = origin_x_size
-            if hasattr(x, "data") and hasattr(x.data, "layout"):
-                x.data.layout.size = origin_x_data_size
+            if not isinstance(x.layout, MultiOutputLayout):
+                origin_x_size = x.get_size()
+                if hasattr(x, "data"):
+                    origin_x_data_size = x.data.get_size()
+                if self.tile_row is not None and self.tile_row > 1:
+                    self.pad_args(x)
+                buffer_types[x.get_name()] = [x.get_dtype(), x.get_numel()]
+                x.layout.size = origin_x_size
+                if hasattr(x, "data") and hasattr(x.data, "layout"):
+                    x.data.layout.size = origin_x_data_size
         for name, val in V.graph.graph_inputs.items():
             origin_val_size = val.get_size()
             if hasattr(val, "data"):
