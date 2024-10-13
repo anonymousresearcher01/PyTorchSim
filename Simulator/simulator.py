@@ -126,7 +126,7 @@ class FunctionalSimulator():
         kernel_address = f"--kernel-addr={kernel_start_addr}:{kernel_end_addr}"
         run = f'spike --isa rv64gcv {vectorlane_option} {spad_option} {kernel_address} /workspace/riscv-pk/build/pk {target_binary} {file_path_str}'
 
-        print("Spike cmd > ", run)
+        print("[SpikeSimulator] cmd> ", run)
         run_cmd = shlex.split(run)
         try:
             subprocess.check_call(run_cmd)
@@ -148,13 +148,30 @@ class CycleSimulator():
         pass
 
     def compile_and_simulate(self, target_binary, array_size):
+        def show_progress():
+            i = 0
+            while not finished:
+                i = (i + 1) % 3
+                tail = "." * i + " " * (3-i)
+                sys.stdout.write("\r[Gem5Simulator] Simulation is still running." + tail)
+                time.sleep(1)
+            print("")
+        # Create progress thread
+        finished = False
+        progress_thread = threading.Thread(target=show_progress)
+        progress_thread.start()
+
         dir_path = os.path.join(os.path.dirname(target_binary), "m5out")
         try:
             gem5_cmd = [self.GEM5_PATH, "-d", dir_path, self.GEM5_SCRIPT_PATH, "-c", target_binary]
-            output = subprocess.check_output(gem5_cmd)
+            output = subprocess.check_output(gem5_cmd, stderr=subprocess.DEVNULL)
+            finished = True
+            progress_thread.join()
         except subprocess.CalledProcessError as e:
             print("[Gem5Simulator] Command failed with exit code", e.returncode)
             print("[Gem5Simulator] Error output:", e.output)
+            finished = True
+            progress_thread.join()
             assert(0)
 
         with open(f"{dir_path}/stats.txt", "r") as stat_file:
@@ -189,11 +206,11 @@ class BackendSimulator():
                 tail = "." * i + " " * (3-i)
                 sys.stdout.write("\r[BackendSimulator] Simulation is still running." + tail)
                 time.sleep(1)
-            print("\n")
+            print("")
         cmd = f"{self.get_backend_command()} --models_list {model_path}"
         if attribute_path:
             cmd = f"{cmd} --attributes_list {attribute_path}"
-        print("Backendsim cmd > ", cmd)
+        print("[BackendSimulator] cmd> ", cmd)
 
         # Create progress thread
         finished = False
