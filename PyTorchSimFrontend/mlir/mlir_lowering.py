@@ -139,8 +139,7 @@ def custom_maxpool(
     }
     layout = maxpool_layout(x, kernel_size, stride, padding, dilation, ceil_mode)
     mlir_template = MLIRMaxPoolTemplate([x], layout, **kwargs)
-    dummy_output = ir.ir_node_to_tensor(x, guard_shape=True)
-    return mlir_template.generate().output_node(), dummy_output
+    return mlir_template.generate().output_node(), x # FIXME: x is dummy IRNode, indices are not used in our case
 
 lowerings.update({getattr(aten.mm, overload): tuned_mm for overload in aten.mm.overloads()})
 lowerings.update({getattr(aten.addmm, overload): tuned_addmm for overload in aten.addmm.overloads()})

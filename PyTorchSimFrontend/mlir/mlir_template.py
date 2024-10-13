@@ -99,6 +99,8 @@ class MLIRTemplateKernel(Kernel, BaseMLIRHardwareInfo):
         _, call_args, _ = self.args.python_argdefs()
         if self.outer_func_render is not None:
             return self.outer_func_render(input_args=call_args)
+        else:
+            return None, None
 
 class MLIRTemplateCaller(CUDATemplateCaller):
     def __str__(self):
@@ -122,7 +124,7 @@ class MLIRTemplate(KernelTemplate):
 
         """
         super().__init__(name)
-        self.input_nodes = input_nodes
+        self.input_nodes = [node for node in input_nodes if node is not None]
         self.output_node: Buffer = Buffer("buf_out", layout)
         self.input_reorder = input_reorder
         self.layout = layout
@@ -150,13 +152,14 @@ class MLIRTemplate(KernelTemplate):
         def make_kernel_render(
             template_node: TemplateBuffer,
             epilogue_nodes: Optional[List[IRNode]] = None,
+            kernel_name: str = kernel_hash_name,
         ):
             kernel = MLIRTemplateKernel(
-                kernel_name=kernel_hash_name,
+                kernel_name=kernel_name,
                 outer_func_name=self.function_name if hasattr(self, 'function_name') else None,
                 outer_func_render=functools.partial(
                     self.outer_func_render,
-                    kernel_name=kernel_hash_name
+                    kernel_name=kernel_name
                 ) if hasattr(self, 'outer_func_render') else None,
                 kernel_arg_attributes=self.get_arg_attributes() if hasattr(self, 'get_arg_attributes') else None
             )

@@ -734,6 +734,31 @@ def test_view3D_2D(device):
     out = view3D_2D(input)
     test_result("view 3D->2D", res, out)
 
+def test_moe(device):
+    from moe import MoE
+    model = MoE(input_size=1000, output_size=20, num_experts=10, hidden_size=66, k= 4, noisy_gating=True)
+    X = torch.rand(32, 1000)
+    x1 = X.to(device=device)
+    x2 = X.to("cpu")
+    model.eval()
+    cpu_model = copy.deepcopy(model).to("cpu")
+    model = model.to(device=device)
+    opt_model = torch.compile(model)
+    y_hat, aux_loss = opt_model(x1)
+    cpu_hat, cpu_aux_loss = cpu_model(x2)
+    test_result("MoE Forward", y_hat, cpu_hat)
+    test_result("MoE Aux Loss", aux_loss, cpu_aux_loss)
+
+def test_resnet(device):
+    from torchvision.models import resnet18
+    model = resnet18().eval()
+    model.to(device)
+    input = torch.randn(1, 3, 224, 224).to(device=device)
+    x1 = input.to(device=device)
+    opt_fn = torch.compile()(model)
+    res = opt_fn(x1)
+    print("ResNet18 Simulation Done")
+
 if __name__ == "__main__":
     #from torch._dynamo.test_case import run_tests
     #from torch.testing._internal.inductor_utils import HAS_CPU
@@ -759,3 +784,5 @@ if __name__ == "__main__":
     test_matmul(device)
     test_CNN(device)
     test_DecoderBlock(device)
+    test_resnet(device)
+    test_mlp(device)

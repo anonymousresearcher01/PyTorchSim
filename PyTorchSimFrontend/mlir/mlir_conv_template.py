@@ -84,10 +84,10 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
 
 
 CONV2D_FUNC_TEMPLATE = r"""
-def {{ FUNC_NAME }}({{ INPUT }}, {{ WEIGHT }}, {{ BIAS }}, {{ OUT }}):
+def {{ FUNC_NAME }}({{ INPUT }}, {{ WEIGHT }}{% if BIAS %}, {{ BIAS }}{% endif %}, {{ OUT }}):
     {{ INPUT }}_cpu = {{ INPUT }}.cpu()
-    {{ WEIGHT }}_cpu = {{ WEIGHT }}.cpu()
-    {{ BIAS }}_cpu = {{ BIAS }}.cpu()
+    {{ WEIGHT }}_cpu = {{ WEIGHT }}.cpu(){% if BIAS %}
+    {{ BIAS }}_cpu = {{ BIAS }}.cpu(){% endif %}
     {{ OUT }}_cpu = {{ OUT }}.cpu()
 
     # Torch support NCHW, so we need to transpose for now
@@ -271,8 +271,8 @@ class MLIRConvTemplate(MLIRTemplate):
             FUNC_NAME=self.function_name,
             INPUT=input_args[0],
             WEIGHT=input_args[1],
-            BIAS=input_args[2],
-            OUT=input_args[3],
+            BIAS=input_args[2] if len(input_args) == 4 else None,
+            OUT=input_args[3] if len(input_args) == 4 else input_args[2],
             PADDING_H=self.padding[0],
             PADDING_W=self.padding[1],
             STRIDE_H=self.stride[0],

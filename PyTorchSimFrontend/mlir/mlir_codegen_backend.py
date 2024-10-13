@@ -1038,15 +1038,24 @@ class MLIRScheduling(BaseScheduling):
             wrapper.define_kernel(kernel_name, codecache_def.getvalue(), cuda=False)
         return kernel_name
 
+    def codegen_src_code(self, kernel, render, template_node, epilogue_nodes):
+        with kernel:
+            for node in [template_node, *epilogue_nodes]:
+                node.mark_run()
+            src_code = render()
+        return src_code
+
     def codegen_template(self, template_node, epilogue_nodes):
         _, (numel, rnumel) = template_node.group
 
         template_buffer = template_node.node
         kernel, render = template_buffer.make_kernel_render(template_buffer, epilogue_nodes=epilogue_nodes)
-        with kernel:
-            for node in [template_node, *epilogue_nodes]:
-                node.mark_run()
-            src_code = render()
+        src_code = self.codegen_src_code(kernel, render, template_node, epilogue_nodes)
+        wrapper = V.graph.wrapper_code
+        if src_code in wrapper.src_to_kernel: # [CONV] check inner function is already defined
+            kernel_name = wrapper.src_to_kernel[src_code]
+            kernel, render = template_buffer.make_kernel_render(template_buffer, epilogue_nodes=epilogue_nodes, kernel_name=kernel_name) # update kernel name
+            src_code = self.codegen_src_code(kernel, render, template_node, epilogue_nodes)
 
         with V.set_kernel_handler(kernel):
             node_schedule = [template_node, *epilogue_nodes]
