@@ -47,8 +47,9 @@ class Instruction {
     auto get_tile_address = [this](size_t i, size_t j) -> addr_type {
       return dram_addr + (i * tile_stride[0] + j) * _precision;
     };
-    if (_idx_list.size() == 2) {
-      return get_tile_address(_idx_list.at(0) + row, _idx_list.at(1) + col);
+    if (_idx_list.size() >= 2) { //FXXKME. ;) 
+      int len = _idx_list.size();
+      return get_tile_address(_idx_list.at(len-2) + row, _idx_list.at(len-1) + col);
     } else if (_idx_list.size() == 1) {
       return get_tile_address(row, _idx_list.at(0) + col);
     } else {
