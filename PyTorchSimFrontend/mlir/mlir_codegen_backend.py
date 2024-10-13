@@ -561,7 +561,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dram_tile_shape = f"{tile_shape[0]}x{tile_shape[1]}"
 
         # Define scratch pad buffer
-        buffer = self.get_scratchpad_buffer(dtype, name, self.tile_desc.n_row, self.tile_desc.n_col, dram_tile_shape, self.loads)
+        buffer, indices = self.get_scratchpad_buffer(dtype, name, self.tile_desc.n_row, self.tile_desc.n_col, dram_tile_shape, self.loads, indices)
         # MVIN Encoding
         dma_key = (stride, chunk, dtype)
         if dma_key in self.dma_cache:
@@ -596,7 +596,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dram_tile_shape = f"{tile_shape[0]}x{tile_shape[1]}"
 
         # Define scratch pad buffer
-        buffer = self.get_scratchpad_buffer(dtype, name, self.tile_desc.n_row, self.tile_desc.n_col, dram_tile_shape, self.stores)
+        buffer, indices = self.get_scratchpad_buffer(dtype, name, self.tile_desc.n_row, self.tile_desc.n_col, dram_tile_shape, self.stores, indices)
 
         # MVOUT Encoding
         dmaType = 3 # MVIN 2, MVIN2 1, MVIN3 14, MVOUT 3
@@ -691,7 +691,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         tile_col = self.tile_desc.n_row
         tile_row = 1
         dram_tile_shape = f"{tile_row}x{tile_col}"
-        buffer = self.get_scratchpad_buffer(dtype, name, tile_row, tile_col, dram_tile_shape, self.reductions_suffix)
+        buffer, indices = self.get_scratchpad_buffer(dtype, name, tile_row, tile_col, dram_tile_shape, self.reductions_suffix, indices)
         if self.welford_reduce_out is not None:
             # raise NotImplementedError()
             sum, sqr_sum, _ = self.welford_reduce_out
@@ -893,7 +893,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             self.itervars[self.reduction_depth :],
         )
 
-    def get_scratchpad_buffer(self, dtype, name, tile_row, tile_col, dram_tile_shape, code_buffer):
+    def get_scratchpad_buffer(self, dtype, name, tile_row, tile_col, dram_tile_shape, code_buffer, indices):
         c_type = mlir_common.DTYPE_TO_C[dtype]
         mlir_type = mlir_common.DTYPE_TO_MLIR[dtype]
         if dtype == torch.bool:
@@ -905,7 +905,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             self.global_vars_set.add(name)
             self.global_vars.writeline(f"memref.global @{name}_spad : memref<{dram_tile_shape}x{mlir_type}, 1>")
         buffer = self.cse.generate(code_buffer, f"memref.get_global @{name}_spad : memref<{dram_tile_shape}x{mlir_type}, 1>")
-        return buffer
+        return buffer, indices
 
 @dataclasses.dataclass
 class LoopLevel:
