@@ -249,6 +249,7 @@ class MLIRTile():
         self.n_row = n_row
         self.n_col = n_col
         self.vector_lane = vector_lane
+        self.vector_lane_axis = self.get_cols_per_lane() > 0 #(0: Row major, 1: Column major)
 
     def get_tile_size(self):
         return self.n_row * self.n_col
@@ -401,24 +402,22 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                     chunk_size = self.tile_desc.get_tile_size() // self.vector_lane
                 else:
                     is_col_major = False
-                    chunk_size = self.tile_desc.get_cols_per_lane()
+                    chunk_size = self.tile_desc.get_cols_per_lane() if self.tile_desc.vector_lane_axis else self.tile_desc.get_tile_size_per_lane()
             else:
                 # Broadcast pattern
                 is_col_major = False
                 mm_stride = 0
-                if is_reduction:
-                    t_row = self.vector_lane
-                    t_col = tile_size_per_lane
+                if cv[0][0] == 0:
+                    t_row = self.tile_desc.n_row
+                    t_col = self.tile_desc.n_col
+                    chunk_size = self.tile_desc.get_cols_per_lane() if self.tile_desc.vector_lane_axis else self.tile_desc.get_tile_size_per_lane()
+                else: # cv[1][0] == 0
+                    t_row = self.tile_desc.n_col
+                    t_col = self.tile_desc.n_row
                     chunk_size = self.tile_desc.get_rows_per_lane()
-                else:
-                    if cv[0][0] == 0:
-                        t_row = tile_size_per_lane
-                        t_col = self.vector_lane
-                        chunk_size = t_col // self.vector_lane
-                    else: # cv[1] == 0
-                        t_row = self.vector_lane
-                        t_col = tile_size_per_lane
-                        chunk_size = t_col
+                    if not is_reduction:
+                        is_col_major = True
+                        chunk_size = t_col if self.tile_desc.vector_lane_axis else chunk_size
         elif len(cv) == 3:
             is_col_major = True # Actually it is not needed in vector case
             mm_stride = cv[-1][0]
@@ -591,7 +590,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             reduced_shape = type_name
             init = self.cse.generate(self.reduction_prefix, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
             if len(self.ranges) == 2:
-                vec_len = self.tile_desc.n_row // self.tile_desc.get_rows_per_lane()
+                vec_len = self.tile_desc.get_rows_per_lane()
                 flattened_size = f"vector<{self.tile_desc.get_tile_size_per_lane()}x{type_name}>"
 
                 # It is column majored per lane tile
@@ -779,7 +778,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             read_writes = list(self.read_writes.reads) + list(self.read_writes.writes)
             cv_list = []
             for node in read_writes:
-                cv_list.append(self.get_constant_vector2(node[1]))
+                if len(node) > 1:
+                    cv_list.append(self.get_constant_vector2(node[1]))
             max_element = max(cv_list, key=len)
             max_nr_dim = len(max_element)
 
