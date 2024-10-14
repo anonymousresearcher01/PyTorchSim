@@ -46,14 +46,14 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
 
   %v0 = arith.constant dense<0.0> : vector<{{ TILE_N }}xf32>
 
-  affine.for %t_m = 0 to %M step {{ TILE_M }} {
-    affine.for %t_n = 0 to %N step {{ TILE_N }} {
+  affine.for %t_m = 0 to {{ M }} step {{ TILE_M }} {
+    affine.for %t_n = 0 to {{ N }} step {{ TILE_N }} {
         affine.for %i = 0 to {{ TILE_M }} {
             affine.vector_store %v0, %Y_buffer[%i, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_N }}xf32>
         }
         %index2 = affine.apply #map1(%t_m, %t_n)
         affine.dma_start %B[%index2], %B_buffer[0, 0], %tag[0], %c_mvin3, %N, %c_set : memref<{{ M * N }}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
-        affine.for %t_k = 0 to %K step {{ TILE_K }} {
+        affine.for %t_k = 0 to {{ K }} step {{ TILE_K }} {
             %index0 = affine.apply #map0(%t_m, %t_k)
             %index1 = affine.apply #map1(%t_k, %t_n)
             affine.dma_start %X[%index0], %X_buffer[0, 0], %tag[0], %c_mvin, %K, %c_set : memref<{{ M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32>
@@ -180,18 +180,6 @@ class MLIRConvTemplate(MLIRTemplate):
         output_size = self.gemm_output_shape[0]*self.gemm_output_shape[1]
         return f"%X: memref<{input_size}xf32>, %W: memref<{weight_size}xf32>, %B: memref<{output_size}xf32>, %Y: memref<{output_size}xf32>"
 
-    def pad(self, X, W, Y, Bias, TILE_M=16, TILE_N=16, TILE_K=16):
-        X.layout.size[1] = ((X.get_size()[1] + TILE_K - 1) // TILE_K) * TILE_K
-        X.data.layout.size[1] = ((X.data.get_size()[1] + TILE_K - 1) // TILE_K) * TILE_K
-        W.layout.size[0] = ((W.get_size()[0] + TILE_N - 1) // TILE_N) * TILE_N
-        W.data.layout.size[0] = ((W.data.get_size()[0] + TILE_N - 1) // TILE_N) * TILE_N
-        W.layout.size[1] = ((W.get_size()[1] + TILE_K - 1) // TILE_K) * TILE_K
-        W.data.layout.size[1] = ((W.data.get_size()[1] + TILE_K - 1) // TILE_K) * TILE_K
-        Y.layout.size[1] = ((Y.get_size()[1] + TILE_N - 1) // TILE_N) * TILE_N
-        if Bias is not None:
-          Bias.layout.size[-1] = ((Bias.get_size()[-1] + TILE_N - 1) // TILE_N) * TILE_N
-          Bias.data.layout.size[-1] = ((Bias.data.get_size()[-1] + TILE_N - 1) // TILE_N) * TILE_N
-
     def render(self,
                kernel: MLIRTemplateKernel,
                template_buffer_node = None,
@@ -214,17 +202,6 @@ class MLIRConvTemplate(MLIRTemplate):
 
         W_transposed = self.is_transposed(W)
         X_transposed = self.is_transposed(X)
-
-         # save the original size
-        origin_x_size = X.get_size()
-        origin_x_data_size = X.data.get_size()
-        origin_w_size = W.get_size()
-        origin_w_data_size = W.data.get_size()
-        origin_y_size = Y.get_size()
-        if Bias is not None:
-          origin_bias_size = Bias.get_size()
-          origin_bias_data_size = Bias.data.get_size()
-        self.pad(X, W, Y, Bias, TILE_M, TILE_N, TILE_K)
 
         options = dict(
             KERNEL_NAME=self.name,
@@ -253,15 +230,6 @@ class MLIRConvTemplate(MLIRTemplate):
         kernel.add_loop_info([options["M"], options["N"], options["K"]], [options["TILE_M"], options["TILE_N"], options["TILE_K"]])
         kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y], names_str="X, W, Bias, Y", input_reorder=self.input_reorder)
 
-        # restore the original size
-        X.layout.size = origin_x_size
-        X.data.layout.size = origin_x_data_size
-        W.layout.size = origin_w_size
-        W.data.layout.size = origin_w_data_size
-        Y.layout.size = origin_y_size
-        if Bias is not None:
-          Bias.layout.size = origin_bias_size
-          Bias.data.layout.size = origin_bias_data_size
         self.hash_value = get_hash(code.strip())
         return code
 
