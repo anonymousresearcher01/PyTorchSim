@@ -45,7 +45,7 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
         # memref to llvm arguments (memref -> ptr, ptr, i64, <?xi64>, <?xi64>) allocated pointer, aligned pointer, offset, size, stride
         args_type_p = [f'{DTYPE_TO_C[arg_type[1]]}*, {DTYPE_TO_C[arg_type[1]]}*, int64_t, int64_t, int64_t' for (_, arg_type) in self.arg_attributes]
 
-        self.writeline(f"void {self.kernel_name}({', '.join(args_type_p)}){self.ending}{self.newline}")
+        self.writeline(f"void wrapper_{self.kernel_name}({', '.join(args_type_p)}){self.ending}{self.newline}")
 
     def generate_args_define(self):
         name_set = set()
@@ -63,7 +63,7 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
                 self.writeline(self.newline)
 
             func_arguments = [f"{arg_name}, {arg_name}, 0, {arg_shape}, 1" if arg_type != torch.bool else f"{arg_name}, {arg_name}, 0, {(arg_shape + 7) // 8}, 1" for arg_name, (_, arg_type, arg_shape) in self.arg_attributes]
-            self.writeline(f"{self.kernel_name}({', '.join(func_arguments)}){self.ending}{self.newline}")
+            self.writeline(f"wrapper_{self.kernel_name}({', '.join(func_arguments)}){self.ending}{self.newline}")
 
             if self.validation:
                 self.dump_arg()
