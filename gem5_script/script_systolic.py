@@ -418,13 +418,13 @@ class L1ICache(L1Cache):
         self.cpu_side = cpu.icache_port
 
 valid_cpu = {
-    "X86AtomicSimpleCPU": X86AtomicSimpleCPU,
-    "X86TimingSimpleCPU": X86TimingSimpleCPU,
-    "X86DerivO3CPU": X86O3CPU,
-    "ArmAtomicSimpleCPU": ArmAtomicSimpleCPU,
-    "ArmTimingSimpleCPU": ArmTimingSimpleCPU,
-    "ArmMinorCPU": ArmMinorCPU,
-    "ArmDerivO3CPU": ArmO3CPU,
+#    "X86AtomicSimpleCPU": X86AtomicSimpleCPU,
+#    "X86TimingSimpleCPU": X86TimingSimpleCPU,
+#    "X86DerivO3CPU": X86O3CPU,
+#    "ArmAtomicSimpleCPU": ArmAtomicSimpleCPU,
+#    "ArmTimingSimpleCPU": ArmTimingSimpleCPU,
+#    "ArmMinorCPU": ArmMinorCPU,
+#    "ArmDerivO3CPU": ArmO3CPU,
     "RiscvAtomicSimpleCPU": RiscvAtomicSimpleCPU,
     "RiscvTimingSimpleCPU": RiscvTimingSimpleCPU,
     "RiscvMinorCPU": RiscvMinorCPU,
@@ -442,7 +442,7 @@ valid_mem = {"SimpleMemory": MySimpleMemory, "ScratchpadMemory": SpadMemory, "DD
 #parser = argparse.ArgumentParser()
 #parser.add_argument("binary", type=str)
 #parser.add_argument("--cpu", choices=valid_cpu.keys(), default="RiscvTimingSimpleCPU")
-parser.add_argument("--cpu", choices=valid_cpu.keys(), default="RiscvMinorCPU")
+parser.add_argument("--cpu", choices=valid_cpu.keys(), default="RiscvVPU")
 parser.add_argument("--mem", choices=valid_mem.keys(), default="ScratchpadMemory")
 parser.add_argument("--sparse", type=bool, default=False)
 parser.add_argument("--vlane", type=int, default=128)

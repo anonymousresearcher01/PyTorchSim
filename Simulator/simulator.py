@@ -125,7 +125,7 @@ class CycleSimulator():
     GEM5_PATH = os.environ.get('GEM5_PATH',
                            default = f"/workspace/gem5/build/RISCV/gem5.opt")
     GEM5_SCRIPT_PATH = os.environ.get('GEM5_SCRIPT_PATH',
-                                  default = f"{TORCHSIM_DIR}/gem5_script/script.py")
+                                  default = f"{TORCHSIM_DIR}/gem5_script/script_systolic.py")
     def __init__(self) -> None:
         pass
 
