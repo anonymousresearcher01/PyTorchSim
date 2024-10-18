@@ -510,10 +510,12 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if name in self.buffer_names:
             buffer = self.buffer_names[name]
         else:
+            mvin3 = 14
+            self.consts.add(mvin3)
             dram_tile_shape = f"{self.render_options['TILE_M']}x{self.render_options['TILE_N']}"
             buffer, indices = self.get_scratchpad_buffer(dtype, name, self.render_options['TILE_M'], self.render_options['TILE_N'], dram_tile_shape, self.loads, index)
             self.buffer_names[name] = buffer
-            line = f"affine.dma_start %{var}[%index2], %{buffer}[0, 0], %tag[0], %c_mvin3, %N, %c_set : memref<{self.buffer_types[name][1]}x{type_name}>, memref<{dram_tile_shape}x{type_name}, 1>, memref<1xi32>"
+            line = f"affine.dma_start %{var}[%index2], %{buffer}[0, 0], %tag[0], %c{mvin3}, %N, %c_set : memref<{self.buffer_types[name][1]}x{type_name}>, memref<{dram_tile_shape}x{type_name}, 1>, memref<1xi32>"
             self.cse.generate(self.loads, line, assignment = False)
 
         tile_size_per_lane = self.render_options['TILE_M'] * self.render_options['TILE_N'] // self.vector_lane
@@ -756,7 +758,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         def template_store(options):
             line = f"affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{options['TILE_M']}x{options['TILE_N']}xf32, 1>, memref<{options['M'] * options['N']}xf32>, memref<1xi32>" #FIXME: Using constant index and tag
             self.cse.generate(self.stores, line, assignment = False)
-
+        self.body.splice(self.codegen_init())
         self.body.splice(self.loads)
         self.body.splice(self.compute)
         if len(self.stores._lines) == 0:
@@ -1042,6 +1044,7 @@ class MLIRScheduling(BaseScheduling):
 
     def flush(self):
         self.kernel_group.codegen_define_and_call(V.graph.wrapper_code)
+        self.kernel_group = MLIRWrapperKenrelGroup()
         self._set_flush_status(False)
 
     def define_function(self, kernel):
@@ -1112,3 +1115,4 @@ class MLIRScheduling(BaseScheduling):
             V.graph.wrapper_code.writeline(
                 f"yield ({kernel_name}, ({args}))"
             )
+        self._set_flush_status(True)
