@@ -27,54 +27,25 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
   %c_mvout = arith.constant 3 : index
   %c_set = arith.constant 2 : index
 
-  %c{{ TILE_M }}_tm = arith.constant {{ TILE_M }} : index
-  %c{{ TILE_N }}_tn = arith.constant {{ TILE_N }} : index
-  %c{{ TILE_K }}_tk = arith.constant {{ TILE_K }} : index
-  %c{{ TILE_M * TILE_K }}_tmk = arith.constant {{ TILE_M * TILE_K }} : index
-  %c{{ TILE_K * TILE_N }}_tkn = arith.constant {{ TILE_K * TILE_N }} : index
-  %c{{ TILE_M * TILE_N }}_tmn = arith.constant {{ TILE_M * TILE_N }} : index
-
-  %M = arith.constant {{ M }} : index
   %N = arith.constant {{ N }} : index
   %K = arith.constant {{ K }} : index
   %X_buffer = memref.get_global @X_spad : memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>
   %W_buffer = memref.get_global @W_spad : memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>
-  %B_buffer = memref.get_global @B_spad : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>
   %Y_buffer = memref.get_global @Y_spad : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>
-  %tmp_buffer = memref.get_global @Y_spad : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>
   %tag = memref.alloc() : memref<1xi32>
-
-  %v0 = arith.constant dense<0.0> : vector<{{ TILE_N }}xf32>
 
   affine.for %t_m = 0 to {{ M }} step {{ TILE_M }} {
     affine.for %t_n = 0 to {{ N }} step {{ TILE_N }} {
-        affine.for %i = 0 to {{ TILE_M }} {
-            affine.vector_store %v0, %Y_buffer[%i, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_N }}xf32>
-        }
         %index2 = affine.apply #map1(%t_m, %t_n)
-        affine.dma_start %B[%index2], %B_buffer[0, 0], %tag[0], %c_mvin3, %N, %c_set : memref<{{ M * N }}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
+        affine.dma_start %B[%index2], %Y_buffer[0, 0], %tag[0], %c_mvin3, %N, %c_set : memref<{{ M * N }}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
         affine.for %t_k = 0 to {{ K }} step {{ TILE_K }} {
             %index0 = affine.apply #map0(%t_m, %t_k)
             %index1 = affine.apply #map1(%t_k, %t_n)
             affine.dma_start %X[%index0], %X_buffer[0, 0], %tag[0], %c_mvin, %K, %c_set : memref<{{ M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32>
             affine.dma_start %W[%index1], %W_buffer[0, 0], %tag[0], %c_mvin2, %N, %c_set : memref<{{ K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
-
-            // Matmul
             linalg.matmul ins(%X_buffer, %W_buffer : memref<{{ TILE_M }}x{{ TILE_K }}x{{ DATA_STYPE }}, 1>, memref<{{ TILE_K }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
                     outs(%Y_buffer : memref<{{ TILE_M }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
-            affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ M * N }}xf32>, memref<1xi32>
         } { accumulation_loop=true }
-
-        // Load matmul output
-        affine.dma_start %Y[%index2], %Y_buffer[0, 0], %tag[0], %c_mvin3, %N, %c_set : memref<{{ M * N }}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
-
-        // Accumulate
-        affine.for %r = 0 to {{ TILE_M }} {
-            %B_vec = affine.vector_load %B_buffer[%r, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_N }}xf32>
-            %Y_vec = affine.vector_load %Y_buffer[%r, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_N }}xf32>
-            %acc_vec = arith.addf %Y_vec, %B_vec : vector<{{ TILE_N }}xf32>
-            affine.vector_store %acc_vec, %Y_buffer[%r, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_N }}xf32>
-        }
         affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ M * N }}xf32>, memref<1xi32>
     } { outer_loop=true }
   } { outer_loop=true }
@@ -87,7 +58,7 @@ CONV2D_FUNC_TEMPLATE = r"""
 def {{ FUNC_NAME }}({{ INPUT }}, {{ WEIGHT }}{% if BIAS %}, {{ BIAS }}{% endif %}, {{ OUT }}):
     {{ INPUT }}_cpu = {{ INPUT }}.cpu()
     {{ WEIGHT }}_cpu = {{ WEIGHT }}.cpu(){% if BIAS %}
-    {{ BIAS }}_cpu = {{ BIAS }}.cpu(){% endif %}
+    {{ BIAS }}_cpu = {{ BIAS }}.cpu(){% endif %} #FIXME: BIAS is not used in the current implementation
     {{ OUT }}_cpu = {{ OUT }}.cpu()
 
     # Torch support NCHW, so we need to transpose for now
@@ -224,10 +195,10 @@ class MLIRConvTemplate(MLIRTemplate):
         self.header += f"float Y_spad[{TILE_M * TILE_N // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
         self.gem5_header = f"float X_spad[{TILE_M * TILE_K}] __attribute__ ((section(\".spad\")));\n"
         self.gem5_header += f"float W_spad[{TILE_K * TILE_N}] __attribute__ ((section(\".spad\")));\n"
-        self.gem5_header += f"float Y_spad[{TILE_M * TILE_N}] __attribute__ ((section(\".spad\"));\n"
+        self.gem5_header += f"float Y_spad[{TILE_M * TILE_N}] __attribute__ ((section(\".spad\")));\n"
         if Bias is not None:
             self.header += f"float B_spad[{TILE_M * TILE_N // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
-            self.gem5_header += f"float B_spad[{TILE_M * TILE_N}] __attribute__ ((section(\".spad\"));\n"
+            self.gem5_header += f"float B_spad[{TILE_M * TILE_N}] __attribute__ ((section(\".spad\")));\n"
 
         kernel.add_loop_info([options["M"], options["N"], options["K"]], [options["TILE_M"], options["TILE_N"], options["TILE_K"]])
         kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y], names_str="X, W, Bias, Y", input_reorder=self.input_reorder)

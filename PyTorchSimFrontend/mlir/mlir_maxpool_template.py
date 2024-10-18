@@ -74,13 +74,21 @@ class MLIRMaxPoolTemplate(MLIRTemplate):
           "out_tile" : out_tile,
         }
         code = self._template_from_string(TEMPLATE).render(**options)
+        self.header = f"float X_spad[{in_tile * in_tile // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
+        self.header += f"float Y_spad[{out_tile * out_tile // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
+        self.gem5_header = f"float X_spad[{in_tile * in_tile // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
+        self.gem5_header += f"float Y_spad[{out_tile * out_tile // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
+
+        kernel.add_loop_info([options["IN"]], [kernel.vector_lane, kernel.vector_lane])
+        return code
+
+    def codegen_header(self, code, extra_headers):
         write_path = extension_codecache.get_write_path(code)
         if not os.path.exists(write_path):
             os.makedirs(write_path)
-        write_path = os.path.join(write_path, "global_var.h")
-        header = f"float X_spad[{in_tile}][{in_tile}] __attribute__ ((section(\".spad\")));\n"
-        header += f"float Y_spad[{out_tile}][{out_tile}] __attribute__ ((section(\".spad\")));\n"
-        if not os.path.exists(write_path):
-            write_atomic(write_path, header)
-        kernel.add_loop_info([options["IN"]], [kernel.vector_lane, kernel.vector_lane])
-        return code
+        spike_write_path = os.path.join(write_path, "global_var.h")
+        gem5_write_path = os.path.join(write_path, "gem5_global_var.h")
+        if not os.path.exists(spike_write_path):
+            write_atomic(spike_write_path, self.header+extra_headers[0])
+        if not os.path.exists(gem5_write_path):
+            write_atomic(gem5_write_path, self.gem5_header+extra_headers[1])

@@ -34,8 +34,8 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
   %X_buffer = memref.get_global @X_spad : memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>
   %W_buffer = memref.get_global @W_spad : memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>
   %Y_buffer = memref.get_global @Y_spad : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>
-  %tag = memref.alloc() : memref<1xi32>
-  %v0 = arith.constant dense<0.0> : vector<{{ TILE_N }}xf32>
+  %tag = memref.alloc() : memref<1xi32>{% if not Bias %}
+  %v0 = arith.constant dense<0.0> : vector<{{ TILE_N }}xf32>{% endif %}
 
   affine.for %t_m = 0 to {{ M }} step {{ TILE_M }} {
     affine.for %t_n = 0 to {{ N }} step {{ TILE_N }} {
