@@ -79,10 +79,11 @@ class store_node(memory_node):
     pass
 
 class compute_node(node):
-    def __init__(self, inst_list=list(), cycle=0, compute_type=0, node_id=0):
+    def __init__(self, inst_list=list(), cycle=0, overlapping_cycle=0, compute_type=0, node_id=0):
         super().__init__(node_id)
         self.inst = inst_list
         self.torchsim_cycle = cycle
+        self.torchsim_overlapping_cycle = overlapping_cycle
         self.torchsim_compute_type = compute_type
 
 def connect_nodes(parent, child):

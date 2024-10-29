@@ -40,6 +40,8 @@ class Instruction {
   void dec_waiting_request();
   size_t get_waiting_request() { return _nr_waiting_request; }
   std::vector<size_t>& get_tile_size() { return tile_size; }
+  void set_overlapping_cycle(cycle_type cycle) { overlapping_cycle = cycle; }
+  cycle_type get_overlapping_cycle() { return overlapping_cycle; }
   cycle_type get_compute_cycle() { return compute_cycle; }
   void print();
   // lamda function to get the dram address
@@ -73,6 +75,7 @@ class Instruction {
   void *_owner;
   Opcode opcode;
   cycle_type compute_cycle;
+  cycle_type overlapping_cycle;
   size_t ready_counter;
   std::set<std::shared_ptr<Instruction>> child_inst;
   std::vector<size_t> tile_size;

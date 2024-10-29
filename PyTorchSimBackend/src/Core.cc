@@ -150,7 +150,7 @@ void Core::cycle() {
           if (target_pipeline.empty())
             inst->finish_cycle = _core_cycle + inst->get_compute_cycle();
           else
-            inst->finish_cycle = target_pipeline.back()->finish_cycle + inst->get_compute_cycle();
+            inst->finish_cycle = target_pipeline.back()->finish_cycle + inst->get_compute_cycle() - inst->get_overlapping_cycle();
           spdlog::trace("[Core {}][{}] compute instruction[{}] issued, finsh at {}", _id, _core_cycle, inst->get_compute_type(), inst->finish_cycle);
           target_pipeline.push(inst);
           issued = true;

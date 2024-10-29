@@ -74,12 +74,14 @@ class TileComputeNode : public TileNode {
  public:
   TileComputeNode(onnx::NodeProto& node);
   uint32_t get_cycle() { return _cycle; }
+  uint32_t get_overlapping_cycle() { return _overlapping_cycle; }
   int get_compute_type() { return _compute_type; } 
   void print_node();
 
  private:
   std::map<std::string, std::shared_ptr<TileNode>> tile_map;
   uint32_t _cycle;
+  uint32_t _overlapping_cycle = 0;
   int _compute_type;
 };
 

@@ -61,6 +61,9 @@ TileComputeNode::TileComputeNode(onnx::NodeProto& node) : TileNode(node) {
     if (attribute.name() == "torchsim_compute_type") {
       _compute_type = attribute.i();
     }
+    if (attribute.name() == "torchsim_overlapping_cycle") {
+      _overlapping_cycle = attribute.i();
+    }
   }
 }
 
@@ -177,6 +180,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
         std::vector<size_t>(), std::vector<size_t>(), 0,
         iter_list
       );
+      inst->set_overlapping_cycle(compute_node->get_overlapping_cycle());
       inst->set_compute_type(compute_node->get_compute_type());
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
