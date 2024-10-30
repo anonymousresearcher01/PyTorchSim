@@ -62,10 +62,13 @@ def llvm_compile_command(input, output):
         """,
     ).strip()]
 
-def mlir_compile_command(filename, vectorlane_size):
+def mlir_compile_command(filename, vectorlane_size, vlen=256):
     return [re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/mlir-opt -test-loop-padding -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen=256' -lower-affine -lower-vector-multi-reduction -convert-vector-to-llvm -test-memref-to-gemmini="vectorlane-stride={vectorlane_size}" -finalize-memref-to-llvm -convert-arith-to-llvm -convert-math-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm -convert-index-to-llvm -reconcile-unrealized-casts {filename}.mlir -o {filename}_llvm.mlir
+            {TORCHSIM_LLVM_PATH}/mlir-opt -test-loop-padding -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen={vlen}' \
+            -lower-affine -lower-vector-multi-reduction -convert-vector-to-llvm -test-memref-to-gemmini="vectorlane={vectorlane_size}" \
+            -finalize-memref-to-llvm -convert-arith-to-llvm -convert-math-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm \
+            -convert-index-to-llvm -reconcile-unrealized-casts {filename}.mlir -o {filename}_llvm.mlir
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",
@@ -75,11 +78,11 @@ def mlir_compile_command(filename, vectorlane_size):
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl256b -O2 {filename}.ll -o {filename}.s
+            {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl{vlen}b -O2 {filename}.ll -o {filename}.s
         """,
     ).strip()]
 
-def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_size):
+def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_size, vlen=256):
     return [re.sub(r"[ \n]+", " ",
         f"""
             {TORCHSIM_LLVM_PATH}/mlir-opt -test-loop-padding -test-tile-operation-graph {filename}.mlir -o {sample_filename}.mlir
@@ -87,7 +90,10 @@ def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_si
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/mlir-opt -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen=256 reorder=1' -lower-affine -lower-vector-multi-reduction -convert-vector-to-llvm -test-memref-to-gemmini="vectorlane-stride={vectorlane_size}" -finalize-memref-to-llvm -convert-arith-to-llvm -convert-math-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm -convert-index-to-llvm -reconcile-unrealized-casts {sample_filename}.mlir -o {sample_filename}_llvm.mlir
+            {TORCHSIM_LLVM_PATH}/mlir-opt -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen={vlen}' \
+            -lower-affine -lower-vector-multi-reduction -convert-vector-to-llvm -test-memref-to-gemmini="vectorlane={vectorlane_size}" \
+            -finalize-memref-to-llvm -convert-arith-to-llvm -convert-math-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm \
+            -convert-index-to-llvm -reconcile-unrealized-casts {sample_filename}.mlir -o {sample_filename}_llvm.mlir
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",
@@ -97,7 +103,7 @@ def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_si
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl256b -O2 {sample_filename}.ll -o {sample_filename}.s
+            {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl{vlen}b -O2 {sample_filename}.ll -o {sample_filename}.s
         """,
     ).strip()]
 
@@ -192,7 +198,7 @@ class MLIRCodeCache:
         tile_graph_generator.generate_tile_graph(
             os.path.join(write_path, "tile_graph.onnx"),
             cycle_list=cycle_list,
-            overlapping_cycle=vectorlane_size*3-1 # FIXME.
+            overlapping_cycle=vectorlane_size*4-1 # FIXME.
         )
         return key
 
