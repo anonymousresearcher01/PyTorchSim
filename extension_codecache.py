@@ -85,15 +85,10 @@ def mlir_compile_command(filename, vectorlane_size, vlen=256):
 def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_size, vlen=256):
     return [re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/mlir-opt -test-loop-padding -test-tile-operation-graph {filename}.mlir -o {sample_filename}.mlir
-        """,
-    ).strip(),
-            re.sub(r"[ \n]+", " ",
-        f"""
-            {TORCHSIM_LLVM_PATH}/mlir-opt -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen={vlen}' \
+            {TORCHSIM_LLVM_PATH}/mlir-opt -test-loop-padding -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen=256' -test-tile-operation-graph \
             -lower-affine -lower-vector-multi-reduction -convert-vector-to-llvm -test-memref-to-gemmini="vectorlane={vectorlane_size}" \
             -finalize-memref-to-llvm -convert-arith-to-llvm -convert-math-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm \
-            -convert-index-to-llvm -reconcile-unrealized-casts {sample_filename}.mlir -o {sample_filename}_llvm.mlir
+            -convert-index-to-llvm -reconcile-unrealized-casts {filename}.mlir -o {sample_filename}_llvm.mlir
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",
@@ -127,41 +122,41 @@ class MLIRCodeCache:
         new_input_path = os.path.splitext(input_path)[0]
         raw_tog_path = new_input_path + "_tog.py"
         sample_mlir_path = new_input_path + "_sample"
-        cmds = mlir_compile_command(new_input_path, vectorlane_size)
         gem5_cmds = mlir_gem5_compile_command(new_input_path, sample_mlir_path, raw_tog_path, vectorlane_size)
-
-        opt_cmd = shlex.split(cmds[0])
-        translate_cmd = shlex.split(cmds[1])
-        llc_cmd = shlex.split(cmds[2])
-        if spad_info is not None:
-            link_option = f"-Wl,--section-start=.spad=0x{spad_info['spad_vaddr']:x}"
-        else:
-            link_option = ""
 
         from filelock import FileLock
         lock_dir = get_lock_dir()
         lock = FileLock(os.path.join(lock_dir, key + ".lock"), timeout=LOCK_TIMEOUT)
-        with lock:
-            try:
-                subprocess.check_call(opt_cmd)
-                subprocess.check_call(translate_cmd)
-                subprocess.check_call(llc_cmd)
-            except subprocess.CalledProcessError as e:
-                print("Command failed with exit code", e.returncode)
-                print("Error output:", e.output)
-                assert(0)
 
-            # Generate LLVM kernel calller and binary for validation
-            if TORCHSIM_VALIDATION_MODE:
+        # Generate LLVM kernel calller and binary for validation
+        if TORCHSIM_VALIDATION_MODE:
+            cmds = mlir_compile_command(new_input_path, vectorlane_size)
+            opt_cmd = shlex.split(cmds[0])
+            translate_cmd = shlex.split(cmds[1])
+            llc_cmd = shlex.split(cmds[2])
+            if spad_info is not None:
+                link_option = f"-Wl,--section-start=.spad=0x{spad_info['spad_vaddr']:x}"
+            else:
+                link_option = ""
+
+            with lock:
+                try:
+                    subprocess.check_call(opt_cmd)
+                    subprocess.check_call(translate_cmd)
+                    subprocess.check_call(llc_cmd)
+                except subprocess.CalledProcessError as e:
+                    print("Command failed with exit code", e.returncode)
+                    print("Error output:", e.output)
+                    assert(0)
+
                 val_llvm_caller = MLIRKernelCallerCodeGen(TORCHSIM_VALIDATION_MODE, arg_attributes)
                 val_llvm_caller.generate_wrapper_file(write_path, validation_wrapper_name)
                 val_llvm_caller.compile_wih_kernel(write_path, key, validation_wrapper_name,
                                                    validation_binary_name, link_option)
         # Launch tile graph generator
         gem5_sample_cmd = shlex.split(gem5_cmds[0])
-        gem5_opt_cmd = shlex.split(gem5_cmds[1])
-        gem5_translate_cmd = shlex.split(gem5_cmds[2])
-        gem5_llc_cmd = shlex.split(gem5_cmds[3])
+        gem5_translate_cmd = shlex.split(gem5_cmds[1])
+        gem5_llc_cmd = shlex.split(gem5_cmds[2])
 
         lock = FileLock(os.path.join(lock_dir, key + ".lock"), timeout=LOCK_TIMEOUT)
         with lock:
@@ -169,7 +164,6 @@ class MLIRCodeCache:
                 result = subprocess.check_output(gem5_sample_cmd)
                 with open(raw_tog_path, "wb") as file:
                     file.write(result)
-                subprocess.check_call(gem5_opt_cmd)
                 subprocess.check_call(gem5_translate_cmd)
                 subprocess.check_call(gem5_llc_cmd)
             except subprocess.CalledProcessError as e:

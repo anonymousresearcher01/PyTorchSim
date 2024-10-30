@@ -50,11 +50,11 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
                             %index1 = affine.apply #map1(%t_k, %t_n, %t_k2, %t_n2)
                             %index3 = affine.apply #map3(%t_k2, %t_m2)
                             %index4 = affine.apply #map4(%t_n2, %t_k2)
-                            affine.dma_start %X[%index0], %X_buffer[0, %index3], %x_tag[0, %t_k2, %t_m2], %c_mvin, {% if X_transposed %}%M, %x_chunk{% else %}%K, %c_set{% endif %} : memref<{{ M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<{{ TILE_M // kernel.vector_lane }}x{{ TILE_N // kernel.vector_lane }}x{{ TILE_K // kernel.vector_lane }}xi32>
-                            affine.dma_start %W[%index1], %W_buffer[0, %index4], %w_tag[%t_n2, %t_k2, 0], %c_mvin2, {% if W_transposed %}%K, %w_chunk{% else %}%N, %c_set{% endif %} : memref<{{ K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<{{ TILE_M // kernel.vector_lane }}x{{ TILE_N // kernel.vector_lane }}x{{ TILE_K // kernel.vector_lane }}xi32>
-                        }
-                    }
-                }
+                            affine.dma_start %X[%index0], %X_buffer[0, %index3], %x_tag[%c0, %t_k2, %t_m2], %c_mvin, {% if X_transposed %}%M, %x_chunk{% else %}%K, %c_set{% endif %} : memref<{{ M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<{{ TILE_M // kernel.vector_lane }}x{{ TILE_N // kernel.vector_lane }}x{{ TILE_K // kernel.vector_lane }}xi32>
+                            affine.dma_start %W[%index1], %W_buffer[0, %index4], %w_tag[%t_n2, %t_k2, %c0], %c_mvin2, {% if W_transposed %}%K, %w_chunk{% else %}%N, %c_set{% endif %} : memref<{{ K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<{{ TILE_M // kernel.vector_lane }}x{{ TILE_N // kernel.vector_lane }}x{{ TILE_K // kernel.vector_lane }}xi32>
+                        } { inner_loop=true }
+                    } { inner_loop=true }
+                } { inner_loop=true }
                 affine.for %t_n2 = 0 to {{ TILE_N }} step {{ kernel.vector_lane }} {
                     affine.for %t_m2 = 0 to {{ TILE_M }} step {{ kernel.vector_lane }} {
                         %index5 = affine.apply #map4(%t_n2, %t_m2)
