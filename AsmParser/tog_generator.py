@@ -5,9 +5,9 @@ from pathlib import Path
 from collections import defaultdict
 
 if __name__ == "__main__":
-    from onnx_utility import node, loop_index_node, loop_end_node, load_node, store_node, compute_node, connect_nodes, dump_onnx_graph
+    from onnx_utility import node, loop_index_node, loop_end_node, load_node, store_node, memory_wait_node, compute_node, connect_nodes, dump_onnx_graph
 else:
-    from AsmParser.onnx_utility import node, loop_index_node, loop_end_node, load_node, store_node, compute_node, connect_nodes, dump_onnx_graph
+    from AsmParser.onnx_utility import node, loop_index_node, loop_end_node, load_node, store_node, memory_wait_node, compute_node, connect_nodes, dump_onnx_graph
 
 
 def import_module_from_path(module_name, path):
@@ -30,6 +30,7 @@ class tog_generator:
     ComputeNodeKind = 1
     LoopNodeKind = 2
     DMANodeKind = 3
+    DMAWaitNodeKind = 4
     def __init__(self) -> None:
         self.module_name = "tile_operation_graph"
         self.module = None
@@ -83,12 +84,17 @@ class tog_generator:
             tile_info["tile_stride"] = dump_data["tile_stride"]
             tile_info["tile_size"] = dump_data["tile_size"]
             tile_info["element_size"] = dump_data["element_size"]
+            tile_info["tag_idx_list"] = dump_data["tag_idx_list"]
             tile_info["loop_idx_list"] = dump_data["loop_idx_list"]
             is_write = dump_data["is_write"]
             if is_write:
                 new_node = store_node(tile_info, node_id=node_id)
             else:
                 new_node = load_node(tile_info, node_id=node_id)
+        elif node_type == self.DMAWaitNodeKind:
+            tile_info = {}
+            tile_info["tag_idx_list"] = dump_data["tag_idx_list"]
+            new_node = memory_wait_node(tile_info, node_id=node_id)
         else:
             print("Unexpected node_type :", node_type)
             exit(1)
@@ -108,11 +114,14 @@ class tog_generator:
             # Handle special cases
             if isinstance(prev_node[-1], load_node) and isinstance(new_node, load_node):
                 connect_nodes(prev_node[-1].get_parent()[-1], new_node)
+            elif isinstance(prev_node[-1], memory_wait_node) and isinstance(new_node, memory_wait_node):
+                connect_nodes(prev_node[-1].get_parent()[-1], new_node)
             elif isinstance(prev_node[-1], store_node) and isinstance(new_node, store_node):
                 connect_nodes(prev_node[-1].get_parent()[-1], new_node)
-            elif isinstance(prev_node[-1], load_node) and isinstance(new_node, compute_node):
+            elif isinstance(prev_node[-1], load_node) and isinstance(new_node, compute_node) or \
+                 isinstance(prev_node[-1], memory_wait_node) and isinstance(new_node, compute_node):
                 for pn in prev_node:
-                    if isinstance(pn, load_node):
+                    if isinstance(pn, load_node) or isinstance(pn, memory_wait_node):
                         connect_nodes(pn, new_node)
             else:
                 connect_nodes(prev_node[-1], new_node)
@@ -120,9 +129,19 @@ class tog_generator:
             connect_nodes(prev_node[-1], new_node)
         else:
             end_node = self.loop_end_stack.pop()
-            self.node_dict[end_node.id] = end_node
-            connect_nodes(prev_node[-1], end_node)
-            connect_nodes(end_node, new_node)
+            for current_depth_node in prev_node[::-1]:
+                connect_nodes(current_depth_node, end_node)
+                if isinstance(current_depth_node, load_node):
+                    continue
+                break
+            while True:
+                self.node_dict[end_node.id] = end_node
+                if end_node.parent == new_node.parent:
+                    connect_nodes(end_node, new_node)
+                    break
+                new_end_node = self.loop_end_stack.pop()
+                connect_nodes(end_node, new_end_node)
+                end_node = new_end_node
         self.node_dict[new_node.id] = new_node
         return new_node
 
