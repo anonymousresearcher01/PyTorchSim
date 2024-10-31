@@ -784,8 +784,8 @@ def test_view3D_2D(device):
 
 def test_moe(device):
     from moe import MoE
-    model = MoE(input_size=1000, output_size=20, num_experts=10, hidden_size=66, k= 4, noisy_gating=True)
-    X = torch.rand(32, 1000)
+    model = MoE(input_size=1024, output_size=24, num_experts=16, hidden_size=64, k= 4, noisy_gating=True)
+    X = torch.rand(32, 1024)
     x1 = X.to(device=device)
     x2 = X.to("cpu")
     model.eval()
