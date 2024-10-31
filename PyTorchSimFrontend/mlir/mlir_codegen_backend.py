@@ -32,9 +32,9 @@ def reduction_init(reduction_type, dtype):
         # constant for reduction must be promoted as well
         dtype = torch.float32
     if reduction_type in ("xor_sum", "sum", "any"):
-        return "0.0"
+        return float(0) if dtype.is_floating_point else int(0)
     if reduction_type == "prod":
-        return "1.0"
+        return float(1) if dtype.is_floating_point else int(1)
     if reduction_type in {"max", "argmax"}:
         return "0.0"
     if reduction_type in {"min", "argmin"}:
@@ -158,6 +158,8 @@ class ExtensionOverrides(common.OpOverrides):
             value = float(value)
         if src_type[0] == "f":
             value = format(value, ".20f")
+        if src_type[0] == "i":
+            value = int(value)
         return f'arith.constant {value} : {src_type}'
 
     @staticmethod
