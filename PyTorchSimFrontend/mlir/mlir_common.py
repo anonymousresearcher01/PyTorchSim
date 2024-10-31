@@ -99,7 +99,10 @@ class MLIRKernelArgs(common.KernelArgs):
         return MLIRKernelArgs.MLIR_ARGS_INOUT & value
 
     def mlir_argdefs(self, extra_node=dict()):
-        buffer_types = {x.get_name(): [x.get_dtype(), x.get_numel()] for x in V.graph.buffers}
+        buffer_types = {}
+        for x in V.graph.buffers:
+            if not isinstance(x.layout, MultiOutputLayout): # FIXME: MultiOutputLayout should be handled
+                buffer_types[x.get_name()] = [x.get_dtype(), x.get_numel()]
         for name, val in V.graph.graph_inputs.items():
             if isinstance(val, sympy.Expr):
                 buffer_types[name] = [get_sympy_Expr_dtype(val), 1]
@@ -185,24 +188,29 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         return dtype
 
     def expand(self, args, buf_bounds):
-        if len(args) == 1:
-            if not args[0] in self.tile_info:
-                return args, 1, self.check_dtype_in_args(args)
-            info = self.tile_info[args[0]]
-            return args, info[0], info[1]
-        if not args[-2] in self.tile_info or not args[-1] in self.tile_info:
+        cse_args = [arg for arg in args if isinstance(arg, common.CSEVariable)]
+        if len(cse_args) == 0:
             return args, 1, self.check_dtype_in_args(args)
-        lhs_tile_size, lhs_dtype = self.tile_info[args[-2]]
-        rhs_tile_size, rhs_dtype = self.tile_info[args[-1]]
+        elif len(cse_args) == 1:
+            if not cse_args[0] in self.tile_info:
+                return args, 1, self.check_dtype_in_args(cse_args)
+            info = self.tile_info[cse_args[0]]
+            return args, info[0], info[1]
+        lhs_idx = args.index(cse_args[-2])
+        rhs_idx = args.index(cse_args[-1])
+        if not args[lhs_idx] in self.tile_info or not args[rhs_idx] in self.tile_info:
+            return args, 1, self.check_dtype_in_args(args)
+        lhs_tile_size, lhs_dtype = self.tile_info[args[lhs_idx]]
+        rhs_tile_size, rhs_dtype = self.tile_info[args[rhs_idx]]
         lhs_shape = f"vector<{lhs_tile_size}x{DTYPE_TO_MLIR[lhs_dtype]}>" if lhs_tile_size > 1 else DTYPE_TO_MLIR[lhs_dtype]
         rhs_shape = f"vector<{rhs_tile_size}x{DTYPE_TO_MLIR[rhs_dtype]}>" if rhs_tile_size > 1 else DTYPE_TO_MLIR[rhs_dtype]
         temp = list(args)
         if lhs_tile_size > rhs_tile_size:
-            expand = f"vector.broadcast %{args[-1]} : {rhs_shape} to {lhs_shape}"
-            temp[-1] = self.cse.generate(self.compute, expand, bounds=buf_bounds)
+            expand = f"vector.broadcast %{args[rhs_idx]} : {rhs_shape} to {lhs_shape}"
+            temp[rhs_idx] = self.cse.generate(self.compute, expand, bounds=buf_bounds)
         elif lhs_tile_size < rhs_tile_size:
-            expand = f"vector.broadcast %{args[-2]} : {lhs_shape} to {rhs_shape}"
-            temp[-2] = self.cse.generate(self.compute, expand, bounds=buf_bounds)
+            expand = f"vector.broadcast %{args[lhs_idx]} : {lhs_shape} to {rhs_shape}"
+            temp[lhs_idx] = self.cse.generate(self.compute, expand, bounds=buf_bounds)
         args = tuple(temp)
         return args, max(lhs_tile_size, rhs_tile_size), lhs_dtype
 
