@@ -132,23 +132,23 @@ class ExtensionOverrides(common.OpOverrides):
         return f'arith.div{dtype[0]} %{operand1}, %{operand2} : {shape}'
 
     @staticmethod
-    def to_dtype(x, dtype, src_dtype=None, tile_size=16):
-        raise NotImplementedError()
-        mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
+    def to_dtype(x, dst_type, src_dtype=None, tile_size=16, dtype="f32"):
+        mlir_dtype = mlir_common.DTYPE_TO_MLIR[dst_type]
         src_mlir_dtype = mlir_common.DTYPE_TO_MLIR[src_dtype]
 
-        dst_bits = 1 if dtype == torch.bool else torch.finfo(dtype).bits if dtype.is_floating_point else torch.iinfo(dtype).bits
+        dst_bits = 1 if dst_type == torch.bool else torch.finfo(dst_type).bits if dst_type.is_floating_point else torch.iinfo(dst_type).bits
         src_bits = 1 if src_dtype == torch.bool else torch.finfo(src_dtype).bits if src_dtype.is_floating_point else torch.iinfo(src_dtype).bits
         shape = f"vector<{tile_size}x{mlir_dtype}>" if tile_size > 1 else mlir_dtype
         src_shape = f"vector<{tile_size}x{src_mlir_dtype}>" if tile_size > 1 else src_mlir_dtype
-        if dtype.is_floating_point and not src_dtype.is_floating_point:
-            return f"arith.sitofp %{x} : {src_shape} to {shape}"
-        elif not dtype.is_floating_point and src_dtype.is_floating_point:
-            return f"arith.fptosi %{x} : {src_shape} to {shape}"
+        if dst_type.is_floating_point and not src_dtype.is_floating_point:
+            raise NotImplementedError("floating point to integer conversion")
+        elif not dst_type.is_floating_point and src_dtype.is_floating_point:
+            raise NotImplementedError("integer to floating point conversion")
         else:
-            operation = "arith.trunc" if dst_bits < src_bits else "arith.ext"
-            operation_suffix = "f" if dtype.is_floating_point else "i"
-            return f"{operation}{operation_suffix} %{x} : {src_shape} to {shape}"
+            if dst_bits > src_bits:
+                return f"arith.extui %{x} : {src_shape} to {shape}"
+            elif dst_bits < src_bits:
+                return f"arith.trunc %{x} : {src_shape} to {shape}"
 
     @staticmethod
     def constant(value, src_type, tile_size=16, dtype="f32"):
@@ -179,8 +179,18 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def ne(operand1, operand2, tile_size=16, dtype="f32"):
-        shape = f"vector<{tile_size}xi1>" if tile_size > 1 else "i1"
-        return f'arith.cmpi one, %{operand1}, %{operand2} : {shape}'
+        shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else "i1"
+        return f'arith.cmp{dtype[0]} one, %{operand1}, %{operand2} : {shape}'
+
+    @staticmethod
+    def lt(operand1, operand2, tile_size=16, dtype="f32"):
+        shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else "i1"
+        return f'arith.cmp{dtype[0]} olt, %{operand1}, %{operand2} : {shape}'
+
+    @staticmethod
+    def gt(operand1, operand2, tile_size=16, dtype="f32"):
+        shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else "i1"
+        return f'arith.cmp{dtype[0]} ogt, %{operand1}, %{operand2} : {shape}'
 
     @staticmethod
     def le(operand1, operand2, tile_size=16, dtype="f32"):
@@ -340,6 +350,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         for arg in expr.args:
             if arg.is_symbol:
                 constant_vector.append(tuple([1,arg]))
+                continue
+            if len(arg.args) == 0: #TODO: check this
                 continue
             if arg.args[0].is_number:
                 constant_vector.append(arg.args)
