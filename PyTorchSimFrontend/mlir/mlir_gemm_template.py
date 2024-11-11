@@ -70,9 +70,9 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
                     affine.for %t_m2 = 0 to {{ TILE_M }} step {{ kernel.vector_lane }} {
                         %index2 = affine.apply #map2(%t_m, %t_n, %t_m2, %t_n2)
                         %index5 = affine.apply #map4(%t_n2, %t_m2)
-                        affine.dma_start %Y_buffer[0, %index5], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ M * N }}xf32>, memref<1xi32>
-                    }
-                }
+                        affine.dma_start %Y_buffer[0, %index5], %Y[%index2], %tag[%c0_2], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ M * N }}xf32>, memref<1xi32>
+                    } { inner_loop=true }
+                } { inner_loop=true }
             } { outer_loop=true }
         } { outer_loop=true }
     } { outer_loop=true }
