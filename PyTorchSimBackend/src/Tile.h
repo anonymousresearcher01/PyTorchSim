@@ -17,7 +17,7 @@ class Tile {
   };
 
   Tile(Status status);
-  TileSubGraph* get_ownwer() { return _onwer_graph; }
+  TileSubGraph* get_owner() { return _onwer_graph; }
   void set_ownwer(TileSubGraph* graph) { _onwer_graph = graph; }
   Status get_status() { return _status; }
   void set_status(Status status) { _status=status; }

@@ -1,6 +1,7 @@
 #pragma once
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <fmt/ranges.h>
 #include <google/protobuf/io/zero_copy_stream_impl.h>
 #include "TileGraph.h"
 #include "Instruction.h"
@@ -15,7 +16,8 @@ enum class TileType{
   LOOP_END_NODE,
   LOAD_NODE,
   STORE_NODE,
-  COMPUTE_NODE
+  COMPUTE_NODE,
+  MEMORY_WAIT_NODE
 };
 
 class TileNode {
@@ -54,6 +56,9 @@ class TileGraphParser {
   std::shared_ptr<TileNode> get_top_loop();
   std::unique_ptr<TileGraph>& get_tile_graph() { return _tile_graph; }
   addr_type lookup(std::string key);
+  void register_loop(std::shared_ptr<TileNode>);
+  void increase_loop_top() { _loop_stack_pointer++; }
+  void decrease_loop_top() { _loop_stack_pointer--; }
  private:
   void register_tile(std::shared_ptr<TileNode> tile_node);
   void _tile_generate() {}
@@ -64,7 +69,7 @@ class TileGraphParser {
   json _attribute_json;
   std::string _tog_path;
   std::map<std::string, std::shared_ptr<TileNode>> _output_map;
-  std::vector<std::shared_ptr<TileNode>> _loop_nodes;
+  std::vector<std::vector<std::shared_ptr<TileNode>>> _loop_nodes;
   std::vector<std::shared_ptr<TileNode>> _tile_vec;
   std::unique_ptr<TileGraph> _tile_graph;
   std::map<std::string, addr_type> _arg_to_address;
@@ -75,7 +80,7 @@ class TileComputeNode : public TileNode {
   TileComputeNode(onnx::NodeProto& node);
   uint32_t get_cycle() { return _cycle; }
   uint32_t get_overlapping_cycle() { return _overlapping_cycle; }
-  int get_compute_type() { return _compute_type; } 
+  int get_compute_type() { return _compute_type; }
   void print_node();
 
  private:
@@ -92,7 +97,8 @@ class TileMemoryNode : public TileNode {
   size_t get_precision() { return _element_size; }
   std::vector<size_t> get_tile_size() { return _tile_size; }
   std::vector<size_t> get_tile_stride() { return _tile_stride; }
-  std::vector<std::string>& get_loop_idx_list() { return _loop_idx_list; } 
+  std::vector<std::string>& get_tag_idx_list() { return _tag_idx_list; }
+  std::vector<std::string>& get_loop_idx_list() { return _loop_idx_list; }
   void print_node() override;
 
  private:
@@ -101,7 +107,18 @@ class TileMemoryNode : public TileNode {
   std::vector<size_t> _stride_list;
   size_t _element_size;
   std::string _base_addr_name;
+  std::vector<std::string> _tag_idx_list;
   std::vector<std::string> _loop_idx_list;
+};
+
+class TileMemoryWaitNode : public TileNode {
+ public:
+  TileMemoryWaitNode(onnx::NodeProto& node);
+  std::vector<std::string>& get_tag_idx_list() { return _tag_idx_list; }
+  void print_node() override;
+
+ private:
+  std::vector<std::string> _tag_idx_list;
 };
 
 class TileLoopNode : public TileNode {
@@ -109,7 +126,8 @@ class TileLoopNode : public TileNode {
   enum LoopType {
     NORMAL_LOOP,
     PARALLEL_LOOP,
-    ACCUMULATION_LOOP
+    ACCUMULATION_LOOP,
+    INNER_LOOP
   };
   TileLoopNode(onnx::NodeProto& node);
   void add_body(std::shared_ptr<TileNode> body) { _body_node.push_back(body); }

@@ -13,12 +13,17 @@ Core::Core(uint32_t id, SimulationConfig config)
 
 bool Core::can_issue(const std::shared_ptr<Tile>& op) {
   /* Check SRAM is enough to run tile */
-  return op->get_required_sram_size() + _used_sram_size <= _sram_size && _tiles.size() < 2;
+  return op->get_required_sram_size() + _used_sram_size <= _sram_size; // && _tiles.size() < 2;
 }
 
 void Core::issue(std::shared_ptr<Tile> op) {
-  spdlog::trace("[Core {}][{}] New Tile is issued, remain sram: {} Required size: {}, Free size: {}",
-    _id, _core_cycle, _sram_size-_used_sram_size, op->get_required_sram_size(), op->get_instructions().back()->get_free_sram_size());
+  if (op->get_instructions().size()){
+    spdlog::trace("[Core {}][{}] New Tile is issued, remain sram: {} Required size: {}, Free size: {}",
+      _id, _core_cycle, _sram_size-_used_sram_size, op->get_required_sram_size(), op->get_instructions().back()->get_free_sram_size());
+  } else {
+    spdlog::trace("[Core {}][{}] New Tile is issued, remain sram: {} Required size: {}",
+      _id, _core_cycle, _sram_size-_used_sram_size, op->get_required_sram_size());
+  }
   _used_sram_size += op->get_required_sram_size();
   _tiles.push_back(std::move(op));
 }
@@ -55,8 +60,12 @@ void Core::dma_cycle() {
       continue;
 
     /* Finish DMA read instruction */
-    if (instruction->is_dma_read())
+    if (instruction->is_dma_read() && !instruction->is_async_dma())
       finish_instruction(instruction);
+
+    /* Set tag table of async dma load */
+    if (instruction->is_dma_read() && instruction->is_async_dma())
+      _tma.set_tag_finish(static_cast<Tile*>(instruction->get_owner())->get_owner(), instruction->get_tag_idx_list());
 
     /* Erase the instruction in DMA waiting queue */
     _dma_waiting_queue.erase(_dma_waiting_queue.begin() + i);
@@ -69,6 +78,10 @@ void Core::dma_cycle() {
       std::shared_ptr<Instruction> finished_inst = std::move(_tma.get_current_inst());
       if (finished_inst->is_dma_write()) {
         /* Only DMA write operation is finished! */
+        finish_instruction(finished_inst);
+      } else if (finished_inst->is_dma_read() && finished_inst->is_async_dma()) {
+        /* Register tag table for async dma load */
+        _tma.register_tag(static_cast<Tile*>(finished_inst->get_owner())->get_owner(), finished_inst->get_tag_idx_list());
         finish_instruction(finished_inst);
       } else if(!finished_inst->is_dma_read()) {
         spdlog::error("[Core {}][{}] TMA instruction in not valid", _id, _core_cycle);
@@ -129,18 +142,23 @@ void Core::cycle() {
       continue;
 
     std::shared_ptr<Instruction> inst = instructions.front();
-    /* Skip instruction is not ready */
+    /* Skip instruction is not ready  */
     if (!inst->is_ready())
       continue;
 
     switch (inst->get_opcode()) {
       case Opcode::MOVIN:
-        spdlog::trace("[Core {}][{}] MOVIN issued", _id, _core_cycle, inst->get_free_sram_size());
-        _ld_inst_queue.push(inst);
-        issued = true;
+        {
+          std::ostringstream oss;
+          for (const auto& idx : inst->get_tag_idx_list())
+            oss << idx << ", ";
+          spdlog::trace("[Core {}][{}] MOVIN issued free_sram_size: {} tag_idx_list: {}", _id, _core_cycle, inst->get_free_sram_size(), oss.str());
+          _ld_inst_queue.push(inst);
+          issued = true;
+        }
         break;
       case Opcode::MOVOUT:
-        spdlog::trace("[Core {}][{}] MOVOUT issued", _id, _core_cycle, inst->get_free_sram_size());
+        spdlog::trace("[Core {}][{}] MOVOUT issued free_sram_size: {}", _id, _core_cycle, inst->get_free_sram_size());
         _st_inst_queue.push(inst);
         issued = true;
         break;
@@ -156,6 +174,19 @@ void Core::cycle() {
           issued = true;
         }
         break;
+      case Opcode::BAR:
+        {
+          std::ostringstream oss;
+          for (const auto& idx : inst->get_tag_idx_list())
+            oss << idx << ", ";
+          bool finished = _tma.get_tag_finish(static_cast<Tile*>(inst->get_owner())->get_owner(), inst->get_tag_idx_list());
+          if (finished) {
+            spdlog::trace("[Core {}][{}] BAR Done, tag_list: {}", _id, _core_cycle, oss.str());
+            finish_instruction(inst);
+            issued = true;
+          }
+        }
+        break;
       default:
         spdlog::error("Undefined instruction opcode type");
         exit(EXIT_FAILURE);
@@ -163,8 +194,6 @@ void Core::cycle() {
 
     if (issued) {
       instructions.pop_front();
-      if (instructions.empty()) {
-     }
     }
   }
 

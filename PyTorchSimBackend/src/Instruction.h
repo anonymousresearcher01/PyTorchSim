@@ -10,7 +10,7 @@
 #include <memory>
 #include <vector>
 
-enum class Opcode { MOVIN, MOVOUT, GEMM_PRELOAD, GEMM, GEMM_WRITE, COMP, BAR };
+enum class Opcode { MOVIN, MOVOUT, COMP, BAR};
 
 typedef uint64_t addr_type;
 typedef uint64_t cycle_type;
@@ -21,13 +21,14 @@ class Instruction {
  public:
   Instruction(Opcode opcode, cycle_type compute_cycle, size_t num_parents, addr_type dram_addr,
               std::vector<size_t> tile_size, std::vector<size_t> tile_stride, size_t precision,
-              std::vector<int> &idx_list);
+              std::vector<int> &idx_list, std::vector<int> tag_idx_list);
   void finish_instruction();
   void add_child(std::shared_ptr<Instruction> child);
   bool check_ready() { return ready_counter == 0; }
   const Opcode get_opcode() { return opcode; }
   bool is_dma_read() { return opcode == Opcode::MOVIN; }
   bool is_dma_write() { return opcode == Opcode::MOVOUT; }
+  bool is_async_dma() { return _tag_idx_list.size() >= 2; } // FIXME.
   bool is_ready() { return ready_counter == 0; }
   void inc_ready_counter() { ready_counter++; }
   void dec_ready_counter() {
@@ -49,7 +50,7 @@ class Instruction {
     auto get_tile_address = [this](size_t i, size_t j) -> addr_type {
       return dram_addr + (i * tile_stride[0] + j) * _precision;
     };
-    if (_idx_list.size() >= 2) { //FXXKME. ;) 
+    if (_idx_list.size() >= 2) { //FXXKME. ;)
       int len = _idx_list.size();
       return get_tile_address(_idx_list.at(len-2) + row, _idx_list.at(len-1) + col);
     } else if (_idx_list.size() == 1) {
@@ -66,6 +67,7 @@ class Instruction {
   void set_compute_type(int type) { _compute_type = type; }
   int get_compute_type() { return _compute_type; }
   std::vector<int>& get_idx_list() { return _idx_list; }
+  std::vector<int>& get_tag_idx_list() { return _tag_idx_list; }
 
   cycle_type start_cycle;
   cycle_type finish_cycle;
@@ -87,4 +89,5 @@ class Instruction {
   addr_type dram_addr;
   int _compute_type = 0;
   std::vector<int> _idx_list;
+  std::vector<int> _tag_idx_list;
 };
