@@ -36,25 +36,34 @@ class tog_generator:
         self.module = None
         self.raw_graph = {}
         self.node_depth_stack = [[]]
+        self.node_depth_pointer = 0
         self.node_dict = {}
         self.parent_to_children = defaultdict(list)
         self.new_node_id = 0
         self.loop_end_stack = []
 
     def append_depth_stack(self, node):
-        self.node_depth_stack[-1].append(node)
+        self.node_depth_stack[self.node_depth_pointer].append(node)
 
     def increase_depth_stack(self):
-        self.node_depth_stack.append([])
+        if (len(self.node_depth_stack) == self.node_depth_pointer + 1):
+            self.node_depth_stack.append([])
+        self.node_depth_pointer += 1
+
+    def decrease_depth_stack(self):
+        self.node_depth_pointer -= 1
 
     def load_file(self, path):
         self.module = import_module_from_path(self.module_name, path)
         self.raw_graph = self.module.graph
         self.parse_graph()
 
-    def create_node(self, dump_data, prev_node):
+    def _create_node(self, dump_data):
         node_id = dump_data["node_id"]
         node_type = dump_data["node_type"]
+
+        new_node = None
+        new_end_node = None
         if node_type == self.BaseNodeKind:
             new_node = node(node_id)
         elif node_type == self.ComputeNodeKind:
@@ -68,15 +77,9 @@ class tog_generator:
             loop_idx = dump_data["loop_index"]
             loop_type = dump_data["loop_type"]
             new_node = loop_index_node(loop_idx, [loop_start, loop_end, loop_step, loop_type], node_id)
-
-            # Push end node to stack
             new_end_node = loop_end_node(loop_idx, self.new_node_id)
             new_end_node.parent = dump_data["parents"][0]
-
-            self.loop_end_stack.append(new_end_node)
             self.new_node_id += 1
-            # Increase loop depth
-            self.increase_depth_stack()
         elif node_type == self.DMANodeKind:
             tile_info = {}
             tile_info["base_addr"] = dump_data["base_address"]
@@ -98,12 +101,26 @@ class tog_generator:
         else:
             print("Unexpected node_type :", node_type)
             exit(1)
+
         # add new meta data
         if node_id == 0:
             new_node.parent = -1
         else:
             new_node.parent = dump_data["parents"][0]
-        self.append_depth_stack(new_node)
+
+        return new_node, new_end_node
+
+    def create_node(self, dump_data, prev_node):
+        node_id = dump_data["node_id"]
+        node_type = dump_data["node_type"]
+        parent_node = None
+        # add new meta data
+        if node_id == 0:
+            parent_node = -1
+        else:
+            parent_node = dump_data["parents"][0]
+
+        new_node, new_end_node = self._create_node(dump_data)
 
         # Return
         if not prev_node:
@@ -128,20 +145,27 @@ class tog_generator:
         elif prev_node[-1].id == new_node.parent:
             connect_nodes(prev_node[-1], new_node)
         else:
-            end_node = self.loop_end_stack.pop()
+            last_end_node = self.loop_end_stack.pop()
+            self.decrease_depth_stack()
             for current_depth_node in prev_node[::-1]:
-                connect_nodes(current_depth_node, end_node)
+                connect_nodes(current_depth_node, last_end_node)
                 if isinstance(current_depth_node, load_node):
                     continue
                 break
             while True:
-                self.node_dict[end_node.id] = end_node
-                if end_node.parent == new_node.parent:
-                    connect_nodes(end_node, new_node)
+                self.node_dict[last_end_node.id] = last_end_node
+                if last_end_node.parent == new_node.parent:
+                    connect_nodes(last_end_node, new_node)
                     break
-                new_end_node = self.loop_end_stack.pop()
-                connect_nodes(end_node, new_end_node)
-                end_node = new_end_node
+                end_node = self.loop_end_stack.pop()
+                self.decrease_depth_stack()
+                connect_nodes(last_end_node, end_node)
+                last_end_node = end_node
+        if (node_type == self.LoopNodeKind):
+            self.loop_end_stack.append(new_end_node)
+            # Increase loop depth
+            self.increase_depth_stack()
+        self.append_depth_stack(new_node)
         self.node_dict[new_node.id] = new_node
         return new_node
 
@@ -160,6 +184,7 @@ class tog_generator:
         # Link remain end node
         while self.loop_end_stack:
             end_node = self.loop_end_stack.pop()
+            self.decrease_depth_stack()
             self.node_dict[end_node.id] = end_node
             connect_nodes(prev_node, end_node)
             prev_node = end_node
