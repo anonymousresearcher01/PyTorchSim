@@ -85,7 +85,7 @@ def mlir_compile_command(filename, vectorlane_size, vlen=256):
 def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_size, vlen=256):
     return [re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/mlir-opt -test-loop-padding -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen=256' -test-tile-operation-graph \
+            {TORCHSIM_LLVM_PATH}/mlir-opt -test-loop-padding -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen=256' -test-tile-operation-graph='vectorlane={vectorlane_size}' \
             -lower-affine -lower-vector-multi-reduction -convert-vector-to-llvm -test-memref-to-gemmini="vectorlane={vectorlane_size}" \
             -finalize-memref-to-llvm -convert-arith-to-llvm -convert-math-to-llvm -convert-scf-to-cf -convert-cf-to-llvm -convert-func-to-llvm \
             -convert-index-to-llvm -reconcile-unrealized-casts {filename}.mlir -o {sample_filename}_llvm.mlir
@@ -192,7 +192,7 @@ class MLIRCodeCache:
         tile_graph_generator.generate_tile_graph(
             os.path.join(write_path, "tile_graph.onnx"),
             cycle_list=cycle_list,
-            overlapping_cycle=vectorlane_size*4-1 # FIXME.
+            vector_lane=vectorlane_size # FIXME.
         )
         return key
 
