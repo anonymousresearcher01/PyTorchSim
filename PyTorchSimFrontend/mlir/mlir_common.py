@@ -59,7 +59,7 @@ class ParallelLoopBuffer(IndentedBuffer):
     def indent(self, offset=1, outer_loop=True):
         @contextlib.contextmanager
         def ctx():
-            attribute = "{outer_loop=true}" if outer_loop else "{inner_loop=true}"
+            attribute = "{outer_loop=true}" if outer_loop else "{accumulation_loop=true}"
             for _ in range(offset):
                 self.writeline("{")
                 self._indent += 1
