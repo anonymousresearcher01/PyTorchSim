@@ -128,17 +128,16 @@ class MLIRCodeCache:
         lock_dir = get_lock_dir()
         lock = FileLock(os.path.join(lock_dir, key + ".lock"), timeout=LOCK_TIMEOUT)
 
+        if spad_info is not None:
+            link_option = f"-Wl,--section-start=.spad=0x{spad_info['spad_vaddr']:x}"
+        else:
+            link_option = ""
         # Generate LLVM kernel calller and binary for validation
         if TORCHSIM_VALIDATION_MODE:
             cmds = mlir_compile_command(new_input_path, vectorlane_size)
             opt_cmd = shlex.split(cmds[0])
             translate_cmd = shlex.split(cmds[1])
             llc_cmd = shlex.split(cmds[2])
-            if spad_info is not None:
-                link_option = f"-Wl,--section-start=.spad=0x{spad_info['spad_vaddr']:x}"
-            else:
-                link_option = ""
-
             with lock:
                 try:
                     subprocess.check_call(opt_cmd)
