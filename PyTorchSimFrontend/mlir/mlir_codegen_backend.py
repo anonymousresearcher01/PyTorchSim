@@ -419,7 +419,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 elif not is_reduction and is_transposed:
                     # Transposed case
                     is_col_major = True
-                    chunk_size = self.tile_desc.get_tile_size() // self.vector_lane
+                    chunk_size = self.tile_desc.get_rows_per_lane()
                 else:
                     is_col_major = False
                     chunk_size = self.tile_desc.get_cols_per_lane() if self.tile_desc.vector_lane_axis else self.tile_desc.get_tile_size_per_lane()
