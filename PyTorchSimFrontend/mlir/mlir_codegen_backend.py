@@ -814,7 +814,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 if loop_lines is None:
                     return
                 code.writelines(loop_lines)
-                stack.enter_context(code.indent())
+                stack.enter_context(code.indent(outer_loop=True))
             with contextlib.ExitStack() as stack_outer:
                 code.splice(self.reduction_prefix)
                 with contextlib.ExitStack() as stack:
@@ -823,7 +823,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                         if reduction_lines is None:
                             return
                         code.writelines(reduction_lines)
-                        stack.enter_context(code.indent())
+                        stack.enter_context(code.indent(outer_loop=False))
                     code.splice(self.loads)
                     code.splice(self.compute)
                     code.splice(self.stores)

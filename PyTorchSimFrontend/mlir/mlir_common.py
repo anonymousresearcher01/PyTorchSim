@@ -56,22 +56,23 @@ DTYPE_LOWP_FP = [
 ]
 
 class ParallelLoopBuffer(IndentedBuffer):
-    def indent(self, offset=1):
+    def indent(self, offset=1, outer_loop=True):
         @contextlib.contextmanager
         def ctx():
+            attribute = "{outer_loop=true}" if outer_loop else "{inner_loop=true}"
             for _ in range(offset):
                 self.writeline("{")
                 self._indent += 1
             for _ in range(-offset):
                 self._indent -= 1
-                self.writeline("} {outer_loop=true}")
+                self.writeline("} " + attribute)
             yield
             for _ in range(-offset):
                 self.writeline("{")
                 self._indent += 1
             for _ in range(offset):
                 self._indent -= 1
-                self.writeline("} {outer_loop=true}")
+                self.writeline("} " + attribute)
 
         return ctx()
 
