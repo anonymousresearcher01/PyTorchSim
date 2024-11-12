@@ -896,7 +896,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         # Case 2. 3-D tensor kernel without reduction. Access vector granule!
         if len(self.itervars) == 3 and self.reduction_depth == len(self.itervars):
-            self.tile_desc.n_col = min(self.tile_desc.get_tile_size(), self.ranges[-1])
+            self.tile_desc.n_col = min(self.tile_desc.get_tile_size(), self.roundup_vectorlane(self.ranges[-1], 8)) # FIXME. To inefficient?
             self.tile_desc.n_row = 1
 
         # Case 3. N-D tensor kernel with reduction. Not implemented. Need this?
@@ -943,6 +943,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             self.global_vars.writeline(f"memref.global @{name}_spad : memref<{dram_tile_shape}x{mlir_type}, 1>")
         buffer = self.cse.generate(code_buffer, f"memref.get_global @{name}_spad : memref<{dram_tile_shape}x{mlir_type}, 1>")
         return buffer, indices
+
+    def roundup_vectorlane(self, size, amp=1):
+        return ((size + self.vector_lane - 1) // self.vector_lane) * self.vector_lane * amp
 
 from . import mlir_lowering
 
