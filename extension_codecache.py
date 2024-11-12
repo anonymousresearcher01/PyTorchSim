@@ -106,7 +106,7 @@ def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_si
             -lower-affine \
             -lower-vector-multi-reduction \
             -convert-vector-to-llvm \
-            -test-memref-to-gemmini="vectorlane={vectorlane_size}" \
+            -test-memref-to-gemmini="vectorlane={vectorlane_size} timing=1" \
             -finalize-memref-to-llvm \
             -convert-arith-to-llvm \
             -convert-math-to-llvm \
