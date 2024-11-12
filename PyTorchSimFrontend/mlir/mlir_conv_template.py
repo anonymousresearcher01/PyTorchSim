@@ -45,8 +45,8 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
             affine.dma_start %W[%index1], %W_buffer[0, 0], %tag[0], %c_mvin2, %N, %c_set : memref<{{ K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
             linalg.matmul ins(%X_buffer, %W_buffer : memref<{{ TILE_M }}x{{ TILE_K }}x{{ DATA_STYPE }}, 1>, memref<{{ TILE_K }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
                     outs(%Y_buffer : memref<{{ TILE_M }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
-        } { accumulation_loop=true }
-        affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ M * N }}xf32>, memref<1xi32>
+             affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ M * N }}xf32>, memref<1xi32>
+        } { outer_loop=true }
     } { outer_loop=true }
   } { outer_loop=true }
   return
@@ -167,10 +167,10 @@ class MLIRConvTemplate(MLIRTemplate):
         Bias = None if len(self.input_nodes) == 2 else self.input_nodes[2]
 
         # Use BaseMLIRHardwareInfo
-        # TILE_M = min(kernel.vector_lane, self.gemm_input_shape[1]*self.gemm_input_shape[2])
-        # TILE_N = min(kernel.vector_lane, self.gemm_weight_shape[0])
-        # TILE_K = min(kernel.vector_lane, self.gemm_weight_shape[1])
-        TILE_M, TILE_N, TILE_K = kernel.vector_lane, kernel.vector_lane, kernel.vector_lane
+        TILE_M = max(kernel.vector_lane, self.gemm_input_shape[1]*self.gemm_input_shape[2])
+        TILE_N = max(kernel.vector_lane, self.gemm_weight_shape[0])
+        TILE_K = max(kernel.vector_lane, self.gemm_weight_shape[1])
+        kernel.tile_size = [TILE_M, TILE_N, TILE_K]
 
         W_transposed = self.is_transposed(W)
         X_transposed = self.is_transposed(X)
