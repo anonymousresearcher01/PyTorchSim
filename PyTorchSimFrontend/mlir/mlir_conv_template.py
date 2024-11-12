@@ -167,9 +167,11 @@ class MLIRConvTemplate(MLIRTemplate):
         Bias = None if len(self.input_nodes) == 2 else self.input_nodes[2]
 
         # Use BaseMLIRHardwareInfo
-        TILE_M = max(kernel.vector_lane, self.gemm_input_shape[1]*self.gemm_input_shape[2])
-        TILE_N = max(kernel.vector_lane, self.gemm_weight_shape[0])
-        TILE_K = max(kernel.vector_lane, self.gemm_weight_shape[1])
+        def round_with_lanes(value):
+            return ((value + kernel.vector_lane - 1) // kernel.vector_lane) * kernel.vector_lane
+        TILE_M = max(kernel.vector_lane, round_with_lanes(self.gemm_input_shape[1]*self.gemm_input_shape[2]))
+        TILE_N = max(kernel.vector_lane, round_with_lanes(self.gemm_weight_shape[0]))
+        TILE_K = max(kernel.vector_lane, round_with_lanes(self.gemm_weight_shape[1]))
         kernel.tile_size = [TILE_M, TILE_N, TILE_K]
 
         W_transposed = self.is_transposed(W)
