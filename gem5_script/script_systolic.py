@@ -59,6 +59,20 @@ class SpecialFunctionUnit(MinorFU):
         ])
     opLat = 10
 
+class MinorFPUnit(MinorFU):
+    opClasses = minorMakeOpClassSet(
+        [
+            "FloatAdd",
+            "FloatCmp",
+            "FloatCvt",
+            "FloatMult",
+            "FloatMultAcc",
+            "FloatDiv",
+            "FloatMisc",
+            "FloatSqrt"
+        ]
+    )
+
 class MinorVecAdder(MinorFU):
     opClasses = minorMakeOpClassSet(
         [
@@ -142,7 +156,7 @@ class MinorVecMisc(MinorFU):
 
 class MinorVecConfig(MinorFU):
     opClasses = minorMakeOpClassSet(
-        [    
+        [
             "SimdConfig",
         ]
     )
@@ -211,11 +225,12 @@ class MinorCustomIntFU(MinorFU):
     opLat = 1
 
 class MinorCustomFUPool(MinorFUPool):
-    funcUnits = [         
+    funcUnits = [
         SystolicArray(), # 0
-        
-        MinorVecConfig(), # 1 for vector config   
 
+        MinorVecConfig(), # 1 for vector config
+
+        MinorFPUnit(),
         MinorVecMisc(), # 2~5
         MinorVecMisc(),
         MinorVecMisc(),
@@ -267,9 +282,10 @@ class MinorCustomFUPool(MinorFUPool):
     ]
 
 class MinorCustomSparseFUPool(MinorFUPool):
-    funcUnits = [         
-        MinorVecConfig(), # for vector config   
+    funcUnits = [
+        MinorVecConfig(), # for vector config
 
+        MinorFPUnit(),
         MinorVecMisc(),
         MinorVecMisc(),
         MinorVecMisc(),
