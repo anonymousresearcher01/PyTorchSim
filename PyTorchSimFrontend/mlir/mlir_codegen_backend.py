@@ -680,11 +680,13 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                     init_vec = init
                     axis = "0, 1"
                     acc_var = init
+                    self.tile_info[acc] = 1, dtype
                 else:
                     reduced_shape = f"vector<{vec_len}x{type_name}>"
                     init_vec = self.cse.generate(self.reduction_prefix, f"vector.broadcast %{init} : {type_name} to {reduced_shape}")
                     axis = "0"
                     acc_var = init_vec
+                    self.tile_info[acc] = vec_len, dtype
             else:
                 raise NotImplementedError()
 
@@ -717,7 +719,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             # mean
             divider = self.cse.generate(self.reductions_suffix, f"arith.constant {float(self.ranges[self.reduction_depth])} : f32")
             if self.buffer_types[name][1] > 1:
-                divider_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %{divider} : f32 to vector<{4}x{type_name}>")
+                divider_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %{divider} : f32 to vector<{self.tile_info[sum][0]}x{type_name}>")
             else:
                 divider_vec = f"f{self.buffer_types[name][1]}"
             mean = self.cse.generate(self.reductions_suffix, f"arith.divf %{sum}, %{divider_vec} : {shape}")
