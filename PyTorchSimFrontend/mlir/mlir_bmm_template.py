@@ -27,7 +27,6 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
   %c0 = arith.constant 0 : index{% endif %}{% if X_transposed %}
   %x_chunk = arith.constant {{ TILE_M * 2 + 0 }} : index{% endif %}{% if W_transposed %}
   %w_chunk = arith.constant {{ TILE_K * 2 + 0 }} : index{% endif %}
-  %B = arith.constant {{ B }} : index
   %M = arith.constant {{ M }} : index
   %N = arith.constant {{ N }} : index
   %K = arith.constant {{ K }} : index
@@ -37,23 +36,21 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
   %tag = memref.alloc() : memref<1xi32>
   %v0 = arith.constant dense<0.0> : vector<{{ TILE_N }}xf32>
 
-  affine.for %b=0 to %B {
-    affine.for %t_m = 0 to %M step {{ TILE_M }} {
-      affine.for %t_n = 0 to %N step {{ TILE_N }} {
+  affine.for %b=0 to {{ B }} {
+    affine.for %t_m = 0 to {{ M }} step {{ TILE_M }} {
+      affine.for %t_n = 0 to {{ N }} step {{ TILE_N }} {
         %index2 = affine.apply #map2(%b, %t_m, %t_n){% if Bias %}
         affine.dma_start %Bias[{% if Bias_rank == 2 %}%index2{% else %}%t_n{% endif %}], %Y_buffer[0, 0], %tag[0], %c_mvin3, %{% if Bias_rank == 2 %}N{% else %}c0{% endif %}, %c_set : memref<{% if Bias_rank == 2 %}{{ M * N }}{% else %}{{ N }}{% endif %}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>{% else %}
-        affine.for %i = 0 to {{ TILE_M }} {
-          affine.vector_store %v0, %Y_buffer[%i, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_N }}xf32>
-        }{% endif %}
-        affine.for %t_k = 0 to %K step {{ TILE_K }} {
+        affine.vector_store %v0, %Y_buffer[0, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_M * TILE_N // kernel.vector_lane }}xf32>{% endif %}
+        affine.for %t_k = 0 to {{ K }} step {{ TILE_K }} {
           %index0 = affine.apply #map0(%b, %t_m, %t_k)
           %index1 = affine.apply #map1(%b, %t_k, %t_n)
           affine.dma_start %X[%index0], %X_buffer[0, 0], %tag[0], %c_mvin, {% if X_transposed %}%M, %x_chunk{% else %}%K, %c_set{% endif %} : memref<{{ B * M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32>
           affine.dma_start %W[%index1], %W_buffer[0, 0], %tag[0], %c_mvin2, {% if W_transposed %}%K, %w_chunk{% else %}%N, %c_set{% endif %} : memref<{{ B * K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
           linalg.matmul ins(%X_buffer, %W_buffer : memref<{{ TILE_M }}x{{ TILE_K }}x{{ DATA_STYPE }}, 1>, memref<{{ TILE_K }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
                   outs(%Y_buffer : memref<{{ TILE_M }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
-        } { accumulation_loop=true }
-        affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ B * M * N }}xf32>, memref<1xi32>
+          affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ B * M * N }}xf32>, memref<1xi32>
+        } { outer_loop=true }
       } { outer_loop=true }
     } { outer_loop=true }
   } { outer_loop=true }
@@ -90,9 +87,12 @@ class MLIRBMMTemplate(MLIRTemplate):
         Bias = None if len(self.input_nodes) == 2 else self.input_nodes[2]
 
         # Use BaseMLIRHardwareInfo
-        TILE_M = min(kernel.vector_lane, X.get_size()[0]) #FIXME: Tile Size is fixed, transpose is not supported
-        TILE_N = min(kernel.vector_lane, W.get_size()[1])
-        TILE_K = min(kernel.vector_lane, X.get_size()[1])
+        def round_with_lanes(value):
+            return ((value + kernel.vector_lane - 1) // kernel.vector_lane) * kernel.vector_lane
+        TILE_M = round_with_lanes(X.get_size()[1])
+        TILE_N = round_with_lanes(W.get_size()[2])
+        TILE_K = round_with_lanes(X.get_size()[2])
+        kernel.tile_size = [TILE_M, TILE_N, TILE_K]
 
         W_transposed = self.is_transposed(W)
         X_transposed = self.is_transposed(X)
@@ -121,9 +121,12 @@ class MLIRBMMTemplate(MLIRTemplate):
         code = self._template_from_string(BMM_TEMPLATE).render(**options)
         kernel.add_loop_info([options["M"], options["N"], options["K"]], [options["TILE_M"], options["TILE_N"], options["TILE_K"]])
 
-        self.header = f"float X_spad[{TILE_M}][{TILE_K}] __attribute__ ((section(\".spad\")));\n"
-        self.header += f"float W_spad[{TILE_K}][{TILE_N}] __attribute__ ((section(\".spad\")));\n"
-        self.header += f"float Y_spad[{TILE_M}][{TILE_N}] __attribute__ ((section(\".spad\")));\n"
+        self.header = f"float X_spad[{TILE_M * TILE_K // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
+        self.header += f"float W_spad[{TILE_K * TILE_N // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
+        self.header += f"float Y_spad[{TILE_M * TILE_N // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
+        self.gem5_header = f"float X_spad[{TILE_M * TILE_K}] __attribute__ ((section(\".spad\")));\n"
+        self.gem5_header += f"float W_spad[{TILE_K * TILE_N}] __attribute__ ((section(\".spad\")));\n"
+        self.gem5_header += f"float Y_spad[{TILE_M * TILE_N}] __attribute__ ((section(\".spad\")));\n"
 
         return code
 
@@ -131,6 +134,9 @@ class MLIRBMMTemplate(MLIRTemplate):
         write_path = extension_codecache.get_write_path(code)
         if not os.path.exists(write_path):
             os.makedirs(write_path)
-        write_path = os.path.join(write_path, "global_var.h")
-        if not os.path.exists(write_path):
-            write_atomic(write_path, self.header+extra_headers[0])
+        spike_write_path = os.path.join(write_path, "global_var.h")
+        gem5_write_path = os.path.join(write_path, "gem5_global_var.h")
+        if not os.path.exists(spike_write_path):
+            write_atomic(spike_write_path, self.header+extra_headers[0])
+        if not os.path.exists(gem5_write_path):
+            write_atomic(gem5_write_path, self.gem5_header+extra_headers[1])
