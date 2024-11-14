@@ -37,8 +37,8 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
   affine.for %t_m = 0 to {{ M }} step {{ TILE_M }} {
     affine.for %t_n = 0 to {{ N }} step {{ TILE_N }} {
         %index2 = affine.apply #map1(%t_m, %t_n)
+        affine.dma_start %B[%index2], %Y_buffer[0, 0], %tag[0], %c_mvin3, %N, %c_set : memref<{{ M * N }}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
         affine.for %t_k = 0 to {{ K }} step {{ TILE_K }} {
-            affine.dma_start %B[%index2], %Y_buffer[0, 0], %tag[0], %c_mvin3, %N, %c_set : memref<{{ M * N }}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
             %index0 = affine.apply #map0(%t_m, %t_k)
             %index1 = affine.apply #map1(%t_k, %t_n)
             affine.dma_start %X[%index0], %X_buffer[0, 0], %tag[0], %c_mvin, %K, %c_set : memref<{{ M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32>
