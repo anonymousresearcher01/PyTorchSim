@@ -176,7 +176,15 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       bool skip = false;
       /* Find axis */
       if (mem_node->is_async_node()) {
+        int nr_inner_loop = 0;
+        for (auto loop_idx: mem_node->get_loop_idx_list())
+          nr_inner_loop += int(tog_parser->get_loop_type(loop_idx));
+
         for (int i=0;i<tag_idx_list.size();i++) {
+          /* Nasty exception handling from tag indices :( */
+          if (nr_inner_loop != tag_idx_list.size() && i ==1)
+            continue;
+
           if (tag_idx_list.at(i) == "0")
             skip_idx_list.push_back(i);
         }
