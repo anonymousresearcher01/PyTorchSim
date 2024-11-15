@@ -86,12 +86,11 @@ class MLIRBMMTemplate(MLIRTemplate):
         Y = self.output_node
         Bias = None if len(self.input_nodes) == 2 else self.input_nodes[2]
 
-        # Use BaseMLIRHardwareInfo
-        def round_with_lanes(value):
-            return ((value + kernel.vector_lane - 1) // kernel.vector_lane) * kernel.vector_lane
-        TILE_M = round_with_lanes(X.get_size()[1])
-        TILE_N = round_with_lanes(W.get_size()[2])
-        TILE_K = round_with_lanes(X.get_size()[2])
+        M, N, K = X.get_size()[1], W.get_size()[2], X.get_size()[2]
+        m, n, k = kernel.gemmini_gemm_mapping(M, N, K)
+        TILE_M = kernel.round_with_lanes(M // m)
+        TILE_N = kernel.round_with_lanes(N // n)
+        TILE_K = kernel.round_with_lanes(K // k)
         kernel.tile_size = [TILE_M, TILE_N, TILE_K]
 
         W_transposed = self.is_transposed(W)
@@ -101,9 +100,9 @@ class MLIRBMMTemplate(MLIRTemplate):
             KERNEL_NAME=self.name,
             kernel=kernel,
             B=X.get_size()[0],
-            M=X.get_size()[1],
-            N=W.get_size()[2],
-            K=X.get_size()[2],
+            M=M,
+            N=N,
+            K=K,
             TILE_M=TILE_M,
             TILE_N=TILE_N,
             TILE_K=TILE_K,

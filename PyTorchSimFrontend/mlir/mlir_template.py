@@ -2,6 +2,7 @@ import functools
 import itertools
 import textwrap
 import re
+import math
 from typing import List, Optional
 from unittest.mock import patch
 
@@ -48,6 +49,64 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
     def add_loop_info(self, mat_size, tile_size):
         for idx, (loop_size, stride) in enumerate(zip(mat_size, tile_size)):
             self.loop_info[f"index{idx}"] = [0, loop_size, stride]
+
+    def round_with_lanes(self, value):
+        return ((value + self.vector_lane - 1) // self.vector_lane) * self.vector_lane
+
+    def gemmini_gemm_mapping(self, M, N, K):
+        spad_size = self.spad_info["spad_size"] * self.vector_lane
+        num_cores = self.num_cores
+        precision = self.precision
+        dim_I, dim_J, dim_K = M, N, K
+        dim = self.vector_lane
+
+        # split spad into 3/4 for input and 1/4 for output (only for mapping)
+        # TODO: 3/4 and 1/4 are arbitrary numbers. We should find a better way to split the spad (auto-tune?)
+        max_spad_rows = (spad_size * 3 // 4) // (dim * precision * 2) # 4 bytes per element, double buffer
+        max_acc_rows = (spad_size // 4) // (dim * 4 * 2) # 4 bytes per element, double buffer
+
+        dim_I_padded = (dim_I // dim + (dim_I % dim != 0)) * dim
+        dim_J_padded = (dim_J // dim + (dim_J % dim != 0)) * dim
+        dim_K_padded = (dim_K // dim + (dim_K % dim != 0)) * dim
+
+        db_partitions_rows = max_spad_rows // 2
+        db_mats_in_partition = db_partitions_rows // dim
+        db_mats_in_acc = max_acc_rows // dim
+        db_max_tile_i_j = math.sqrt(db_mats_in_acc)
+        db_max_tile_k = db_mats_in_partition // db_max_tile_i_j
+
+        tile_I = min(dim_I_padded // dim, math.ceil(dim_I / (db_max_tile_i_j * dim)))
+        tile_J = min(dim_J_padded // dim, math.ceil(dim_J / (db_max_tile_i_j * dim)))
+        tile_K = min(dim_K_padded // dim, math.ceil(dim_K / (db_max_tile_k * dim)))
+
+        num_tiles = tile_I * tile_J
+        if num_tiles < num_cores:
+            increase_tile = math.ceil(num_cores / num_tiles)
+            if dim_J > dim_I and dim_J > num_cores:
+                tile_J *= increase_tile
+            elif dim_I > dim_J and dim_I > num_cores:
+                tile_I *= increase_tile
+            num_tiles = tile_I * tile_J
+        if num_tiles % num_cores != 0:
+            increase_tile = num_tiles % num_cores
+            if dim_J > dim_I and dim_J > num_cores:
+                tile_J += increase_tile
+            elif dim_I > dim_J and dim_I > num_cores:
+                tile_I += increase_tile
+
+        inner_I = math.ceil(dim_I_padded / tile_I)
+        inner_J = math.ceil(dim_J_padded / tile_J)
+        inner_K = math.ceil(dim_K_padded / tile_K)
+
+        inner_I = inner_I - (inner_I & (dim) - 1)
+        inner_J = inner_J - (inner_J & (dim) - 1)
+        inner_K = inner_K - (inner_K & (dim) - 1)
+
+        tile_I = math.ceil(dim_I / inner_I)
+        tile_J = math.ceil(dim_J / inner_J)
+        tile_K = math.ceil(dim_K / inner_K)
+
+        return tile_I, tile_J, tile_K
 
     def meta_kernel(self):
         wrapper = V.graph.wrapper_code

@@ -151,7 +151,9 @@ class BaseMLIRHardwareInfo():
             "spad_paddr" : 0xD0000000,
             "spad_size" : 128 << 10 # 128KB per Lane
         }
-        self.vlen = 8 # 256bits / 32bits = 8 [elements]
+        self.precision = 4 # 32bit
+        self.num_cores = 1
+        self.vlen = 32 // self.precision # 256bits / 32bits = 8 [elements]
 
 class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
     newvar_prefix = "%"
