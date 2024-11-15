@@ -182,10 +182,6 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
             nr_inner_loop++;
 
         for (int i=0;i<tag_idx_list.size();i++) {
-          /* Nasty exception handling from tag indices :( */
-          if (nr_inner_loop != tag_idx_list.size() && i ==1)
-            continue;
-
           if (tag_idx_list.at(i) == "0")
             skip_idx_list.push_back(i);
         }
