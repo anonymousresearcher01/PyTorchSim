@@ -56,6 +56,12 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
 }
 """
 
+EMPTY_TEMPLATE = r"""
+func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y], names_str="X, W, Bias, Y", input_reorder=input_reorder)}} {
+    return
+}
+"""
+
 class MLIRGemmTemplate(MLIRTemplate):
     def __init__(self, input_nodes, layout, input_reorder=None):
         super().__init__("kernel", input_nodes, layout, input_reorder)
@@ -84,10 +90,15 @@ class MLIRGemmTemplate(MLIRTemplate):
         Bias = None if len(self.input_nodes) == 2 else self.input_nodes[2]
 
         M, N, K = X.get_size()[0], W.get_size()[1], X.get_size()[1]
-        m, n, k = kernel.gemmini_gemm_mapping(M, N, K)
-        TILE_M = kernel.round_with_lanes(M // m)
-        TILE_N = kernel.round_with_lanes(N // n)
-        TILE_K = kernel.round_with_lanes(K // k)
+        if (M == 0) or (N == 0) or (K == 0):
+            TILE_M, TILE_N, TILE_K = 0, 0, 0
+            template = EMPTY_TEMPLATE
+        else:
+            m, n, k = kernel.gemmini_gemm_mapping(M, N, K)
+            TILE_M = kernel.round_with_lanes(M // m)
+            TILE_N = kernel.round_with_lanes(N // n)
+            TILE_K = kernel.round_with_lanes(K // k)
+            template = GEMM_TEMPLATE
         kernel.tile_size = [TILE_M, TILE_N, TILE_K]
 
         W_transposed = self.is_transposed(W)
@@ -114,7 +125,7 @@ class MLIRGemmTemplate(MLIRTemplate):
             epilogue_nodes = epilogue_nodes,
             input_reorder = self.input_reorder
         )
-        code = self._template_from_string(GEMM_TEMPLATE).render(**kernel.render_options)
+        code = self._template_from_string(template).render(**kernel.render_options)
 
         self.header = f"float X_spad[{TILE_M * TILE_K // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
         self.header += f"float W_spad[{TILE_K * TILE_N // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
