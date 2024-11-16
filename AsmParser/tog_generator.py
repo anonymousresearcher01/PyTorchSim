@@ -84,7 +84,6 @@ class tog_generator:
             tile_info = {}
             tile_info["base_addr"] = dump_data["base_address"]
             tile_info["stride_list"] = dump_data["stride_list"]
-            tile_info["tile_stride"] = dump_data["tile_stride"]
             tile_info["tile_size"] = dump_data["tile_size"]
             tile_info["element_size"] = dump_data["element_size"]
             tile_info["tag_idx_list"] = dump_data["tag_idx_list"]

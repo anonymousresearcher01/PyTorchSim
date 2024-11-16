@@ -68,7 +68,6 @@ class memory_node(node):
         self.torchsim_base_addr = tile_info["base_addr"]
         self.torchsim_stride_list = tile_info["stride_list"]
         self.torchsim_tile_size = tile_info["tile_size"]
-        self.torchsim_tile_stride = tile_info["tile_stride"]
         self.torchsim_element_size = tile_info["element_size"]
         self.torchsim_tag_idx_list = tile_info["tag_idx_list"]
         self.torchsim_loop_idx_list = tile_info["loop_idx_list"]

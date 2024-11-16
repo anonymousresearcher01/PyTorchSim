@@ -21,7 +21,7 @@ std::string opcode_to_string(Opcode opcode);
 class Instruction {
  public:
   Instruction(Opcode opcode, cycle_type compute_cycle, size_t num_parents, addr_type dram_addr,
-              std::vector<size_t> tile_size, std::vector<size_t> tile_stride, size_t precision,
+              std::vector<size_t> tile_size, size_t precision,
               std::vector<int> &idx_list, std::vector<int> tag_idx_list, std::vector<int> loop_size_list);
   void finish_instruction();
   void add_child(std::shared_ptr<Instruction> child);

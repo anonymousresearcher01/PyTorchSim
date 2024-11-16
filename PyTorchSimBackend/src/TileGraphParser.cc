@@ -95,9 +95,6 @@ TileMemoryNode::TileMemoryNode(onnx::NodeProto& node) : TileNode(node) {
     } else if (attribute.name() == "torchsim_tile_size") {
       for (int i = 0; i < attribute.ints_size(); i++)
         _tile_size.push_back(attribute.ints(i));
-    } else if (attribute.name() == "torchsim_tile_stride") {
-      for (int i = 0; i < attribute.ints_size(); i++)
-        _tile_stride.push_back(attribute.ints(i));
     } else if (attribute.name() == "torchsim_tag_idx_list") {
       for (int i = 0; i < attribute.strings_size(); i++)
         _tag_idx_list.push_back(attribute.strings(i));
@@ -115,7 +112,6 @@ void TileMemoryNode::print_node() {
   spdlog::debug("{} element_size: {}", spaces, _element_size);
   spdlog::debug("{} stride_list: {} ", spaces, _stride_list);
   spdlog::debug("{} tile_size: {} ", spaces, _tile_size);
-  spdlog::debug("{} tile_stride: {} ", spaces, _tile_stride);
   spdlog::debug("{} tag_list: {}", spaces, fmt::join(_tag_idx_list, ", "));
   spdlog::debug("{} index_list: {}", spaces, fmt::join(_loop_idx_list, ", "));
 }
@@ -239,7 +235,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::MOVIN, 0,
         0, base_addr,
-        mem_node->get_tile_size(), mem_node->get_tile_stride(), mem_node->get_precision(),
+        mem_node->get_tile_size(), mem_node->get_precision(),
         iter_list, tag_list, loop_size_list
       );
       inst->set_addr_name(base_addr_name);
@@ -268,7 +264,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::MOVOUT, 0,
         0, base_addr,
-        mem_node->get_tile_size(), mem_node->get_tile_stride(), mem_node->get_precision(),
+        mem_node->get_tile_size(), mem_node->get_precision(),
         iter_list, std::vector<int>(), loop_size_list
       );
       inst->set_addr_name(base_addr_name);
@@ -314,7 +310,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::BAR, 0,
         0, base_addr,
-        std::vector<size_t>(), std::vector<size_t>(), 0,
+        std::vector<size_t>(), 0,
         iter_list, tag_list, std::vector<int>()
       );
       inst->set_addr_name(base_addr_name);
@@ -327,7 +323,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::COMP, compute_node->get_cycle(),
         0, 0,
-        std::vector<size_t>(), std::vector<size_t>(), 0,
+        std::vector<size_t>(), 0,
         iter_list, std::vector<int>(), std::vector<int>()
       );
       inst->set_overlapping_cycle(compute_node->get_overlapping_cycle());
