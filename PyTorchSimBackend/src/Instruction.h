@@ -46,31 +46,20 @@ class Instruction {
   cycle_type get_overlapping_cycle() { return overlapping_cycle; }
   cycle_type get_compute_cycle() { return compute_cycle; }
   void print();
-  // lamda function to get the dram address
-  addr_type get_dram_address(int row, int col) {
-    auto get_tile_address = [this](size_t i, size_t j) -> addr_type {
-      return dram_addr + (i * _stride_list[0] + j) * _precision;
-    };
-    if (_idx_list.size() >= 2) {
-      int len = _idx_list.size();
-      return get_tile_address(_idx_list.at(len-2) + row, _idx_list.at(len-1) + col);
-    } else if (_idx_list.size() == 1) {
-      return get_tile_address(row, _idx_list.at(0) + col);
-    } else {
-      spdlog::error("Calculating DRAM address error...");
-      exit(EXIT_FAILURE);
+  std::set<addr_type> get_dram_address(addr_type dram_req_size) {
+    std::set<addr_type> address_set;
+    for (int row=0; row<tile_size.at(0); row++) {
+      for (int col=0; col<tile_size.at(1); col++) {
+        addr_type address = dram_addr + (row* _stride_list[_stride_list.size()-2] + col* _stride_list[_stride_list.size()-1]) * _precision;
+        address_set.insert(address - (address & dram_req_size-1));
+      }
     }
+    return address_set;
   }
   size_t get_free_sram_size() { return _free_sram_size; }
   void adjust_dram_address() {
     int offset = std::inner_product(_idx_list.begin(), _idx_list.end(), _stride_list.begin(), 0);
     dram_addr += offset * _precision;
-    if (_addr_name == "arg0") {
-      for (auto i : _idx_list) {
-        printf("%d, ", i);
-      }
-      printf(" 0x%lx\n", dram_addr);
-    }
   }
   void set_free_sram_size(size_t sram_size) { _free_sram_size=sram_size; }
   void* get_owner() { return _owner; }

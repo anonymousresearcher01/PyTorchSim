@@ -130,15 +130,8 @@ void Core::dma_cycle() {
     }
   }
   /* Generate MemoryAccess */
-  while (1) {
-    MemoryAccess *access = _tma.get_memory_access();
-    if (access == nullptr)
-      return;
-
-    //spdlog::debug("[TMA {}] access: 0x{:x}, write: {}", _id, access->dram_address, access->write);
-    /* Access couldn't be nullptr, since it is not finished */
-    assert(access != nullptr);
-
+  std::vector<MemoryAccess*> access_vec = _tma.get_memory_access();
+  for (auto access : access_vec) {
     access->core_id = _id;
     access->start_cycle = _core_cycle;
     _request_queue.push(access);

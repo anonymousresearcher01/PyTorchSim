@@ -86,7 +86,7 @@ class TMA {
   }
 
   std::shared_ptr<Instruction>& get_current_inst() { return _current_inst; }
-  MemoryAccess* get_memory_access();
+  std::vector<MemoryAccess*> get_memory_access();
   uint32_t generate_mem_access_id();
 
  protected:
