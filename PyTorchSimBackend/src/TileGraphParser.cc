@@ -235,8 +235,8 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::MOVIN, 0,
         0, base_addr,
-        mem_node->get_tile_size(), mem_node->get_precision(),
-        iter_list, tag_list, loop_size_list
+        mem_node->get_tile_size(), mem_node->get_precision(), iter_list,
+        mem_node->get_stride_list(), tag_list, loop_size_list
       );
       inst->set_addr_name(base_addr_name);
       inst->set_nr_inner_loop(nr_inner_loop);
@@ -264,8 +264,8 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::MOVOUT, 0,
         0, base_addr,
-        mem_node->get_tile_size(), mem_node->get_precision(),
-        iter_list, std::vector<int>(), loop_size_list
+        mem_node->get_tile_size(), mem_node->get_precision(), iter_list,
+        mem_node->get_stride_list(), std::vector<int>(), loop_size_list
       );
       inst->set_addr_name(base_addr_name);
       inst->set_nr_inner_loop(nr_inner_loop);
@@ -310,7 +310,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::BAR, 0,
         0, base_addr,
-        std::vector<size_t>(), 0,
+        std::vector<size_t>(), 0, iter_list,
         iter_list, tag_list, std::vector<int>()
       );
       inst->set_addr_name(base_addr_name);
@@ -323,8 +323,8 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::COMP, compute_node->get_cycle(),
         0, 0,
-        std::vector<size_t>(), 0,
-        iter_list, std::vector<int>(), std::vector<int>()
+        std::vector<size_t>(), 0, iter_list, iter_list,
+        std::vector<int>(), std::vector<int>()
       );
       inst->set_overlapping_cycle(compute_node->get_overlapping_cycle());
       inst->set_compute_type(compute_node->get_compute_type());

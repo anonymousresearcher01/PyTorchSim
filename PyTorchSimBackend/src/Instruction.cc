@@ -12,13 +12,18 @@ std::string opcode_to_string(Opcode opcode) {
 
 Instruction::Instruction(Opcode opcode, cycle_type compute_cycle, size_t num_parents,
             addr_type dram_addr, std::vector<size_t> tile_size, size_t precision,
-            std::vector<int>& idx_list, std::vector<int> tag_idx_list, std::vector<int> loop_size_list)
+            std::vector<int>& idx_list, std::vector<int>& stride_list, std::vector<int> tag_idx_list, std::vector<int> loop_size_list)
   : opcode(opcode), compute_cycle(compute_cycle), ready_counter(num_parents), dram_addr(dram_addr),
-    tile_size(tile_size), _precision(precision),
-    _idx_list(idx_list), _tag_idx_list(tag_idx_list), _loop_size_list(loop_size_list) {
+    tile_size(tile_size), _precision(precision), _idx_list(idx_list),
+    _stride_list(stride_list), _tag_idx_list(tag_idx_list), _loop_size_list(loop_size_list) {
   _tile_numel = 1;
   for (auto dim : tile_size)
     _tile_numel *= dim;
+
+  /* Supporting vector */
+  if (_stride_list.size() == 1) {
+    _stride_list.push_back(1);
+  }
 }
 
 void Instruction::finish_instruction() {

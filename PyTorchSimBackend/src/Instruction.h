@@ -21,8 +21,8 @@ std::string opcode_to_string(Opcode opcode);
 class Instruction {
  public:
   Instruction(Opcode opcode, cycle_type compute_cycle, size_t num_parents, addr_type dram_addr,
-              std::vector<size_t> tile_size, size_t precision,
-              std::vector<int> &idx_list, std::vector<int> tag_idx_list, std::vector<int> loop_size_list);
+              std::vector<size_t> tile_size, size_t precision, std::vector<int> &idx_list,
+              std::vector<int> &stride_list,  std::vector<int> tag_idx_list, std::vector<int> loop_size_list);
   void finish_instruction();
   void add_child(std::shared_ptr<Instruction> child);
   bool check_ready() { return ready_counter == 0; }
@@ -49,7 +49,7 @@ class Instruction {
   // lamda function to get the dram address
   addr_type get_dram_address(int row, int col) {
     auto get_tile_address = [this](size_t i, size_t j) -> addr_type {
-      return dram_addr + (i * tile_stride[0] + j) * _precision;
+      return dram_addr + (i * _stride_list[0] + j) * _precision;
     };
     if (_idx_list.size() >= 2) {
       int len = _idx_list.size();
@@ -63,21 +63,14 @@ class Instruction {
   }
   size_t get_free_sram_size() { return _free_sram_size; }
   void adjust_dram_address() {
-    int start_pos = _idx_list.size() - _nr_inner_loop * 2;
-    int end_pos = _idx_list.size() - _nr_inner_loop;
-
-    std::vector<int> new_idx(_idx_list.begin(), _idx_list.begin() + end_pos);
-    std::vector<int> sizes(_loop_size_list.begin(), _loop_size_list.begin() + end_pos);
-    for (int i=0; i < _nr_inner_loop; i++) {
-      new_idx.at(start_pos+i) += _idx_list.at(end_pos + i);
+    int offset = std::inner_product(_idx_list.begin(), _idx_list.end(), _stride_list.begin(), 0);
+    dram_addr += offset * _precision;
+    if (_addr_name == "arg0") {
+      for (auto i : _idx_list) {
+        printf("%d, ", i);
+      }
+      printf(" 0x%lx\n", dram_addr);
     }
-
-    std::vector<int> strides(new_idx.size(), 1);
-    for (int i = sizes.size() - 2; i >= 0; --i) {
-        strides[i] = strides[i + 1] * sizes[i + 1];
-    }
-    int offset = std::inner_product(strides.begin(), strides.end(), new_idx.begin(), 0);
-    dram_addr += offset;
   }
   void set_free_sram_size(size_t sram_size) { _free_sram_size=sram_size; }
   void* get_owner() { return _owner; }
@@ -105,7 +98,6 @@ class Instruction {
   size_t ready_counter;
   std::set<std::shared_ptr<Instruction>> child_inst;
   std::vector<size_t> tile_size;
-  std::vector<size_t> tile_stride;
   size_t _tile_numel;
   size_t _nr_waiting_request=0;
   size_t _precision=0;
@@ -113,6 +105,7 @@ class Instruction {
   addr_type dram_addr;
   int _compute_type = 0;
   std::vector<int> _idx_list;
+  std::vector<int> _stride_list;
   std::vector<int> _tag_idx_list;
   std::vector<int> _loop_size_list;
   std::string _addr_name;
