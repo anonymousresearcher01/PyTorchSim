@@ -40,17 +40,28 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
     affine.for %t_m = 0 to {{ M }} step {{ TILE_M }} {
       affine.for %t_n = 0 to {{ N }} step {{ TILE_N }} {
         %index2 = affine.apply #map2(%b, %t_m, %t_n){% if Bias %}
-        affine.dma_start %Bias[{% if Bias_rank == 2 %}%index2{% else %}%t_n{% endif %}], %Y_buffer[0, 0], %tag[0], %c_mvin3, %{% if Bias_rank == 2 %}N{% else %}c0{% endif %}, %c_set : memref<{% if Bias_rank == 2 %}{{ M * N }}{% else %}{{ N }}{% endif %}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>{% else %}
+        affine.dma_start %Bias[
+        {%- if Bias_rank == 2 -%} %index2 {%- else -%} %t_n {%- endif -%}
+          ], %Y_buffer[0, 0], %tag[0], %c_mvin3,
+        %{%- if Bias_rank == 2 -%} N {%- else -%} c0 {%- endif -%}
+          , %c_set : memref<
+        {%- if Bias_rank == 2 -%} {{ M * N }} {%- else -%} {{ N }} {%- endif -%}
+          xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
+        {%- else %}
         affine.vector_store %v0, %Y_buffer[0, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_M * TILE_N // kernel.vector_lane }}xf32>{% endif %}
         affine.for %t_k = 0 to {{ K }} step {{ TILE_K }} {
           %index0 = affine.apply #map0(%b, %t_m, %t_k)
           %index1 = affine.apply #map1(%b, %t_k, %t_n)
-          affine.dma_start %X[%index0], %X_buffer[0, 0], %tag[0], %c_mvin, {% if X_transposed %}%M, %x_chunk{% else %}%K, %c_set{% endif %} : memref<{{ B * M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32>
-          affine.dma_start %W[%index1], %W_buffer[0, 0], %tag[0], %c_mvin2, {% if W_transposed %}%K, %w_chunk{% else %}%N, %c_set{% endif %} : memref<{{ B * K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32>
+          affine.dma_start %X[%index0], %X_buffer[0, 0], %tag[0], %c_mvin,
+          {%- if X_transposed -%} %M, %x_chunk {%- else -%} %K, %c_set {%- endif -%}
+             : memref<{{ B * M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32> { subtile_size=[{{ kernel.vector_lane }}, {{ TILE_K }}], async=1 }
+          affine.dma_start %W[%index1], %W_buffer[0, 0], %tag[0], %c_mvin2,
+          {%- if W_transposed -%} %K, %w_chunk {%- else -%} %N, %c_set {%- endif -%}
+             : memref<{{ B * K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ TILE_K }}, {{ kernel.vector_lane }}], async=1 }
           linalg.matmul ins(%X_buffer, %W_buffer : memref<{{ TILE_M }}x{{ TILE_K }}x{{ DATA_STYPE }}, 1>, memref<{{ TILE_K }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
                   outs(%Y_buffer : memref<{{ TILE_M }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
         } { accumulation_loop=true }
-        affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ B * M * N }}xf32>, memref<1xi32>
+        affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<{{ B * M * N }}xf32>, memref<1xi32> { subtile_size=[{{ TILE_M }}, {{ TILE_N }}], async=1 }
       } { outer_loop=true }
     } { outer_loop=true }
   } { outer_loop=true }

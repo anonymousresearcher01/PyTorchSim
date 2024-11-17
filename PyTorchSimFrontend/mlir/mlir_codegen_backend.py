@@ -772,7 +772,12 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         # ):
         #     return
         def template_store(options):
-            line = f"affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set : memref<{options['TILE_M']}x{options['TILE_N']}xf32, 1>, memref<{options['M'] * options['N']}xf32>, memref<1xi32>" #FIXME: Using constant index and tag
+            subtile_size = [self.vector_lane, self.vector_lane]
+            async_flag = 1
+            line = f"affine.dma_start %Y_buffer[0, 0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set"\
+                   f": memref<{options['TILE_M']}x{options['TILE_N']}xf32, 1>,"\
+                   f"memref<{options['M'] * options['N']}xf32>, memref<1xi32> "\
+                   f"{{ subtile_size={subtile_size}, aync={async_flag} }}"   #FIXME: Using constant index and tag
             self.cse.generate(self.stores, line, assignment = False)
         self.body.splice(self.codegen_init())
         self.body.splice(self.loads)
