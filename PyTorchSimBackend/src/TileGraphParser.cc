@@ -101,6 +101,8 @@ TileMemoryNode::TileMemoryNode(onnx::NodeProto& node) : TileNode(node) {
     } else if (attribute.name() == "torchsim_loop_idx_list") {
       for (int i = 0; i < attribute.strings_size(); i++)
         _loop_idx_list.push_back(attribute.strings(i));
+    } else if (attribute.name() == "torchsim_is_async") {
+      _is_async = attribute.i();
     }
   }
 }
@@ -241,6 +243,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       inst->set_addr_name(base_addr_name);
       inst->set_nr_inner_loop(nr_inner_loop);
       inst->adjust_dram_address();
+      inst->set_is_async(mem_node->is_async_node());
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
     } else if (tile_node->get_type() == TileType::STORE_NODE) {
@@ -270,6 +273,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       inst->set_addr_name(base_addr_name);
       inst->set_nr_inner_loop(nr_inner_loop);
       inst->adjust_dram_address();
+      inst->set_is_async(mem_node->is_async_node());
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
     } else if (tile_node->get_type() == TileType::MEMORY_WAIT_NODE) {

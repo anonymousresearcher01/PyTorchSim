@@ -29,7 +29,7 @@ class Instruction {
   const Opcode get_opcode() { return opcode; }
   bool is_dma_read() { return opcode == Opcode::MOVIN; }
   bool is_dma_write() { return opcode == Opcode::MOVOUT; }
-  bool is_async_dma() { return _tag_idx_list.size() >= 2; } // FIXME.
+  bool is_async_dma() { return _is_async_dma; }
   bool is_ready() { return ready_counter == 0; }
   void inc_ready_counter() { ready_counter++; }
   void dec_ready_counter() {
@@ -60,6 +60,12 @@ class Instruction {
   void adjust_dram_address() {
     int offset = std::inner_product(_idx_list.begin(), _idx_list.end(), _stride_list.begin(), 0);
     dram_addr += offset * _precision;
+    if (_addr_name == "arg0") {
+      for (int i=0;i <_idx_list.size();i++) {
+        printf("%d * %d, ", _idx_list.at(i), _stride_list.at(i));
+      }
+      printf(" 0x%lx\n", dram_addr);
+    }
   }
   void set_free_sram_size(size_t sram_size) { _free_sram_size=sram_size; }
   void* get_owner() { return _owner; }
@@ -72,6 +78,7 @@ class Instruction {
   std::string get_addr_name() { return _addr_name; }
   void set_nr_inner_loop(int nr) { _nr_inner_loop = nr; }
   int get_nr_inner_loop() { return _nr_inner_loop; }
+  void set_is_async(bool is_async) { _is_async_dma = is_async; }
 
   cycle_type start_cycle;
   cycle_type finish_cycle;
@@ -99,4 +106,5 @@ class Instruction {
   std::vector<int> _loop_size_list;
   std::string _addr_name;
   int _nr_inner_loop = 0;
+  bool _is_async_dma=false;
 };

@@ -71,6 +71,7 @@ class memory_node(node):
         self.torchsim_element_size = tile_info["element_size"]
         self.torchsim_tag_idx_list = tile_info["tag_idx_list"]
         self.torchsim_loop_idx_list = tile_info["loop_idx_list"]
+        self.torchsim_is_async = tile_info["is_async"]
 
 class load_node(memory_node):
     pass
