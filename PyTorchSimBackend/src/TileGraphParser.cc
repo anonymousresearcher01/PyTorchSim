@@ -174,11 +174,6 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       bool skip = false;
       /* Find axis */
       if (mem_node->is_async_node()) {
-        int nr_inner_loop = 0;
-        for (auto loop_idx: mem_node->get_loop_idx_list())
-          if (tog_parser->get_loop_type(loop_idx)==LoopType::INNER_LOOP)
-            nr_inner_loop++;
-
         for (int i=0;i<tag_idx_list.size();i++) {
           if (tag_idx_list.at(i) == "0")
             skip_idx_list.push_back(i);
@@ -200,7 +195,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
           continue;
       }
 
-      printIndexMap("[TOGParser] Load Node " + tile_node->get_name(), iter);
+      printIndexMap("[TOGParser] Load Node " + mem_node->get_base_addr_name(), iter);
       /* Lookup given name's address */
       addr_type base_addr = tog_parser->lookup(base_addr_name);
       std::vector<int> iter_list;
@@ -287,9 +282,9 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       auto& wait_tag_list = wait_node->get_tag_idx_list();
       int inner_step = -1;
       /* Add accumulation loop info to tag list */
-      for (auto loop_idx = iter.begin();
-          loop_idx != std::next(iter.begin(), wait_tag_list.size()); ++loop_idx) {
-        if (tog_parser->get_loop_type(loop_idx->first)==LoopType::ACCUMULATION_LOOP) {
+      for (auto loop_idx = iter.begin(); loop_idx != iter.end(); ++loop_idx) {
+        /* FIXME. Used heuristic that wait_tag_size has 2d dim */
+        if (tog_parser->get_loop_type(loop_idx->first)==LoopType::ACCUMULATION_LOOP && wait_tag_list.size() != 2) {
           tag_list.push_back(loop_idx->second);
         }
       }
