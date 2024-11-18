@@ -55,7 +55,13 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
                 if self.validation:
                     self.writeline(f'{DTYPE_TO_C[arg_type]} {arg_name}[{arg_size}]{self.ending}')
                 else:
-                    self.writeline(f'{DTYPE_TO_C[arg_type]}* {arg_name} = malloc({arg_size*torch.finfo(arg_type).bits // 8}){self.ending}')
+                    if torch.is_floating_point(torch.tensor([], dtype=arg_type)):
+                        bits = torch.finfo(arg_type).bits
+                    elif arg_type == torch.bool:
+                        bits = 8
+                    else:
+                        bits = torch.iinfo(arg_type).bits
+                    self.writeline(f'{DTYPE_TO_C[arg_type]}* {arg_name} = malloc({arg_size * bits // 8}){self.ending}')
                 name_set.add(arg_name)
         self.writeline(self.newline)
 
