@@ -60,12 +60,6 @@ class Instruction {
   void adjust_dram_address() {
     int offset = std::inner_product(_idx_list.begin(), _idx_list.end(), _stride_list.begin(), 0);
     dram_addr += offset * _precision;
-    if (_addr_name == "arg0") {
-      for (int i=0;i <_idx_list.size();i++) {
-        printf("%d * %d, ", _idx_list.at(i), _stride_list.at(i));
-      }
-      printf(" 0x%lx\n", dram_addr);
-    }
   }
   void set_free_sram_size(size_t sram_size) { _free_sram_size=sram_size; }
   void* get_owner() { return _owner; }
