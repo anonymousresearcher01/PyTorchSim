@@ -902,7 +902,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         # Case 2. 3-D tensor kernel without reduction. Access vector granule!
         if len(self.itervars) == 3 and self.reduction_depth == len(self.itervars):
-            self.tile_desc.n_col = self.ranges[-1]
+            self.tile_desc.n_col = min(self.tile_desc.get_tile_size(), self.roundup_vectorlane(self.ranges[-1], 8)) # FIXME. To inefficient?
             self.tile_desc.n_row = 1
 
         # Case 3. N-D tensor kernel with reduction. Not implemented. Need this?
