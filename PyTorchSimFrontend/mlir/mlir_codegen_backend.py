@@ -257,34 +257,42 @@ DMA_TYPE = {
 }
 
 class MLIRTile():
-    def __init__(self, n_row, n_col, vector_lane) -> None:
+    TILE_ROW_WISE = 0
+    TILE_COL_WISE = 1
+    TILE_PER_LANE_ROW_WISE = 2
+    TILE_PER_LANE_COL_WISE = 3
+    def __init__(self, n_row, n_col, vector_lane, used_vector_lane=None) -> None:
         self.n_row = n_row
         self.n_col = n_col
         self.vector_lane = vector_lane
-        self.vector_lane_axis = self.get_cols_per_lane() > 0 #(0: Row major, 1: Column major)
+        if used_vector_lane is None:
+            self.used_vector_lane = self.vector_lane
+        else:
+            self.used_vector_lane = used_vector_lane
+        self.vector_lane_axis = (self.n_col//self.used_vector_lane) > 0 #(0: Row major, 1: Column major)
 
     def get_tile_size(self):
         return self.n_row * self.n_col
 
     def get_rows_per_lane(self):
-        if self.n_row % self.vector_lane != 0 and self.n_row > 1:
-            print(f"[Warning] n_row({self.n_row}) % vector_lane({self.vector_lane}) != 0")
-        return self.n_row // self.vector_lane
+        if self.n_row % self.used_vector_lane != 0 and self.n_row > 1:
+            print(f"[Warning] n_row({self.n_row}) % vector_lane({self.used_vector_lane}) != 0")
+        return self.div_round_up(self.n_row, self.used_vector_lane)
 
     def get_cols_per_lane(self):
-        if self.n_col % self.vector_lane != 0 and self.n_col > 1:
-            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.vector_lane}) != 0")
-        return self.n_col // self.vector_lane
+        if self.n_col % self.used_vector_lane != 0 and self.n_col > 1:
+            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.used_vector_lane}) != 0")
+        return self.div_round_up(self.n_col, self.used_vector_lane)
 
     def get_tile_size_per_lane(self):
-        if self.get_tile_size() % self.vector_lane != 0:
-            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.vector_lane}) != 0")
-        return (self.get_tile_size() + self.vector_lane - 1) // self.vector_lane
+        if self.get_tile_size() % self.used_vector_lane != 0:
+            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.used_vector_lane}) != 0")
+        return self.div_round_up(self.get_tile_size(), self.used_vector_lane)
 
     def get_tile_shape(self):
         return f"{self.n_row}x{self.n_col}"
 
-    def get_chunk_size(self, is_vector_lane_row_major):
+    def get_chunk_size(self, is_vector_lane_row_major,):
         if self.is_vector():
             return self.get_tile_size_per_lane()
         if is_vector_lane_row_major:
@@ -295,6 +303,10 @@ class MLIRTile():
 
     def is_vector(self):
         return self.n_row == 1
+
+    @staticmethod
+    def div_round_up(size, round_val):
+        return (size + round_val - 1) // round_val
 
 class MLIRKernel(mlir_common.BaseMLIRKernel):
     overrides = ExtensionOverrides
