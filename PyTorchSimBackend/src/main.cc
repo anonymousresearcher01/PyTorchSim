@@ -9,6 +9,9 @@
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
 
+const char* env_value = std::getenv("BACKENDSIM_DRYRUN");
+bool isDryRun = (env_value != nullptr && std::string(env_value) == "1");
+
 bool loadConfig(const std::string& config_path, json& config_json) {
   std::ifstream config_file(config_path);
   if (config_file.is_open()) {
@@ -89,7 +92,8 @@ void interactive_mode(Simulator* simulator) {
     } else {
       spdlog::error("Error: unknown command {} Available commands are: launch, until, quit.", token);
     }
-    std::cout << "[" << simulator->get_core_cycle() << "] BackendSim> ";
+    if (isDryRun)
+      std::cout << "[" << simulator->get_core_cycle() << "] BackendSim> ";
   }
 }
 

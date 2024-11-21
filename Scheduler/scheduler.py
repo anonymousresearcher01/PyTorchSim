@@ -230,7 +230,7 @@ class ExecutionEngine:
         onnx_path = os.path.join(result_path, "tile_graph.onnx")
 
         attribute_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
-        self.backend_simulator.create_attribute_file(attribute_path, inputs)
+        attribute_path = self.backend_simulator.create_attribute_file(attribute_path, inputs)
         return onnx_path, attribute_path
 
     def launch_kernel(self, current_cycle, partion_idx=0):

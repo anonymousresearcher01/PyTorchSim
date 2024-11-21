@@ -142,17 +142,18 @@ class CycleSimulator():
 
         dir_path = os.path.join(os.path.dirname(target_binary), "m5out")
         gem5_cmd = [self.GEM5_PATH, "-d", dir_path, self.GEM5_SCRIPT_PATH, "-c", target_binary, "--vlane", str(vectorlane_size)]
-        print("[Gem5Simulator] cmd> ", " ".join(gem5_cmd))
-
-        # Create progress thread
-        finished = False
-        progress_thread = threading.Thread(target=show_progress)
-        progress_thread.start()
-
         try:
-            output = subprocess.check_output(gem5_cmd, stderr=subprocess.DEVNULL)
-            finished = True
-            progress_thread.join()
+            # Create progress thread
+            if not int(os.environ.get('BACKENDSIM_DRYRUN', default=0)):
+                print("[Gem5Simulator] cmd> ", " ".join(gem5_cmd))
+                finished = False
+                progress_thread = threading.Thread(target=show_progress)
+                progress_thread.start()
+                output = subprocess.check_output(gem5_cmd, stderr=subprocess.DEVNULL)
+                finished = True
+                progress_thread.join()
+            else:
+                output = subprocess.check_output(gem5_cmd, stderr=subprocess.DEVNULL)
         except subprocess.CalledProcessError as e:
             print("[Gem5Simulator] Command failed with exit code", e.returncode)
             print("[Gem5Simulator] Error output:", e.output)
@@ -225,6 +226,7 @@ class BackendSimulator():
 
     def interactive_simulation(self):
         cmd = f"{self.get_backend_command()} --mode interactive"
+        print("[BackendSimulator] cmd> ", cmd)
         if self.process is None:
             self.process = subprocess.Popen(
                 shlex.split(cmd),
@@ -243,7 +245,8 @@ class BackendSimulator():
     def send_command(self, command):
         if self.process:
             try:
-                print(command)
+                if not int(os.environ.get('BACKENDSIM_DRYRUN', default=0)):
+                    print(command)
                 self.process.stdin.write(command + '\n')
                 self.process.stdin.flush()
                 ret = self.process.stderr.readline().strip()
