@@ -6,6 +6,24 @@ void printIndexMap(std::string prefix, const std::map<std::string, int>& indexMa
         oss << "{" << key << ": " << value << "} ";
     }
     spdlog::trace("{}: {}", prefix, oss.str());
+
+}
+
+uint32_t calculateAddress(const std::vector<uint32_t>& loop_size, const std::vector<uint32_t>& loop_idx) {
+  std::vector<int> stride_list(loop_size.size(), 1);
+
+  for (int i = loop_size.size() - 2; i >= 0; --i) {
+    stride_list[i] = stride_list[i + 1] * loop_size[i + 1];
+  }
+
+  spdlog::trace("Numa stride_list: {}", fmt::join(stride_list, ", "));
+
+  int address = std::inner_product(
+      stride_list.begin(), stride_list.end(),
+      loop_idx.begin(),
+      0
+  );
+  return address;
 }
 
 TileNode::TileNode(onnx::NodeProto& node) {
@@ -195,12 +213,13 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
           continue;
       }
 
-      printIndexMap("[TOGParser] Load Node " + mem_node->get_base_addr_name(), iter);
       /* Lookup given name's address */
       addr_type base_addr = tog_parser->lookup(base_addr_name);
       std::vector<int> iter_list;
       std::vector<int> tag_list;
       std::vector<int> loop_size_list;
+      std::vector<uint32_t> outer_loop_idx;
+      std::vector<uint32_t> outer_loop_size;
       int nr_inner_loop = 0;
       auto& loop_idx_list = mem_node->get_loop_idx_list();
       for (auto loop_idx: loop_idx_list) {
@@ -215,8 +234,18 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
             loop_idx != loop_idx_list.end() - nr_inner_loop; ++loop_idx) {
         // Check loop type and process
         if (tog_parser->get_loop_type(*loop_idx)==LoopType::ACCUMULATION_LOOP) {
-            auto iter_value = iter.at(*loop_idx);
-            tag_list.push_back(iter_value);
+          auto iter_value = iter.at(*loop_idx);
+          tag_list.push_back(iter_value);
+        }
+      }
+
+      for (auto loop_idx = loop_idx_list.begin();
+            loop_idx != loop_idx_list.end(); ++loop_idx) {
+        if (tog_parser->get_loop_type(*loop_idx)==LoopType::PARALLEL_LOOP) {
+          uint32_t step = (uint32_t)tog_parser->get_loop_step(*loop_idx);
+          auto iter_value = iter.at(*loop_idx) / step;
+          outer_loop_idx.push_back(iter_value);
+          outer_loop_size.push_back(tog_parser->get_loop_size(*loop_idx));
         }
       }
 
@@ -229,6 +258,18 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
         }
       }
 
+      /* Calc numa id */
+      int numa_id = 0;
+      auto numa_stride_size = tog_parser->lookupNumaInfo(base_addr_name).size();
+      if (numa_stride_size) {
+        int total_idx = calculateAddress(outer_loop_size, outer_loop_idx);
+        int stride_idx = calculateAddress(outer_loop_size, tog_parser->lookupNumaInfo(base_addr_name));
+        spdlog::trace("[Numa trace] t_idx: {}, s_idx: {}", fmt::join(outer_loop_idx, ", "), fmt::join(tog_parser->lookupNumaInfo(base_addr_name), ", "));
+        spdlog::trace("[Numa trace] total_idx {} stride_idx {}", total_idx, stride_idx);
+        numa_id = total_idx / stride_idx;
+      }
+
+      printIndexMap("[TOGParser] Load Node " + mem_node->get_base_addr_name() + " Numa_id: " + std::to_string(numa_id), iter);
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::MOVIN, 0,
         0, base_addr,
@@ -239,16 +280,18 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       inst->set_nr_inner_loop(nr_inner_loop);
       inst->adjust_dram_address();
       inst->set_is_async(mem_node->is_async_node());
+      inst->set_numa_id(numa_id);
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
     } else if (tile_node->get_type() == TileType::STORE_NODE) {
-      printIndexMap("[TOGParser] Store Node ", iter);
       std::shared_ptr<TileMemoryNode> mem_node = std::static_pointer_cast<TileMemoryNode>(tile_node);
       auto base_addr_name = mem_node->get_base_addr_name();
       /* Lookup given name's address */
       addr_type base_addr = tog_parser->lookup(base_addr_name);
       std::vector<int> iter_list;
       std::vector<int> loop_size_list;
+      std::vector<uint32_t> outer_loop_idx;
+      std::vector<uint32_t> outer_loop_size;
       int nr_inner_loop = 0;
       auto& loop_idx_list = mem_node->get_loop_idx_list();
       for (auto loop_idx: loop_idx_list) {
@@ -257,8 +300,26 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
         loop_size_list.push_back(tog_parser->get_loop_size(loop_idx));
         if (tog_parser->get_loop_type(loop_idx)==LoopType::INNER_LOOP)
           nr_inner_loop++;
+        if (tog_parser->get_loop_type(loop_idx)==LoopType::PARALLEL_LOOP) {
+          uint32_t step = (uint32_t) tog_parser->get_loop_step(loop_idx);
+          auto iter_value = iter.at(loop_idx) / step;
+          outer_loop_idx.push_back(iter_value);
+          outer_loop_size.push_back(tog_parser->get_loop_size(loop_idx)/ step);
+        }
       }
 
+      /* Calc numa id */
+      int numa_id = 0;
+      auto numa_stride_size = tog_parser->lookupNumaInfo(base_addr_name).size();
+      if (numa_stride_size) {
+        int total_idx = calculateAddress(outer_loop_size, outer_loop_idx);
+        int stride_idx = calculateAddress(outer_loop_size, tog_parser->lookupNumaInfo(base_addr_name));
+        spdlog::trace("[Numa trace] t_idx: {}, s_idx: {}", fmt::join(outer_loop_idx, ", "), fmt::join(tog_parser->lookupNumaInfo(base_addr_name), ", "));
+        spdlog::trace("[Numa trace] total_idx {} stride_idx {}", total_idx, stride_idx);
+        numa_id = total_idx / stride_idx;
+      }
+
+      printIndexMap("[TOGParser] Store Node " + mem_node->get_base_addr_name() + " Numa_id: " + std::to_string(numa_id), iter);
       std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
         Opcode::MOVOUT, 0,
         0, base_addr,
@@ -269,6 +330,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       inst->set_nr_inner_loop(nr_inner_loop);
       inst->adjust_dram_address();
       inst->set_is_async(mem_node->is_async_node());
+      inst->set_numa_id(numa_id);
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
     } else if (tile_node->get_type() == TileType::MEMORY_WAIT_NODE) {
@@ -440,6 +502,16 @@ TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
       spdlog::info("[TOGPaser] Address Attribute key: {} address: 0x{:x}", it.key(), value);
     }
   }
+  if (_attribute_json.contains("address_numa_stride")) {
+    auto address_numa_stride = _attribute_json["address_numa_stride"];
+    for (auto it = address_numa_stride.begin(); it != address_numa_stride.end(); ++it) {
+      auto value_list = it.value();
+      for (auto value : value_list) {
+        _arg_numa_stride[it.key()].push_back(value);
+      }
+      spdlog::info("[TOGPaser] Address numa info key: {} numa stride : {}", it.key(), fmt::join(_arg_numa_stride[it.key()], ", "));
+    }
+  }
 
   /* ONNX file parsing */
   _tog_path = onnx_path;
@@ -583,4 +655,12 @@ addr_type TileGraphParser::lookup(std::string key) {
     _arg_to_address[key] = 0;
     return 0;
   }
+}
+
+const std::vector<uint32_t>& TileGraphParser::lookupNumaInfo(std::string key) {
+  static std::vector<uint32_t> dummy_result = {};
+  auto val = _arg_numa_stride.find(key);
+  if (val == _arg_numa_stride.end())
+    return dummy_result;
+  return _arg_numa_stride.at(key);
 }

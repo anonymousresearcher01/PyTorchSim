@@ -70,6 +70,7 @@ class TileGraphParser {
   int get_loop_step(std::string key) { return std::get<1>(_loop_size_map[key]); }
   LoopType get_loop_type(std::string key) { return std::get<2>(_loop_size_map[key]); }
   const std::map<std::string, std::tuple<int, int, LoopType>> & get_loop_map() { return _loop_size_map; }
+  const std::vector<uint32_t> &lookupNumaInfo(std::string key);
  private:
   void register_tile(std::shared_ptr<TileNode> tile_node);
   void _tile_generate() {}
@@ -84,6 +85,7 @@ class TileGraphParser {
   std::vector<std::shared_ptr<TileNode>> _tile_vec;
   std::unique_ptr<TileGraph> _tile_graph;
   std::map<std::string, addr_type> _arg_to_address;
+  std::map<std::string, std::vector<uint32_t>> _arg_numa_stride;
   std::map<std::string, std::tuple<int, int, LoopType>> _loop_size_map;
 };
 
