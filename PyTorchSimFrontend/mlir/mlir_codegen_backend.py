@@ -1057,9 +1057,11 @@ class MLIRScheduling(BaseScheduling):
         self._ready_to_flush = status
 
     def can_fuse_vertical(self, node1, node2):
+        return False
         return self.can_fuse_horizontal(node1, node2) and not node1.is_reduction()
 
     def can_fuse_horizontal(self, node1, node2):
+        return False
         _, (vars1, reduce1) = node1.group
         _, (vars2, reduce2) = node2.group
         if vars1 == vars2 and reduce1 == reduce2:
