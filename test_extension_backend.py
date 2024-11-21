@@ -230,9 +230,9 @@ class DecoderBlock(nn.Module):
         super(DecoderBlock, self).__init__()
         self.multihead_attn = my_MultiheadAttention(num_heads, embed_dim)
         self.layer_norm = nn.LayerNorm(embed_dim)
-        self.ffn1 = nn.Linear(embed_dim, embed_dim*3)
+        self.ffn1 = nn.Linear(embed_dim, embed_dim*4)
         self.act = nn.ReLU()
-        self.ffn2 = nn.Linear(embed_dim*3, embed_dim)
+        self.ffn2 = nn.Linear(embed_dim*4, embed_dim)
 
     def forward(self, x):
         result = self.multihead_attn(x, x, x)
@@ -259,13 +259,10 @@ class my_MultiheadAttention(nn.Module):
 
     def attention(self, query, key, value):
         d_k = query.size(-1)
-        print("Attention in CPU >")
-        print("Score CPU > ")
         print(torch.matmul(query, key.transpose(-2, -1)))
 
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
         p_attn = scores.softmax(dim=-1)
-        print("Softmax CPU > ")
         print(p_attn)
         return torch.matmul(p_attn, value), p_attn
 
@@ -276,48 +273,19 @@ class my_MultiheadAttention(nn.Module):
             for lin, x in zip(self.linears, (query, key, value))
         ]
 
-        if query.device == torch.device("cpu"):
-            print("QKV After Linear Projection in CPU >")
-            print("CPU Query > ", query)
-            print("CPU Query Weight > ", self.linears[0].weight)
-            print("CPU Query Bias > ", self.linears[0].bias)
-            print("CPU Key > ", key)
-            print("CPU Key Weight > ", self.linears[1].weight)
-            print("CPU Key Bias > ", self.linears[1].bias)
-            print("CPU Value > ", value)
-            print("CPU Value Weight > ", self.linears[2].weight)
-            print("CPU Value Bias > ", self.linears[2].bias)
-
         # 2) Apply attention on all the projected vectors in batch.
         # x, self.attn = self.attention(query, key, value)
         # d_k = query.size(-1)
 
-        if query.device == torch.device("cpu"):
-            print("Attention in CPU >")
-            print("Score CPU > ")
-            print(torch.matmul(query, key.transpose(-2, -1)))
-
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.d_k)
         p_attn = scores.softmax(dim=-1)
-        if query.device == torch.device("cpu"):
-            print("Softmax CPU > ")
-            print(p_attn)
         x = torch.matmul(p_attn, value)
-        if query.device == torch.device("cpu"):
-            print("Attention Result in CPU >")
-            print("CPU X > ", x)
-
         # 3) "Concat" using a view and apply a final linear.
         x = (
             x.transpose(0, 1)
             .contiguous()
             .view(-1, self.h * self.d_k)
         )
-
-        if query.device == torch.device("cpu"):
-            print("X After Concat in CPU >")
-            print("CPU X > ", x)
-
         del query
         del key
         del value
@@ -599,8 +567,8 @@ def test_MultiAttention(device):
     test_result("Multihead Attention Forward", res, cpu_res)
 
 def test_DecoderBlock(device):
-    cpu_query = torch.randn(16, 128)
-    decoder_block = DecoderBlock(128, 8)
+    cpu_query = torch.randn(512, 768)
+    decoder_block = DecoderBlock(768, 12)
     cpu_res = decoder_block(cpu_query)
 
     query = cpu_query.clone().to(device=device)
