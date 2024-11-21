@@ -16,6 +16,7 @@ typedef struct {
   bool write;
   bool request;
   uint32_t core_id;
+  uint32_t numa_id=0;
   Instruction* owner_instruction;
   uint32_t parition_id = 0;
   cycle_type start_cycle;

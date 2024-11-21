@@ -66,6 +66,8 @@ class Instruction {
   void set_owner(void *owner) { _owner = owner;}
   void set_compute_type(int type) { _compute_type = type; }
   int get_compute_type() { return _compute_type; }
+  void set_numa_id(int numa_id) { _numa_id = numa_id; }
+  uint32_t get_numa_id() { return _numa_id; }
   std::vector<int>& get_idx_list() { return _idx_list; }
   std::vector<int>& get_tag_idx_list() { return _tag_idx_list; }
   void set_addr_name(std::string name) { _addr_name = name; }
@@ -93,6 +95,7 @@ class Instruction {
   size_t _precision=0;
   size_t _free_sram_size=0;
   addr_type dram_addr;
+  uint32_t _numa_id = 0; // For DMA instruction
   int _compute_type = 0;
   std::vector<int> _idx_list;
   std::vector<int> _stride_list;
