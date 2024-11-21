@@ -32,7 +32,7 @@ void launchKernel(Simulator* simulator, std::string onnx_path, std::string attri
   auto graph_praser = TileGraphParser(onnx_path, attribute_json);
   std::unique_ptr<TileGraph>& tile_graph = graph_praser.get_tile_graph();
   tile_graph->set_arrival_time(request_time ? request_time : simulator->get_core_cycle());
-  spdlog::info("Register graph: {}", onnx_path);
+  spdlog::info("Register graph path: {} operation: {} at {}", onnx_path, tile_graph->get_name(), simulator->get_core_cycle());
 
   simulator->schedule_graph(partiton_id, std::move(tile_graph));
 }

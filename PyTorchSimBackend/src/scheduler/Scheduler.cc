@@ -46,7 +46,8 @@ void Scheduler::refresh_status() {
 
   /* Remove finished request */
   if (_tile_graph.at(0)->is_finished()) {
-    spdlog::info("Kernel {} finish at {}",
+    spdlog::info("Graph path: {} operation: {} finish at {}",
+                 _tile_graph.at(0)->get_graph_path(),
                  _tile_graph.at(0)->get_name(), *_core_cycle);
     spdlog::info("Total compute time {}",
                  *_core_cycle - _tile_graph.at(0)->get_arrival_time());

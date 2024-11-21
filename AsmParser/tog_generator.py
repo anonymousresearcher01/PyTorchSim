@@ -31,7 +31,7 @@ class tog_generator:
     LoopNodeKind = 2
     DMANodeKind = 3
     DMAWaitNodeKind = 4
-    def __init__(self) -> None:
+    def __init__(self, origins=None) -> None:
         self.module_name = "tile_operation_graph"
         self.module = None
         self.raw_graph = {}
@@ -41,6 +41,7 @@ class tog_generator:
         self.parent_to_children = defaultdict(list)
         self.new_node_id = 0
         self.loop_end_stack = []
+        self.origins = origins
 
     def append_depth_stack(self, node):
         self.node_depth_stack[self.node_depth_pointer].append(node)
@@ -204,9 +205,9 @@ class tog_generator:
                 if iter_node.torchsim_compute_type == 1:
                     iter_node.torchsim_overlapping_cycle = iter_node.torchsim_cycle - vector_lane 
 
-
+        origin_info = "_".join(map(str, self.origins))
         onnx_node_list = [node.to_onnx() for node in node_list] # Exclude root node
-        dump_onnx_graph(name, onnx_node_list)
+        dump_onnx_graph(name, onnx_node_list, origin_info)
 
 if __name__ == "__main__":
     t = tog_generator()

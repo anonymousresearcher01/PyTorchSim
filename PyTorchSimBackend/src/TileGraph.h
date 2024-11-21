@@ -33,7 +33,7 @@ class TileSubGraph {
 
 class TileGraph {
  public:
-  TileGraph(std::string name) : _name(name), _subgraph_vec(), _cpu_graph_map() {}
+  TileGraph(std::string path, std::string name) : _path(path), _name(name), _subgraph_vec(), _cpu_graph_map() {}
   void append_subgraph(std::shared_ptr<TileSubGraph> subgraph);
   bool empty(int core_id) {
     if (_vec_index != _subgraph_vec.size()) {
@@ -59,6 +59,7 @@ class TileGraph {
     _loop_index_list.push_back(loop_idx);
     _ranges.push_back(range);
   }
+  std::string get_graph_path() { return _path; }
   std::string get_name() { return _name; }
   void set_arrival_time(cycle_type arrival_time) { _arrival_time = arrival_time; }
   cycle_type get_arrival_time() { return _arrival_time; }
@@ -119,7 +120,8 @@ class TileGraph {
 
  private:
   int _vec_index=0;
-  std::string _name;
+  std::string _path;
+  std::string _name = "?";
   std::vector<std::string> _loop_index_list;
   std::vector<std::tuple<int, int, int>> _ranges;
   std::vector<std::shared_ptr<TileSubGraph>> _subgraph_vec;

@@ -97,12 +97,12 @@ def connect_nodes(parent, child):
     child.add_parent(parent)
     parent.add_child(child)
 
-def dump_onnx_graph(name, node_list):
+def dump_onnx_graph(name, node_list, origin_info="dummy_tile_graph"):
     graph_def = onnx.helper.make_graph(
         inputs=[],
         outputs=[],
         nodes=node_list,
-        name="Dummy tile graph",
+        name=origin_info,
     )
     model_def = onnx.helper.make_model(graph_def, producer_name="PyTorchSim")
     model_def.opset_import[0].version = 13

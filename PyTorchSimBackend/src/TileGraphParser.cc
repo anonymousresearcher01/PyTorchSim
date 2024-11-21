@@ -511,6 +511,8 @@ TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
   model_proto.ParseFromZeroCopyStream(&zero_copy_input) && model_istream.eof();
 
   auto input = model_proto.graph().input();
+  auto graph_name = model_proto.graph().name();
+  graph_name = graph_name == "" ? "?" : graph_name;
   for (onnx::NodeProto node_proto : model_proto.graph().node()) {
     std::string op_type = node_proto.op_type();
     TileType type = TileNode::get_tile_type(op_type);
@@ -559,7 +561,7 @@ TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
     exit(EXIT_FAILURE);
   }
 
-  _tile_graph = std::make_unique<TileGraph>(TileGraph(onnx_path));
+  _tile_graph = std::make_unique<TileGraph>(TileGraph(onnx_path, graph_name));
   int last_outer_idx = -1;
   /* Extract outer loop */
   for (int i=0;i<_loop_nodes.size();i++) {

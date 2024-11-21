@@ -342,6 +342,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.affine_yield = {}
         self.welford_reduce_out = None
         self.reduce_iterator = {}
+        self.origins = None
 
     def get_constant_vector(self, expr):
         constant_vector = [[int(expr.coeff(var)),None] for var in self.itervars]
@@ -524,6 +525,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 _, _, _, kernel.buffer_types = kernel.args.mlir_argdefs()
                 kernel.reduction_idx = {var: i for i, var in enumerate(reduction_vars)}
                 node.run(vars, reduction_vars)
+
+                # Preserve origin node info
+                kernel.origins = { str(op) for op in node.node.origins }
 
         src_code = self.codegen_kernel(kernel_name=kernel_name)
         self.meta_kernel()
@@ -1090,7 +1094,7 @@ class MLIRScheduling(BaseScheduling):
         kernel_name = f"extension_kernel_{MLIRScheduling.count}"
         MLIRScheduling.count += 1
         src_code = ex_kernel.codegen_nodes(nodes, kernel_name)
-        self.define_kernel(src_code, kernel_name, ex_kernel.vector_lane, ex_kernel.spad_info)
+        self.define_kernel(src_code, kernel_name, ex_kernel.vector_lane, ex_kernel.spad_info, origins=ex_kernel.origins)
         ex_kernel.call_kernel(kernel_name)
         _, args, _, _ = ex_kernel.args.mlir_argdefs()
         args = ", ".join(args)
@@ -1118,7 +1122,7 @@ class MLIRScheduling(BaseScheduling):
             wrapper.header.writeline(code)
             self.outer_function.add(function_name)
 
-    def define_kernel(self, src_code, kernel_name, vector_lane, spad_info, tile_size=[1, 1, 1], loop_size=None):
+    def define_kernel(self, src_code, kernel_name, vector_lane, spad_info, tile_size=[1, 1, 1], loop_size=None, origins={}):
         wrapper = V.graph.wrapper_code
         if src_code in wrapper.src_to_kernel:
             kernel_name = wrapper.src_to_kernel[src_code]
@@ -1131,6 +1135,7 @@ class MLIRScheduling(BaseScheduling):
             codecache_def.writeline(f"tile_size={tile_size},")
             codecache_def.writeline(f"loop_size={loop_size},")
             codecache_def.writeline(f"spad_info={spad_info},")
+            codecache_def.writeline(f"origins={origins},")
             codecache_def.writeline("arg_attributes=arg_attributes)")
             wrapper.define_kernel(kernel_name, codecache_def.getvalue(), cuda=False)
         return kernel_name

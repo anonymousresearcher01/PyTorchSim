@@ -143,7 +143,8 @@ class MLIRCodeCache:
              validation_binary_name="validation_bin",
              cycle_wrapper_name="cycle_wrapper",
              cycle_binary_name="cycle_bin",
-             arg_attributes=[], vectorlane_size=16, tile_size=[], spad_info=None, **kwargs):
+             arg_attributes=[], vectorlane_size=16, tile_size=[],
+             spad_info=None, origins=None, **kwargs):
         write_path = get_write_path(source_code)
         key, input_path = write(source_code, "mlir", specified_dir=write_path)
         new_input_path = os.path.splitext(input_path)[0]
@@ -216,7 +217,7 @@ class MLIRCodeCache:
         offset = vectorlane_size
         if kwargs['loop_size'] is not None and kwargs['loop_size'][0] < vectorlane_size:
             offset = kwargs['loop_size'][0]
-        tile_graph_generator = tog_generator()
+        tile_graph_generator = tog_generator(origins)
         tile_graph_generator.load_file(raw_tog_path)
         tile_graph_generator.generate_tile_graph(
             os.path.join(write_path, "tile_graph.onnx"),
@@ -301,13 +302,13 @@ class CustomAsyncCompile(AsyncCompile):
         self.cycle_wrapper_name = "cycle_wrapper"
         self.cycle_binary_name = "cycle_binary"
 
-    def mlir(self, source_code, arg_attributes=[], vectorlane_size=16, tile_size=[], spad_info=None, **kwargs):
+    def mlir(self, source_code, arg_attributes=[], vectorlane_size=16, tile_size=[], spad_info=None, origins=None, **kwargs):
         def task():
             key = MLIRCodeCache.load(source_code,
                                           valdiation_wrapper_name=self.validation_binary_name,
                                           validation_binary_name=self.validation_binary_name,
                                           arg_attributes=arg_attributes, vectorlane_size=vectorlane_size,
-                                          tile_size=tile_size, spad_info=spad_info, **kwargs)
+                                          tile_size=tile_size, spad_info=spad_info, origins=origins, **kwargs)
             return key
         future = self.submit(task)
         def dummy_simulator(*args, **kwargs):
