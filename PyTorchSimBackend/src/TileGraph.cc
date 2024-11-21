@@ -48,11 +48,16 @@ std::shared_ptr<Tile> TileSubGraph::get_tile() {
 
 
 void TileGraph::append_subgraph(std::shared_ptr<TileSubGraph> subgraph) {
-  _subgraph_vec.push_back(std::move(subgraph));
+  if(subgraph->get_core_id() == -1){
+    _subgraph_vec.push_back(std::move(subgraph));
+  } 
+  else {
+    _mapped_subgraph[subgraph->get_core_id()].push(std::move(subgraph));
+  }
 }
 
 bool TileGraph::is_finished() {
-  bool finished = _vec_index == _subgraph_vec.size();
+  bool finished = _vec_index == _subgraph_vec.size() && _mapped_subgraph.empty();
   /* Check all outer loop is allocated */
   if (!finished)
     return finished;
@@ -105,11 +110,19 @@ std::shared_ptr<Tile> TileGraph::get_tile(int core_id, int slot_id) {
 }
 
 void TileGraph::allocate_subgraph(int core_id, int slot_id) {
-  if (_vec_index==_subgraph_vec.size()) {
-    _cpu_graph_map[core_id][slot_id] = nullptr;
-    return;
+  bool mapped_sub_graph_empty = true;
+  if (_mapped_subgraph.find(core_id) != _mapped_subgraph.end() && !_mapped_subgraph[core_id].empty()) {
+    mapped_sub_graph_empty = false;
+    _cpu_graph_map[core_id][slot_id] = _mapped_subgraph[core_id].front();
+    _mapped_subgraph[core_id].pop();
+    if(_mapped_subgraph[core_id].empty())
+      _mapped_subgraph.erase(core_id);
   }
-  spdlog::trace("[TileGraph] Core {} allocated new subgraph ({}/{})", core_id, _vec_index, _subgraph_vec.size());
-  std::shared_ptr<TileSubGraph> subgraph = _subgraph_vec.at(_vec_index++);
-  _cpu_graph_map[core_id][slot_id] = subgraph;
+  if (_vec_index !=_subgraph_vec.size()) {
+    spdlog::trace("[TileGraph] Core {} allocated new subgraph ({}/{})", core_id, _vec_index, _subgraph_vec.size());
+    std::shared_ptr<TileSubGraph> subgraph = _subgraph_vec.at(_vec_index++);
+    _cpu_graph_map[core_id][slot_id] = subgraph;
+  }
+  _cpu_graph_map[core_id][slot_id] = nullptr;
+  return;
 }
