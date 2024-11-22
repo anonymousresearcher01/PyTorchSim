@@ -176,11 +176,12 @@ class BackendSimulator():
     BACKENDSIM_DRYRUN = "BACKENDSIM_DRYRUN"
     BACKENDSIM_EAGER_MODE = "BACKENDSIM_EAGER_MODE"
     FINISH_STR = "Simulation Finished"
-    def __init__(self, backend_path, config_path) -> None:
+    def __init__(self, backend_path, config_path, vectorlane_size=-1) -> None:
         self.base_dir = backend_path
         self.config_path = config_path
         self.config_json = self.load_json(self.config_path)
         self.process = None
+        self.vectorlane_size = vectorlane_size
 
     def get_backend_command(self):
         bin = os.path.join(self.base_dir, "build/bin/Simulator")
@@ -234,7 +235,7 @@ class BackendSimulator():
         cmd = f"{self.get_backend_command()} --mode interactive"
         if BACKENDSIM_DEBUG_LEVEL:
             cmd += f" --log_level {BACKENDSIM_DEBUG_LEVEL}"
- 
+
         print("[BackendSimulator] cmd> ", cmd)
         if self.process is None:
             self.process = subprocess.Popen(
@@ -284,17 +285,55 @@ class BackendSimulator():
         ret = self.send_command(command)
         return int(ret.split(" ")[-1])
 
-    def create_attribute_file(self, attribute_path, inputs):
+    def create_attribute_file(self, attribute_path, inputs, **kwargs):
         address_info = {}
+        json_content = {}
         os.makedirs(attribute_path, exist_ok=True)
         index = str(len(os.listdir(attribute_path)))
         attribute_path = os.path.join(attribute_path, index)
 
         for idx, tensor in enumerate(inputs):
             address_info[f"arg{idx}"] = tensor.data_ptr()
+        json_content["address_info"] = address_info
+
+        if len(kwargs['tile_size'])==3 and kwargs['tile_size'][0] != 1:
+            # GEMM
+            import copy
+            zero_skip = {}
+            input, weight = inputs[:2]
+            M, N, K = kwargs['tile_size']
+
+            padded_input = copy.deepcopy(input.cpu())
+            padded_weight = copy.deepcopy(weight.cpu())
+
+            original_input_shape = input.shape
+            original_weight_shape = weight.shape
+
+            pad_M =  M - original_input_shape[0] if original_input_shape[0] < N else 0
+            pad_K =  K - original_weight_shape[0] if original_weight_shape[0] < N else 0
+            pad_N =  N - original_weight_shape[1] if original_weight_shape[1] < N else 0
+
+            padded_input = np.pad(
+                padded_input,
+                pad_width=((0, pad_M), (0, pad_K)),
+                mode='constant',
+                constant_values=0
+            )
+
+            padded_weight = np.pad(
+                padded_weight,
+                pad_width=((0, pad_K), (0, pad_N)),
+                mode='constant',
+                constant_values=0
+            )
+            input_zero_pos = self.find_zero_sub_tensors(padded_input)
+            weight_zero_pos = self.find_zero_sub_tensors(padded_weight)
+            zero_skip["arg0"] = input_zero_pos
+            zero_skip["arg1"] = weight_zero_pos
+            json_content["zero_skip"] = zero_skip
 
         with open(attribute_path, "w") as f:
-            json.dump({"address_info" : address_info}, f, indent=4)
+            json.dump(json_content, f, indent=4)
         return attribute_path
 
     def load_json(self, config_path):
@@ -314,6 +353,23 @@ class BackendSimulator():
             return self.config_json["core_freq"] * 1000 * 1000 # MHz
         else:
             raise KeyError("Key 'core_freq' not found in JSON.")
+
+    def find_zero_sub_tensors(self, tensor):
+        x, y = self.vectorlane_size, self.vectorlane_size
+        zero_positions = {}
+
+        # Need to set vectorlane size
+        if self.vectorlane_size == -1:
+            return zero_positions
+
+        for i in range(0, tensor.shape[0], y):
+            for j in range(0, tensor.shape[1], x):
+                sub_tensor = tensor[i:i + y, j:j + x]
+                if np.all(sub_tensor == 0):
+                    if i not in zero_positions:
+                        zero_positions[i] = {}
+                    zero_positions[i][j] = 0 # i pos : j pos : 0
+        return zero_positions
 
     @staticmethod
     def get_result_from_file(result_path):

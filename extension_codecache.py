@@ -332,7 +332,7 @@ class CustomAsyncCompile(AsyncCompile):
             attribute_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
             backend_path = os.path.join(TORCHSIM_DIR, "PyTorchSimBackend")
             backsim = BackendSimulator(backend_path, TORCHSIM_BACKEND_CONFIG)
-            attribute_path = backsim.create_attribute_file(attribute_path, args)
+            attribute_path = backsim.create_attribute_file(attribute_path, args, tile_size=tile_size)
             result_path = backsim.simulation(onnx_path, attribute_path)
             result = BackendSimulator.get_result_from_file(result_path)
             return result
