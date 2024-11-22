@@ -23,6 +23,58 @@ uint32_t calculateAddress(const std::vector<uint32_t>& loop_size, const std::vec
   return address;
 }
 
+std::vector<uint32_t> calc_output_idx(TileGraphParser* tog_parser, std::map<std::string, int>& iter) {
+  // Extract outer loop
+  // Extract inner loop
+  std::vector<uint32_t> outer_loop;
+  std::vector<uint32_t> inner_loop;
+  uint32_t step = std::stoi(tog_parser->getMetaByName("systolic_size"));
+  int offset = 0;
+  for (auto loop_idx = iter.begin(); loop_idx != iter.end(); ++loop_idx) {
+    if (tog_parser->get_loop_type(loop_idx->first)!=LoopType::INNER_LOOP)
+      outer_loop.push_back(loop_idx->second);
+    else
+      inner_loop.push_back(loop_idx->second);
+  }
+
+  offset = outer_loop.size() - inner_loop.size();
+  for (int i=0; i<inner_loop.size(); i++)
+    outer_loop[offset+i] += inner_loop[i] * step;
+  return outer_loop;
+}
+
+bool find_output_idx(TileGraphParser* tog_parser, std::vector<uint32_t>& output_idx) {
+  if (output_idx.size() != 3) {
+    spdlog::error("Unsupported type operation... Can't zero skip");
+    exit(EXIT_FAILURE);
+  }
+  uint32_t m, n, k;
+  m = output_idx.at(0);
+  n = output_idx.at(1);
+  k = output_idx.at(2);
+
+  auto attr_json = tog_parser->get_attribute_file();
+
+  // Check arg0: m -> k
+  bool found_arg0 = false;
+  if (attr_json["zero_skip"].contains("arg0")) {
+    auto& arg0 = attr_json["zero_skip"]["arg0"];
+    if (arg0.contains(std::to_string(m)) && arg0[std::to_string(m)].contains(std::to_string(k))) {
+      found_arg0 = true;
+    }
+  }
+
+  // Check arg1: n -> k
+  bool found_arg1 = false;
+  if (attr_json["zero_skip"].contains("arg1")) {
+    auto& arg1 = attr_json["zero_skip"]["arg1"];
+    if (arg1.contains(std::to_string(k)) && arg1[std::to_string(k)].contains(std::to_string(n))) {
+      found_arg1 = true;
+    }
+  }
+  return found_arg0 || found_arg1;
+}
+
 TileNode::TileNode(onnx::NodeProto& node) {
   _type = get_tile_type(node.op_type());
   for (auto attribute : node.attribute()) {
@@ -374,6 +426,18 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       );
       inst->set_overlapping_cycle(compute_node->get_overlapping_cycle());
       inst->set_compute_type(compute_node->get_compute_type());
+
+      /* Check should we have to skip */
+      auto output_idx_list = calc_output_idx(tog_parser, iter); // (M,N,K) order
+      if (compute_node->get_compute_type() == 1 && output_idx_list.size() == 3) { // FIXME. hardcoded type
+        bool skip = find_output_idx(tog_parser, output_idx_list);
+        if (skip) {
+          inst->set_compute_cycle(0);
+          inst->set_overlapping_cycle(0);
+          spdlog::trace("[TOGParser/Sparse] Skip output tile index: {}", fmt::join(output_idx_list, ","));
+        }
+      }
+
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
     } else if (tile_node->get_type() == TileType::LOOP_INDEX_NODE) {
