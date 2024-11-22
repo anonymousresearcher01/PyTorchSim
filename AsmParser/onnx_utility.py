@@ -97,7 +97,7 @@ def connect_nodes(parent, child):
     child.add_parent(parent)
     parent.add_child(child)
 
-def dump_onnx_graph(name, node_list, origin_info="dummy_tile_graph"):
+def dump_onnx_graph(name, node_list, sa_size, origin_info="dummy_tile_graph"):
     graph_def = onnx.helper.make_graph(
         inputs=[],
         outputs=[],
@@ -106,7 +106,9 @@ def dump_onnx_graph(name, node_list, origin_info="dummy_tile_graph"):
     )
     model_def = onnx.helper.make_model(graph_def, producer_name="PyTorchSim")
     model_def.opset_import[0].version = 13
-
+    meta = model_def.metadata_props.add()
+    meta.key = "systolic_size"
+    meta.value = str(sa_size)
     onnx.save(model_def, name)
 
 if __name__ == "__main__":

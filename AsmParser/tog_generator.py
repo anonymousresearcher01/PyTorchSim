@@ -207,7 +207,7 @@ class tog_generator:
 
         origin_info = "_".join(map(str, self.origins))
         onnx_node_list = [node.to_onnx() for node in node_list] # Exclude root node
-        dump_onnx_graph(name, onnx_node_list, origin_info)
+        dump_onnx_graph(name, onnx_node_list, vector_lane, origin_info)
 
 if __name__ == "__main__":
     t = tog_generator()
