@@ -14,39 +14,43 @@ fi
 
 GEMM_PATH="$1"
 SIMULATOR_PATH="$TORCHSIM_DIR/PyTorchSimBackend/build/bin/Simulator"
+GEMM_DIR_NAME=$(basename "$GEMM_PATH")
+echo "GEMM Directory Name: $GEMM_DIR_NAME"
 
 CONFIG_LIST=(
     "$TORCHSIM_DIR/PyTorchSimBackend/configs/systolic_ws_128x128_c2_simple_noc_tpuv2.json"
     "$TORCHSIM_DIR/PyTorchSimBackend/configs/systolic_ws_128x128_c2_booksim_tpuv2.json"
     "$TORCHSIM_DIR/PyTorchSimBackend/configs/systolic_ws_128x128_c2_chiplet_tpuv2.json"
+    "$TORCHSIM_DIR/PyTorchSimBackend/configs/systolic_ws_128x128_c2_chiplet_tpuv2_xnuma.json"
 )
-
-ATTRIBUTE_FILE=""
-if [ $# -eq 2 ]; then
-    ATTRIBUTE_FILE="$GEMM_PATH/attribute/$2"
+shift
+for ATTRIBUTE in "$@"; do
+    ATTRIBUTE_FILE="$GEMM_PATH/attribute/$ATTRIBUTE"
     if [ ! -f "$ATTRIBUTE_FILE" ]; then
         echo "Error: Attribute file '$ATTRIBUTE_FILE' does not exist."
         exit 1
     fi
-    echo "Using attribute file: $ATTRIBUTE_FILE"
-else
-    echo "No attribute file provided."
-    exit 1
-fi
-
-RESULTS_DIR="./results/$2"
-mkdir -p "$RESULTS_DIR"
-
+    ATTRIBUTE_FILES+=("$ATTRIBUTE_FILE")
+done
 MODELS_LIST="$GEMM_PATH/tile_graph.onnx"
+ATTRIBUTE_PATH="$GEMM_PATH/attribute"
 
 for CONFIG in "${CONFIG_LIST[@]}"; do
     CONFIG_NAME=$(basename "$CONFIG" .json)
 
-    OUTPUT_FILE="$RESULTS_DIR/${CONFIG_NAME}_result.txt"
+    for ATTRIBUTE_FILE in "${ATTRIBUTE_FILES[@]}"; do
+        ATTRIBUTE_NAME=$(basename "$ATTRIBUTE_FILE")
 
-    # Run Simulator
-    echo "$SIMULATOR_PATH" --config "$CONFIG" --models_list "$MODELS_LIST" --attributes_list "$ATTRIBUTE_FILE"
-      "$SIMULATOR_PATH" --config "$CONFIG" --models_list "$MODELS_LIST" --log_level trace --attributes_list "$ATTRIBUTE_FILE" > "$OUTPUT_FILE"
+        RESULTS_DIR="./results/$GEMM_DIR_NAME/$ATTRIBUTE_NAME"
+        mkdir -p "$RESULTS_DIR"
+        OUTPUT_FILE="$RESULTS_DIR/${CONFIG_NAME}_result.txt"
 
-    echo "===== Simulation for $CONFIG completed. Results saved to $OUTPUT_FILE ====="
+        # Run Simulator
+        echo "$SIMULATOR_PATH" --config "$CONFIG" --models_list "$MODELS_LIST" --attributes_list "$ATTRIBUTE_PATH/$ATTRIBUTE_NAME"
+        "$SIMULATOR_PATH" --config "$CONFIG" --models_list "$MODELS_LIST" --log_level trace --attributes_list "$ATTRIBUTE_PATH/$ATTRIBUTE_NAME" > "$OUTPUT_FILE" &
+
+        echo "===== Simulation for $CONFIG completed. Results saved to $OUTPUT_FILE ====="
+    done
 done
+
+wait
