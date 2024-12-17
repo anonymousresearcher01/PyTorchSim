@@ -37,11 +37,11 @@ RUN pip install mypy pre-commit
 
 # Build Gem5
 ENV LD_LIBRARY_PATH /opt/conda/lib:$LD_LIBRARY_PATH
-RUN git clone https://github.com/PSAL-POSTECH/gem5.git --branch TorchSim
+RUN git clone git@github.com:PSAL-POSTECH/gem5.git --branch TorchSim
 RUN cd gem5 && scons build/RISCV/gem5.opt -j $(nproc)
 
 # Build LLVM RISC-V
-RUN git clone https://github.com/PSAL-POSTECH/llvm-project.git --branch torchsim
+RUN git clone git@github.com:PSAL-POSTECH/llvm-project.git --branch torchsim
 RUN cd llvm-project && mkdir build && cd build && \
     cmake -DLLVM_ENABLE_PROJECTS=mlir -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/riscv-llvm -DLLVM_TARGETS_TO_BUILD=RISCV -G "Unix Makefiles" ../llvm && \
     make -j && make install
@@ -49,6 +49,7 @@ RUN cd llvm-project && mkdir build && cd build && \
 # Store RISC-V LLVM for TorchSim
 ENV TORCHSIM_LLVM_PATH /riscv-llvm/bin
 ENV TORCHSIM_LLVM_INCLUDE_PATH /riscv-llvm/include
+ENV TORCHSIM_DIR /workspace/PyTorchSim
 ENV LLVM_DIR /riscv-llvm
 
 # Download RISC-V tool chain
@@ -63,7 +64,7 @@ ENV PATH $RISCV/bin:$PATH
 
 # Install Spike simulator
 RUN apt -y install device-tree-compiler
-RUN git clone https://github.com/PSAL-POSTECH/riscv-isa-sim.git --branch TorchSim && cd riscv-isa-sim && mkdir build && cd build && \
+RUN git clone git@github.com:PSAL-POSTECH/riscv-isa-sim.git --branch TorchSim && cd riscv-isa-sim && mkdir build && cd build && \
     ../configure --prefix=$RISCV && make -j && make install
 
 # Install Proxy kernel
@@ -75,7 +76,7 @@ RUN git clone https://github.com/riscv-software-src/riscv-pk.git && \
 RUN apt install ninja-build && pip install onnx matplotlib && pip install --user conan==1.56.0
 
 # Prepare ONNXim project
-RUN git clone https://github.com/PSAL-POSTECH/PyTorchSim.git --branch develop
+RUN git clone git@github.com:PSAL-POSTECH/PyTorchSim.git --branch develop
 RUN cd PyTorchSim/PyTorchSimBackend && \
     git submodule update --recursive --init && \
     mkdir -p build && \
@@ -83,5 +84,6 @@ RUN cd PyTorchSim/PyTorchSimBackend && \
     conan install .. --build=missing && \
     cmake .. && \
     make -j$(nproc)
+
 ENV PATH $PATH:/root/.local/bin
 ENV LD_LIBRARY_PATH /usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
