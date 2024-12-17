@@ -38,7 +38,7 @@ from torch._inductor.codegen.common import (
 )
 from torch.testing._internal.common_utils import IS_MACOS
 from torch.testing._internal.common_utils import TestCase as TorchTestCase
-from test_extension_backend import DecoderBlock, MLP
+from test_extension_backend import DecoderBlock, MLP, test_result
 
 def remove_build_path():
     if sys.platform == "win32":
@@ -70,16 +70,6 @@ def count_zeros_in_tensor_list(tensor_list):
     print("Sparsity: ", zero_ratio * 100, "%")
     return total_zeros, total_elements, zero_ratio
 
-def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
-    message = f"|{name} Test Passed|"
-    if torch.allclose(out.cpu(), cpu_out, rtol=rtol, atol=atol):
-        print("-" * len(message))
-        print(message)
-        print("-" * len(message))
-    else:
-        print("custom out: ", out.cpu())
-        print("cpu out: ", cpu_out)
-
 def test_dec_inf(device, sparsity=0.0, block=8):
     torch.manual_seed(0)
     decoder_block = DecoderBlock(768, 12)
@@ -105,7 +95,7 @@ def test_dec_inf(device, sparsity=0.0, block=8):
     ])
 
     decoder_block.to(device=device)
-    opt_fn = torch.compile()(decoder_block)
+    opt_fn = torch.compile(dynamic=False)(decoder_block)
     y = opt_fn(query)
     test_result("MLP Forward", y, cpu_y)
 
@@ -122,7 +112,7 @@ def test_mlp_inf(device, batch_size=64, input_size=64, hidden_size=32, output_si
     count_zeros_in_tensor_list([model.linear1.weight, model.linear2.weight])
     model.requires_grad = False
     model.to(device=device)
-    opt_fn = torch.compile()(model)
+    opt_fn = torch.compile(dynamic=False)(model)
     y = opt_fn(x1)
     cpu_model = copy.deepcopy(model).to("cpu")
     cpu_model.requires_grad = False
