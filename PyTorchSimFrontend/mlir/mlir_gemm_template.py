@@ -81,6 +81,9 @@ class MLIRGemmTemplate(MLIRTemplate):
 
     def is_transposed(self, node):
         if isinstance(node, ReinterpretView):
+            if 0 in node.layout.stride: # [MoE] Temporary solution
+                if node.layout.stride[1] == 0:
+                    return True
             if node.layout.stride != node.data.layout.stride:
                 if node.layout.stride[-2] == node.data.layout.stride[-1] and node.layout.stride[-1] == node.data.layout.stride[-2]:
                     return True
