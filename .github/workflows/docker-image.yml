@@ -7,10 +7,10 @@ on:
     branches: [ "master", "develop" ]
 
 jobs:
-
   build:
-
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    outputs:
+      test_failed: ${{ steps.check_test_outcome.outputs.test_failed }}
     steps:
       # Step 1: Checkout the repository
       - name: Checkout Code
@@ -25,15 +25,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Step 3: Build the Docker Image
+      # Step 3: Pull the Cached Image
+      - name: Pull Cached Image
+        run: docker pull ghcr.io/psal-postech/torchsim_base:latest || echo "No cache available"
+
+
+
+      # Step 5: Test the Docker Image (Optional)
+      - name: Run a container for testing
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        continue-on-error: true
+        run: |
+          echo ${IMAGE_TAG}
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            torchsim-ci:1735302113 python3 PyTorchSim/test_extension_backend.py
+        outputs:
+          test_failed: ${{ job.status == 'failure' }}
+
       - name: Build Docker Image with Token
         env:
-          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
         run: |
-          docker build \
-            --build-arg GIT_ACCESS_TOKEN=${GIT_ACCESS_TOKEN} \
-            -t torchsim-ci:$(date +%s) .
-      # Step 4: Test the Docker Image (Optional)
-      - name: Run a container for testing
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            "${IMAGE_TAG}" chown -R $(id -u):$(id -g) /dump
+
+      - name: Fail report
+        if: failure()
         run: |
-          docker run --rm torchsim-ci echo "Docker Build Successful"
+          echo "One or more steps in the workflow failed."
+          exit 1

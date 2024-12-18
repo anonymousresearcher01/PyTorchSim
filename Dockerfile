@@ -23,32 +23,26 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
-
-# Copied from Gem5 Docker file
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt -y update && apt -y upgrade && \
-    apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
-    libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
-    python3-dev python-is-python3 doxygen libboost-all-dev \
-    libhdf5-serial-dev python3-pydot libpng-dev libelf-dev pkg-config pip \
-    python3-venv black libssl-dev libasan5 libubsan1
-RUN pip install mypy pre-commit
+FROM ghcr.io/psal-postech/torchsim_base:latest
 
 # Pass Access Token securely
 ARG GIT_ACCESS_TOKEN
+ARG GEM5_ASSET_ID
+ARG LLVM_ASSET_ID
 ENV PATH $PATH:/root/.local/bin
 ENV LD_LIBRARY_PATH /usr/lib/x86_64-linux-gnu:/opt/conda/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:$LD_LIBRARY_PATH
 
-# Build Gem5
-RUN git clone https://${GIT_ACCESS_TOKEN}@github.com/PSAL-POSTECH/gem5.git --branch TorchSim
-RUN cd gem5 && scons build/RISCV/gem5.opt -j $(nproc)
+# Download GEM5 for torchsim
+RUN curl -L -H "Accept: application/octet-stream" -H "Authorization: Bearer ${GIT_ACCESS_TOKEN}"  https://api.github.com/repos/PSAL-POSTECH/gem5/releases/assets/${GEM5_ASSET_ID} -o /tmp/gem5-release.tar.gz && \
+    mkdir -p /gem5 && \
+    tar -xzf /tmp/gem5-release.tar.gz -C /gem5 && \
+    rm /tmp/gem5-release.tar.gz
+ENV GEM5_PATH /gem5/release/gem5.opt
 
-# Build LLVM RISC-V
-RUN git clone https://${GIT_ACCESS_TOKEN}@github.com/PSAL-POSTECH/llvm-project.git --branch torchsim --depth 1
-RUN cd llvm-project && mkdir build && cd build && \
-    cmake -DLLVM_ENABLE_PROJECTS=mlir -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/riscv-llvm -DLLVM_TARGETS_TO_BUILD=RISCV -G "Unix Makefiles" ../llvm && \
-    make -j && make install
+# Download LLVM RISC-V for torchsim
+RUN curl -L -H "Accept: application/octet-stream" -H "Authorization: Bearer ${GIT_ACCESS_TOKEN}"  https://api.github.com/repos/PSAL-POSTECH/llvm-project/releases/assets/${LLVM_ASSET_ID} -o /tmp/riscv-llvm-release.tar.gz && \
+    tar -xzf /tmp/riscv-llvm-release.tar.gz -C / && \
+    rm /tmp/riscv-llvm-release.tar.gz
 
 # Store RISC-V LLVM for TorchSim
 ENV TORCHSIM_LLVM_PATH /riscv-llvm/bin
@@ -56,18 +50,7 @@ ENV TORCHSIM_LLVM_INCLUDE_PATH /riscv-llvm/include
 ENV TORCHSIM_DIR /workspace/PyTorchSim
 ENV LLVM_DIR /riscv-llvm
 
-# Download RISC-V tool chain
-RUN apt install -y wget && \
-    wget https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2023.12.14/riscv64-glibc-ubuntu-22.04-llvm-nightly-2023.12.14-nightly.tar.gz && \
-    wget https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2023.12.14/riscv64-elf-ubuntu-20.04-llvm-nightly-2023.12.14-nightly.tar.gz && \
-    tar -zxvf riscv64-elf-ubuntu-20.04-llvm-nightly-2023.12.14-nightly.tar.gz && tar -zxvf riscv64-elf-ubuntu-20.04-llvm-nightly-2023.12.14-nightly.tar.gz && \
-    rm *.tar.gz
-
-ENV RISCV /workspace/riscv
-ENV PATH $RISCV/bin:$PATH
-
 # Install Spike simulator
-RUN apt -y install device-tree-compiler
 RUN git clone https://${GIT_ACCESS_TOKEN}@github.com/PSAL-POSTECH/riscv-isa-sim.git --branch TorchSim && cd riscv-isa-sim && mkdir build && cd build && \
     ../configure --prefix=$RISCV && make -j && make install
 
@@ -75,9 +58,6 @@ RUN git clone https://${GIT_ACCESS_TOKEN}@github.com/PSAL-POSTECH/riscv-isa-sim.
 RUN git clone https://github.com/riscv-software-src/riscv-pk.git && \
      cd riscv-pk && git checkout 4f3debe4d04f56d31089c1c716a27e2d5245e9a1 && mkdir build && cd build && \
     ../configure --prefix=$RISCV --host=riscv64-unknown-elf && make -j && make install
-
-# Install torchsim dependency
-RUN apt install ninja-build && pip install onnx matplotlib && pip install --user conan==1.56.0
 
 # Prepare ONNXim project
 RUN git clone https://${GIT_ACCESS_TOKEN}@github.com/PSAL-POSTECH/PyTorchSim.git --branch develop

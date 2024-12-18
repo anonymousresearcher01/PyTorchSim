@@ -17,7 +17,7 @@ from Simulator.simulator import FunctionalSimulator, CycleSimulator, BackendSimu
 
 LOCK_TIMEOUT = 600
 TORCHSIM_DUMP_PATH = os.environ.get('TORCHSIM_DUMP_PATH',
-                        default = f"{tempfile.gettempdir()}/torchinductor_{getpass.getuser()}")
+                        default = f"{tempfile.gettempdir()}/torchinductor")
 TORCHSIM_DUMP_FILE = int(os.environ.get('TORCHSIM_DUMP_FILE', default=True))
 TORCHSIM_VALIDATION_MODE = int(os.environ.get('TORCHSIM_VALIDATION_MODE', default=True))
 TORCHSIM_LLVM_PATH = os.environ.get('TORCHSIM_LLVM_PATH', default="/usr/bin")
