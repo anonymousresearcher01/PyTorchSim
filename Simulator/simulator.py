@@ -75,7 +75,7 @@ class FunctionalSimulator():
 
         return array_size, file_path
 
-    def run_spike(self, args, arg_attributes, path, binary, intermediate_op=None, vectorlane_size=4, spad_info=None):
+    def run_spike(self, args, arg_attributes, path, binary, intermediate_op=None, vectorlane_size=4, spad_info=None, cleanup=False):
         load_path = self.path
         dump_path = self.path
 
@@ -122,6 +122,11 @@ class FunctionalSimulator():
         for (arg_name, arg_attribute), arg, path in zip(arg_attributes, args, file_path):
             if LLVMKernelArgs.is_llvm_arg_out(arg_attribute[0]):
                 self.load_tensor(arg, arg_name, arg_attribute, path)
+
+        if cleanup:
+            for path in file_path:
+                if os.path.exists(path):
+                    os.remove(path)
 
 class CycleSimulator():
     def __init__(self) -> None:

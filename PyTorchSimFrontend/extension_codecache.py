@@ -307,7 +307,8 @@ class CustomAsyncCompile(AsyncCompile):
                 funcsim.run_spike(args, arg_attributes,
                                   result_path, self.validation_binary_name,
                                   kwargs['intermediate_op'] if 'intermediate_op' in kwargs else None,
-                                  vectorlane_size=vectorlane_size, spad_info=spad_info)
+                                  vectorlane_size=vectorlane_size, spad_info=spad_info,
+                                  cleanup=extension_config.CONFIG_CLEANUP_DUMP_ARGS)
             if extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
                 return
 

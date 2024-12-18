@@ -24,6 +24,7 @@ CONFIG_TORCHSIM_DUMP_PATH = os.environ.get('TORCHSIM_DUMP_PATH',
                         default = f"{tempfile.gettempdir()}/torchinductor")
 CONFIG_TORCHSIM_DUMP_FILE = int(os.environ.get('TORCHSIM_DUMP_FILE', default=True))
 CONFIG_TORCHSIM_VALIDATION_MODE = int(os.environ.get('TORCHSIM_VALIDATION_MODE', default=True))
+CONFIG_CLEANUP_DUMP_ARGS = int(os.environ.get('CLEANUP_DUMP_ARGS', default=False))
 
 # LLVM PATH
 CONFIG_TORCHSIM_LLVM_PATH = os.environ.get('TORCHSIM_LLVM_PATH', default="/usr/bin")
