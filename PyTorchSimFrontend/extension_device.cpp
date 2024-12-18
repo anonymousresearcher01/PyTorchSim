@@ -207,8 +207,8 @@ at::Tensor custom__copy_from(const at::Tensor& self, const at::Tensor& dst, bool
   TORCH_CHECK(self.scalar_type() == dst.scalar_type());
 
   if (self.is_contiguous() && dst.is_contiguous()) {
-    std::memcpy(dst.storage().data_ptr().get(),
-                self.storage().data_ptr().get(),
+    std::memcpy(dst.mutable_data_ptr(),
+                self.data_ptr(),
                 dst.storage().nbytes());
   } else {
     // Using cpu tensor to accomplishment stride copy.
