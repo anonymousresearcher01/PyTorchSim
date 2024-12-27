@@ -9,8 +9,6 @@ on:
 jobs:
   build:
     runs-on: self-hosted
-    outputs:
-      test_failed: ${{ steps.check_test_outcome.outputs.test_failed }}
     steps:
       # Step 1: Checkout the repository
       - name: Checkout Code
@@ -29,21 +27,29 @@ jobs:
       - name: Pull Cached Image
         run: docker pull ghcr.io/psal-postech/torchsim_base:latest || echo "No cache available"
 
-
-
-      # Step 5: Test the Docker Image (Optional)
-      - name: Run a container for testing
+      # Step 4: Build the Docker Image
+      - name: Build Docker Image with Token
         env:
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
-        continue-on-error: true
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
-          echo ${IMAGE_TAG}
-          docker run --rm \
-            -v ${{ github.workspace }}:/dump \
-            -e TORCHSIM_DUMP_PATH=/dump \
-            torchsim-ci:1735302113 python3 PyTorchSim/test_extension_backend.py
-        outputs:
-          test_failed: ${{ job.status == 'failure' }}
+          TIMESTAMP=$(date +%s)
+          echo "IMAGE_TAG=torchsim-ci:$TIMESTAMP" >> $GITHUB_ENV
+
+          gem5_response_file=/tmp/releases-gem5-latest.json
+          response=$(curl -sH "Authorization: Bearer ${GIT_ACCESS_TOKEN}" https://api.github.com/repos/PSAL-POSTECH/GEM5/releases/latest > ${gem5_response_file} )
+          GEM5_ASSET_ID=$(cat ${gem5_response_file} | jq ".assets[0]."id"")
+          echo "using GEM5 Asset:$GEM5_ASSET_ID "
+
+          llvm_response_file=/tmp/releases-gem5-latest.json
+          response=$(curl -sH "Authorization: Bearer ${GIT_ACCESS_TOKEN}" https://api.github.com/repos/PSAL-POSTECH/llvm-project/releases/latest > ${llvm_response_file} )
+          LLVM_ASSET_ID=$(cat ${llvm_response_file} | jq ".assets[0]."id"")
+          echo "using LLVM Asset:$LLVM_ASSET_ID"
+          docker build \
+            --build-arg GEM5_ASSET_ID=${GEM5_ASSET_ID} \
+            --build-arg LLVM_ASSET_ID=${LLVM_ASSET_ID} \
+            --build-arg GIT_ACCESS_TOKEN=${GIT_ACCESS_TOKEN}  \
+            --cache-from ghcr.io/psal-postech/torchsim_base:latest \
+            -t torchsim-ci:$TIMESTAMP .
 
       - name: Build Docker Image with Token
         env:
@@ -53,8 +59,257 @@ jobs:
             -v ${{ github.workspace }}:/dump \
             "${IMAGE_TAG}" chown -R $(id -u):$(id -g) /dump
 
-      - name: Fail report
-        if: failure()
+  test_add:
+    name: Run test_add.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_add.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
         run: |
-          echo "One or more steps in the workflow failed."
-          exit 1
+          echo "Running test_add.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_add.py
+
+  test_batchnorm:
+    name: Run test_batchnorm.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_batchnorm.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_batchnorm.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_batchnorm.py
+
+  test_bmm:
+    name: Run test_bmm.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_bmm.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_bmm.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_bmm.py
+
+  test_cnn:
+    name: Run test_cnn.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_cnn.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_cnn.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_cnn.py
+
+  test_conv2d:
+    name: Run test_conv2d.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_conv2d.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_conv2d.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_conv2d.py
+
+  test_matmul:
+    name: Run test_matmul.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_matmul.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_matmul.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_matmul.py
+
+  test_reduce:
+    name: Run test_reduce.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_reduce.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_reduce.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_reduce.py
+
+  test_softmax:
+    name: Run test_softmax.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_softmax.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_softmax.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_softmax.py
+
+  test_transpose2D:
+    name: Run test_transpose2D.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_transpose2D.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_transpose2D.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_transpose2D.py
+
+  test_view3D_2D:
+    name: Run test_view3D_2D.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_view3D_2D.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_view3D_2D.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_view3D_2D.py
+
+  test_layernorm:
+    name: Run test_layernorm.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_layernorm.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_layernorm.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_layernorm.py
+
+  test_mlp:
+    name: Run test_mlp.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_mlp.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_mlp.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_mlp.py
+
+  test_resnet:
+    name: Run test_resnet.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_resnet.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_resnet.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_resnet.py
+
+  test_transformer:
+    name: Run test_transformer.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_transformer.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_transformer.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_transformer.py
+
+  test_transpose3D:
+    name: Run test_transpose3D.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run test_transpose3D.py
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          echo "Running test_transpose3D.py"
+          docker run --rm \
+            -v ${{ github.workspace }}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            "${IMAGE_TAG}" python3 PyTorchSim/tests/test_transpose3D.py
