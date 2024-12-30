@@ -222,7 +222,8 @@ class MLIRCodeCache:
         tile_graph_generator.generate_tile_graph(
             os.path.join(write_path, "tile_graph.onnx"),
             cycle_list=cycle_list,
-            vector_lane=offset# FIXME.
+            offset=offset, # FIXME.
+            vector_lane=vectorlane_size
         )
         return key
 

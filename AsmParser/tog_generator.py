@@ -191,7 +191,7 @@ class tog_generator:
             connect_nodes(prev_node, end_node)
             prev_node = end_node
 
-    def generate_tile_graph(self, name="tile_graph", cycle_list=list, vector_lane=int):
+    def generate_tile_graph(self, name="tile_graph", cycle_list=list, offset=int, vector_lane=int):
         node_list = list(self.node_dict.values())[1:]
         node_list[0].set_parent([])
         for iter_node in self.node_dict.values():
@@ -203,7 +203,7 @@ class tog_generator:
                     iter_node.torchsim_cycle = 10
                 # FIXME.
                 if iter_node.torchsim_compute_type == 1:
-                    iter_node.torchsim_overlapping_cycle = iter_node.torchsim_cycle - vector_lane 
+                    iter_node.torchsim_overlapping_cycle = iter_node.torchsim_cycle - offset
 
         origin_info = "_".join(map(str, self.origins))
         onnx_node_list = [node.to_onnx() for node in node_list] # Exclude root node
