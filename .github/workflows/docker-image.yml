@@ -290,7 +290,7 @@ jobs:
             -e TORCHSIM_DUMP_PATH=/dump \
             ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/test_sparsity.py
 
-  test_sparsity:
+  test_pool:
     name: Run test_pool.py
     runs-on: self-hosted
     needs: build
@@ -303,6 +303,20 @@ jobs:
             -e TORCHSIM_DUMP_PATH=/dump \
             ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/test_pool.py
 
+  test_perceptron:
+    name: Run test_perceptron.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Run test_single_perceptron.py
+        run: |
+          echo "Running test_single_perceptron.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/test_single_perceptron.py
+
+
   test_cleanup:
     name: Clean test cases
     runs-on: self-hosted
@@ -310,7 +324,7 @@ jobs:
             test_matmul, test_reduce, test_softmax,
             test_transpose2D, test_view3D_2D, test_layernorm,
             test_mlp, test_resnet, test_transformer, test_transpose3D,
-            test_sparsity, test_relu, test_pool]
+            test_sparsity, test_relu, test_pool, test_perceptron]
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
