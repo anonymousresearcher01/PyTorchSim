@@ -76,6 +76,28 @@ def test_mlp_inf(device, batch_size=64, input_size=64, hidden_size=32, output_si
     cpu_y = cpu_model(x2)
     test_result("MLP Forward", y, cpu_y)
 
+def test_optimizer(device):
+    torch.manual_seed(0)
+    model = MLP(input_size=16, hidden_size=16, output_size=16).to(device=device)
+    cpu_model = copy.deepcopy(model).to("cpu")
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    cpu_optimizer = torch.optim.Adam(cpu_model.parameters(), lr=0.001)
+    opt_step = torch.compile(dynamic=False)(optimizer.step)
+    input = torch.randn(16, 16)
+    x1 = copy.deepcopy(input).to(device=device)
+    x2 = copy.deepcopy(input).to("cpu")
+    y = model(x1)
+    cpu_y = cpu_model(x2)
+    loss = y.sum()
+    cpu_loss = cpu_y.sum()
+    optimizer.zero_grad()
+    cpu_optimizer.zero_grad()
+    loss.backward()
+    cpu_loss.backward()
+    opt_step()
+    cpu_optimizer.step()
+    test_result("Optimizer", model.linear1.weight, cpu_model.linear1.weight)
+
 if __name__ == "__main__":
     import os
     import sys
