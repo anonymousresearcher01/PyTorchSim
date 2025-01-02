@@ -14,9 +14,6 @@ import numpy as np
 from PyTorchSimFrontend.llvm.llvm_common import LLVMKernelArgs
 from PyTorchSimFrontend import extension_config
 
-TORCHSIM_DIR = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
-BACKENDSIM_DEBUG_LEVEL = os.environ.get("BACKENDSIM_DEBUG_LEVEL", "")
-
 TORCH_TO_NUMPY = {
     torch.float32: np.float32,
     torch.float64: np.float64,
@@ -127,10 +124,6 @@ class FunctionalSimulator():
                 self.load_tensor(arg, arg_name, arg_attribute, path)
 
 class CycleSimulator():
-    GEM5_PATH = os.environ.get('GEM5_PATH',
-                           default = f"/workspace/gem5/build/RISCV/gem5.opt")
-    GEM5_SCRIPT_PATH = os.environ.get('GEM5_SCRIPT_PATH',
-                                  default = f"{TORCHSIM_DIR}/gem5_script/script_systolic.py")
     def __init__(self) -> None:
         pass
 
@@ -145,7 +138,7 @@ class CycleSimulator():
             print("")
 
         dir_path = os.path.join(os.path.dirname(target_binary), "m5out")
-        gem5_cmd = [self.GEM5_PATH, "-d", dir_path, self.GEM5_SCRIPT_PATH, "-c", target_binary, "--vlane", str(vectorlane_size)]
+        gem5_cmd = [extension_config.CONFIG_GEM5_PATH, "-d", dir_path, extension_config.CONFIG_GEM5_SCRIPT_PATH, "-c", target_binary, "--vlane", str(vectorlane_size)]
         try:
             # Create progress thread
             if not extension_config.CONFIG_BACKENDSIM_DRYRUN:
@@ -198,8 +191,8 @@ class BackendSimulator():
                 time.sleep(1)
             print("")
         cmd = f"{self.get_backend_command()} --models_list {model_path}"
-        if BACKENDSIM_DEBUG_LEVEL:
-            cmd += f" --log_level {BACKENDSIM_DEBUG_LEVEL}"
+        if extension_config.CONFIG_BACKENDSIM_DEBUG_LEVEL:
+            cmd += f" --log_level {extension_config.CONFIG_BACKENDSIM_DEBUG_LEVEL}"
         if attribute_path:
             cmd = f"{cmd} --attributes_list {attribute_path}"
         print("[BackendSimulator] cmd> ", cmd)
@@ -233,8 +226,8 @@ class BackendSimulator():
 
     def interactive_simulation(self):
         cmd = f"{self.get_backend_command()} --mode interactive"
-        if BACKENDSIM_DEBUG_LEVEL:
-            cmd += f" --log_level {BACKENDSIM_DEBUG_LEVEL}"
+        if extension_config.CONFIG_BACKENDSIM_DEBUG_LEVEL:
+            cmd += f" --log_level {extension_config.CONFIG_BACKENDSIM_DEBUG_LEVEL}"
 
         print("[BackendSimulator] cmd> ", cmd)
         if self.process is None:

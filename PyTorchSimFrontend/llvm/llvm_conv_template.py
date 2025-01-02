@@ -6,6 +6,7 @@ from PyTorchSimFrontend.llvm.llvm_template import LLVMTemplateKernel
 from torch._inductor.ir import Buffer
 from torch._inductor.ir import IRNode
 from torch._inductor.codecache import get_hash
+from PyTorchSimFrontend import extension_config
 
 CONV2D_TEMPLATE = r"""
 @sram_accum = dso_local global [{{ TILE_M * TILE_N }} x {{ DATA_TYPE }}] zeroinitializer, align 64
@@ -203,7 +204,7 @@ class LLVMConvTemplate(LLVMTemplate):
         PADDING_W=self.padding[1],
         DILATION_H=self.dilation[0],
         DILATION_W=self.dilation[1],
-        VALIDATION_MODE=int(os.environ.get('TORCH_VALIDATION_MODE', default="True") == "True"),
+        VALIDATION_MODE=extension_config.CONFIG_TORCHSIM_VALIDATION_MODE,
         HASH_VALUE=self.hash_value
       )
       code = self._template_from_string(CONV2D_FUNC).render(**options)

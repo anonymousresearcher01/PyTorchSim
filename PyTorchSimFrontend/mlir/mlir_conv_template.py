@@ -224,7 +224,7 @@ class MLIRConvTemplate(MLIRTemplate):
             STRIDE_W=self.stride[1],
             DILATION_H=self.dilation[0],
             DILATION_W=self.dilation[1],
-            VALIDATION_MODE=int(os.environ.get('TORCH_VALIDATION_MODE', default="True") == "True"),
+            VALIDATION_MODE=extension_config.CONFIG_TORCHSIM_VALIDATION_MODE,
             BACKENDSIM_EAGER_MODE=extension_config.CONFIG_BACKENDSIM_EAGER_MODE,
             HASH_VALUE=self.hash_value
         )

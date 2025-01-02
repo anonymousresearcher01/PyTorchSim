@@ -5,8 +5,9 @@ import json
 import torch
 from pathlib import Path
 import importlib.util
-from extension_codecache import TORCHSIM_DIR, TORCHSIM_BACKEND_CONFIG, TORCHSIM_DUMP_PATH, hash_prefix
+from extension_codecache import hash_prefix
 from Simulator.simulator import BackendSimulator
+from PyTorchSimFrontend import extension_config
 
 def import_module_from_path(module_name, path):
     module_path = Path(path)  # Convert to Path object for safety
@@ -158,7 +159,7 @@ class ExecutionEngine:
     def setup_device():
         source_file_path = os.path.dirname(os.path.abspath(__file__))
         source_file = os.path.join(
-            source_file_path, f"{TORCHSIM_DIR}/PyTorchSimFrontend/extension_device.cpp"
+            source_file_path, f"{extension_config.CONFIG_TORCHSIM_DIR}/PyTorchSimFrontend/extension_device.cpp"
         )
 
         import torch.utils.cpp_extension
@@ -209,7 +210,7 @@ class ExecutionEngine:
         return all([self.is_partition_idle(i) for i in range(self.num_partion)])
 
     def prepare_model(self, req_model: SchedulerDNNModel):
-        result_path = os.path.join(TORCHSIM_DUMP_PATH, "backend_result", req_model.model_name)
+        result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "backend_result", req_model.model_name)
         os.makedirs(result_path, exist_ok=True)
         index = str(len(os.listdir(result_path)))
 
@@ -228,10 +229,10 @@ class ExecutionEngine:
 
     def prepare_launch_kernel(self, kernel, inputs):
         key = kernel.future.result()
-        result_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
+        result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
         onnx_path = os.path.join(result_path, "tile_graph.onnx")
 
-        attribute_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
+        attribute_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
         attribute_path = self.backend_simulator.create_attribute_file(attribute_path, inputs)
         return onnx_path, attribute_path
 
@@ -338,7 +339,7 @@ class Scheduler:
         self.finish_queue : List[Request] = []
 
         backend_path = os.path.join(TORCHSIM_DIR, "PyTorchSimBackend")
-        self.backend_simulator = BackendSimulator(backend_path, TORCHSIM_BACKEND_CONFIG)
+        self.backend_simulator = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
         self.backend_simulator.interactive_simulation()
         if engine_select == Scheduler.FIFO_ENGINE:
             self.execution_engine = FIFOExecutionEngine(self.backend_simulator, self.num_request_queue)

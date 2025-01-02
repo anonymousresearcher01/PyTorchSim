@@ -4,10 +4,7 @@ import os
 import re
 import shlex
 import subprocess
-import operator
-import functools
 
-import torch
 from torch._inductor.codecache import AsyncCompile, get_lock_dir, get_hash, write
 from AsmParser.tog_generator import tog_generator
 from AsmParser.riscv_parser import riscv_parser
@@ -17,26 +14,12 @@ from PyTorchSimFrontend import extension_config
 from Simulator.simulator import FunctionalSimulator, CycleSimulator, BackendSimulator
 
 LOCK_TIMEOUT = 600
-TORCHSIM_DUMP_PATH = os.environ.get('TORCHSIM_DUMP_PATH',
-                        default = f"{tempfile.gettempdir()}/torchinductor")
-TORCHSIM_DUMP_FILE = int(os.environ.get('TORCHSIM_DUMP_FILE', default=True))
-TORCHSIM_VALIDATION_MODE = int(os.environ.get('TORCHSIM_VALIDATION_MODE', default=True))
-TORCHSIM_LLVM_PATH = os.environ.get('TORCHSIM_LLVM_PATH', default="/usr/bin")
-TORCHSIM_DIR = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
-TORCHSIM_CUSTOM_PASS_PATH = os.environ.get('TORCHSIM_CUSTOM_PASS_PATH',
-                                           default=f"{TORCHSIM_DIR}/GemminiLowerPass/build")
-TORCHSIM_BACKEND_CONFIG = os.environ.get('TORCHSIM_CONFIG',
-                                        default=f'{TORCHSIM_DIR}/PyTorchSimBackend/configs/systolic_ws_128x128_c2_simple_noc_tpuv2.json')
-GEM5_PATH = os.environ.get('GEM5_PATH', default="/workspace/gem5/build/RISCV/gem5.opt")
-GEM5_SCRIPT_PATH = os.environ.get('GEM5_SCRIPT_PATH',
-                                  default=f"{TORCHSIM_DIR}/gem5_script/script_systolic.py")
-BACKENDSIM_SPIKE_ONLY = bool(os.environ.get("BACKENDSIM_SPIKE_ONLY", False))
 
 def hash_prefix(hash_value):
     return hash_value[1:5]
 
 def get_write_path(src_code):
-    return os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(src_code.strip())))
+    return os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(src_code.strip())))
 
 def dump_metadata(args, arg_attributes, path):
     meta_path = os.path.join(path, "meta.txt")
@@ -52,19 +35,19 @@ def llvm_compile_command(input, output):
     opt_output = f"{input[:-3]}_opt.ll"
     return [re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/opt --load-pass-plugin={TORCHSIM_CUSTOM_PASS_PATH}/libLowerGemminiPass.so -S -march=riscv64 --passes=LowerGemminiPass {input} -o {opt_output}
+            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/opt --load-pass-plugin={extension_config.CONFIG_TORCHSIM_CUSTOM_PASS_PATH}/libLowerGemminiPass.so -S -march=riscv64 --passes=LowerGemminiPass {input} -o {opt_output}
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v -O2 {opt_output} -o {output}
+            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v -O2 {opt_output} -o {output}
         """,
     ).strip()]
 
 def mlir_compile_command(filename, vectorlane_size, tile_size, vlen=256):
     return [re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/mlir-opt \
+            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-opt \
             -test-loop-padding \
             -dma-fine-grained='systolic-array-size={vectorlane_size} tile-size={tile_size[0]},{tile_size[1]},{tile_size[2]}' \
             -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen={vlen}' \
@@ -85,19 +68,19 @@ def mlir_compile_command(filename, vectorlane_size, tile_size, vlen=256):
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/mlir-translate -mlir-to-llvmir {filename}_llvm.mlir -o {filename}.ll
+            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-translate -mlir-to-llvmir {filename}_llvm.mlir -o {filename}.ll
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/llc -relocation-model=pic -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl{vlen}b -O2 {filename}.ll -o {filename}.s
+            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/llc -relocation-model=pic -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl{vlen}b -O2 {filename}.ll -o {filename}.s
         """,
     ).strip()]
 
 def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_size, tile_size, vlen=256):
     return [re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/mlir-opt \
+            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-opt \
             -test-loop-padding='timing_mode=1' \
             -dma-fine-grained='systolic-array-size={vectorlane_size} tile-size={tile_size[0]},{tile_size[1]},{tile_size[2]}' \
             -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen=256' \
@@ -119,12 +102,12 @@ def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_si
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/mlir-translate -mlir-to-llvmir {sample_filename}_llvm.mlir -o {sample_filename}.ll
+            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-translate -mlir-to-llvmir {sample_filename}_llvm.mlir -o {sample_filename}.ll
         """,
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            {TORCHSIM_LLVM_PATH}/llc -relocation-model=pic -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl{vlen}b -O2 {sample_filename}.ll -o {sample_filename}.s
+            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/llc -relocation-model=pic -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl{vlen}b -O2 {sample_filename}.ll -o {sample_filename}.s
         """,
     ).strip()]
 
@@ -160,7 +143,7 @@ class MLIRCodeCache:
         else:
             link_option = ""
         # Generate LLVM kernel calller and binary for validation
-        if TORCHSIM_VALIDATION_MODE:
+        if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE:
             cmds = mlir_compile_command(new_input_path, vectorlane_size, tile_size, vlen=256)
             opt_cmd = shlex.split(cmds[0])
             translate_cmd = shlex.split(cmds[1])
@@ -175,7 +158,7 @@ class MLIRCodeCache:
                     print("Error output:", e.output)
                     assert(0)
 
-                val_llvm_caller = MLIRKernelCallerCodeGen(TORCHSIM_VALIDATION_MODE, arg_attributes)
+                val_llvm_caller = MLIRKernelCallerCodeGen(extension_config.CONFIG_TORCHSIM_VALIDATION_MODE, arg_attributes)
                 val_llvm_caller.generate_wrapper_file(write_path, validation_wrapper_name)
                 val_llvm_caller.compile_wih_kernel(write_path, key, validation_wrapper_name,
                                                    validation_binary_name, link_option)
@@ -197,7 +180,7 @@ class MLIRCodeCache:
                 print("Error output:", e.output)
                 assert(0)
 
-        if BACKENDSIM_SPIKE_ONLY:
+        if extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
             return key
 
         # Generate MLIR kernel calller and binary for cycle calculation
@@ -242,7 +225,7 @@ class LLVMCodeCache:
              cycle_binary_name="cycle_bin",
              arg_attributes=[], loop_info={},
              load_tile_info={}, store_tile_info={}, **kwargs):
-        write_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(source_code.strip())))
+        write_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(source_code.strip())))
         key, input_path = write(source_code, "ll", specified_dir=write_path)
         output_path = input_path[:-2] + "s"
 
@@ -273,8 +256,8 @@ class LLVMCodeCache:
             tile_graph_generator.dump_sampling_code(output_path[:-2] + "_sample.s")
 
             # Generate LLVM kernel calller and binary for validation
-            if TORCHSIM_VALIDATION_MODE:
-                val_llvm_caller = LLVMKernelCallerCodeGen(TORCHSIM_VALIDATION_MODE, arg_attributes)
+            if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE:
+                val_llvm_caller = LLVMKernelCallerCodeGen(extension_config.CONFIG_TORCHSIM_VALIDATION_MODE, arg_attributes)
                 val_llvm_caller.generate_wrapper_file(write_path, validation_wrapper_name)
                 val_llvm_caller.compile_wih_kernel(write_path, key, validation_wrapper_name, validation_binary_name)
 
@@ -290,7 +273,7 @@ class LLVMCodeCache:
             cyclesim = CycleSimulator()
             cycle_list = cyclesim.compile_and_simulate(os.path.join(write_path, cycle_binary_name), " ".join(array_size), vectorlane_size)
 
-            if TORCHSIM_DUMP_FILE:
+            if extension_config.CONFIG_TORCHSIM_DUMP_FILE:
                 tile_graph_generator.dump_basic_block_graph(os.path.join(write_path, "basic_block.onnx"))
             tile_graph_generator.cycle_analysis(cycle_list=cycle_list, name=os.path.join(write_path, "tile_graph"))
         return key
@@ -316,22 +299,22 @@ class CustomAsyncCompile(AsyncCompile):
             key = future.result()
 
             # Run simulator pass
-            result_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
+            result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
             # Dump arguments and meta data
             dump_metadata(args, arg_attributes, result_path)
-            if TORCHSIM_VALIDATION_MODE:
+            if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE:
                 funcsim = FunctionalSimulator(result_path, key)
                 funcsim.run_spike(args, arg_attributes,
                                   result_path, self.validation_binary_name,
                                   kwargs['intermediate_op'] if 'intermediate_op' in kwargs else None,
                                   vectorlane_size=vectorlane_size, spad_info=spad_info)
-            if BACKENDSIM_SPIKE_ONLY:
+            if extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
                 return
 
             onnx_path = os.path.join(result_path, "tile_graph.onnx")
-            attribute_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
-            backend_path = os.path.join(TORCHSIM_DIR, "PyTorchSimBackend")
-            backsim = BackendSimulator(backend_path, TORCHSIM_BACKEND_CONFIG)
+            attribute_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
+            backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
+            backsim = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
             attribute_path = backsim.create_attribute_file(attribute_path, args, tile_size=tile_size)
             result_path = backsim.simulation(onnx_path, attribute_path)
             result = BackendSimulator.get_result_from_file(result_path)
@@ -360,13 +343,13 @@ class CustomAsyncCompile(AsyncCompile):
             key = future.result()
 
             # Run simulator pass
-            result_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
+            result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
             print("Running dummy simulator!")
             print("OUTPUT PATH > ", result_path)
 
             # Dump arguments and meta data
             dump_metadata(args, arg_attributes, result_path)
-            if TORCHSIM_VALIDATION_MODE:
+            if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE:
                 funcsim = FunctionalSimulator(result_path, key)
                 funcsim.run_spike(args, arg_attributes,
                                   os.path.join(result_path, self.validation_binary_name),
@@ -383,9 +366,9 @@ class CustomAsyncCompile(AsyncCompile):
                 print(f"Error while reading.")
 
             onnx_path = os.path.join(result_path, "tile_graph.onnx")
-            attribute_path = os.path.join(TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
-            backend_path = os.path.join(TORCHSIM_DIR, "PyTorchSimBackend")
-            backsim = BackendSimulator(backend_path, TORCHSIM_BACKEND_CONFIG)
+            attribute_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
+            backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
+            backsim = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
             attribute_path = backsim.create_attribute_file(attribute_path, args)
             result_path = backsim.simulation(onnx_path, attribute_path)
             result = BackendSimulator.get_result_from_file(result_path)
