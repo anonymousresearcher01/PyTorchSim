@@ -9,7 +9,7 @@ from torch._inductor.ir import Buffer
 from torch._inductor.ir import IRNode
 from torch._inductor.ir import ReinterpretView
 from torch._inductor.codecache import write_atomic
-import extension_codecache
+import PyTorchSimFrontend.extension_codecache as extension_codecache
 from torch._inductor.codecache import get_hash
 from PyTorchSimFrontend import extension_config
 

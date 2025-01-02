@@ -13,7 +13,7 @@ from torch._inductor.codegen import cpp, wrapper, common
 from torch._inductor.scheduler import BaseScheduling
 from torch._inductor.virtualized import V, _ops as ops
 from torch._inductor.utils import IndentedBuffer
-import extension_codecache
+import PyTorchSimFrontend.extension_codecache as extension_codecache
 
 from . import llvm_common
 from . import llvm_lowering

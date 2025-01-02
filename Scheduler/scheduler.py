@@ -5,7 +5,7 @@ import json
 import torch
 from pathlib import Path
 import importlib.util
-from extension_codecache import hash_prefix
+from PyTorchSimFrontend.extension_codecache import hash_prefix
 from Simulator.simulator import BackendSimulator
 from PyTorchSimFrontend import extension_config
 

@@ -7,7 +7,7 @@ from torch._inductor.ir import Buffer
 from torch._inductor.ir import IRNode
 from torch._inductor.ir import ReinterpretView
 from torch._inductor.codecache import write_atomic
-import extension_codecache
+import PyTorchSimFrontend.extension_codecache as extension_codecache
 
 BMM_TEMPLATE = r"""
 {% if X_transposed %}#map0 = affine_map<(d0, d1, d2) -> (d0 * {{ K * M }} + d2 * {{ M }} + d1)>{% else %}#map0 = affine_map<(d0, d1, d2) -> (d0 * {{ M * K }} + d1 * {{ K }} + d2)>{% endif %}

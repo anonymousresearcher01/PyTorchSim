@@ -22,7 +22,7 @@ from torch._inductor.utils import (
     IndentedBuffer,
     is_welford_reduction,
 )
-import extension_codecache
+import PyTorchSimFrontend.extension_codecache as extension_codecache
 
 
 from . import mlir_common
@@ -871,7 +871,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         wrapper = V.graph.wrapper_code
         _, _, arg_attributes, _ = self.kernel_group.args.mlir_argdefs()
         wrapper.add_import_once('\nprint(f\'Wrapper Codegen Path = {__file__}\')')
-        wrapper.add_import_once(f'\nfrom extension_codecache import CustomAsyncCompile')
+        wrapper.add_import_once(f'\nfrom PyTorchSimFrontend.extension_codecache import CustomAsyncCompile')
         wrapper.add_import_once(f'\ncustom_async_compile = CustomAsyncCompile()')
         # Dump loop and load/store information
         wrapper.add_import_once(f"arg_attributes = {arg_attributes}")

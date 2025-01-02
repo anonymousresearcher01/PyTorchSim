@@ -7,7 +7,7 @@ from torch._inductor.ir import Buffer
 from torch._inductor.ir import IRNode
 from torch._inductor.ir import ReinterpretView
 from torch._inductor.codecache import write_atomic
-import extension_codecache
+import PyTorchSimFrontend.extension_codecache as extension_codecache
 
 GEMM_TEMPLATE = r"""
 {% if X_transposed %}#map0 = affine_map<(d0, d1) -> (d1 * {{ M }} + d0)>{% else %}#map0 = affine_map<(d0, d1) -> (d0 * {{ K }} + d1)>{% endif %}
