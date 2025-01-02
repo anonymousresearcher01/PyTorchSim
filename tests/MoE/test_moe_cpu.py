@@ -285,7 +285,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     X = torch.rand(32, 1000).to(device)
     model.to(device)
-    opt_model = torch.compile(model)
+    opt_model = torch.compile(model, dynamic=False)
     y_hat, aux_loss = opt_model(X)
     print("y_hat: ", y_hat)
     print("aux_loss: ", aux_loss)

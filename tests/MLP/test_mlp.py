@@ -193,7 +193,7 @@ def test_mlp(device):
     model_cpu = copy.deepcopy(model).to("cpu")
 
     model_device = model.to(device=device)
-    model_device = torch.compile()(model_device)
+    model_device = torch.compile(model_device, dynamic=False)
 
     y1 = model_device(x1)
     y2 = model_cpu(x2)
@@ -218,7 +218,7 @@ def test_train_mlp(device):
     model_cpu = copy.deepcopy(model).to("cpu")
 
     model_device = model.to(device=device)
-    model_device = torch.compile()(model_device)
+    model_device = torch.compile(model_device, dynamic=False)
 
     model_device.eval()
     model_cpu.eval()
@@ -227,8 +227,8 @@ def test_train_mlp(device):
 
     criterion = nn.CrossEntropyLoss()
     optimizer = RMSprop(model_device.parameters(), lr=0.001)
-    opt_zero_grad = torch.compile()(optimizer.zero_grad)
-    opt_step = torch.compile()(optimizer.step)
+    opt_zero_grad = torch.compile(optimizer.zero_grad, dynamic=False)
+    opt_step = torch.compile(optimizer.step, dynamic=False)
 
     """ Forward """
     print("Forward")
@@ -309,15 +309,15 @@ def train_mlp_mnist(device):
     print("Model load complete.")
 
     model_device = model.to(device=device)
-    model_device = torch.compile()(model_device)
+    model_device = torch.compile(model_device, dynamic=False)
 
     model_device.train()
 
     criterion = nn.CrossEntropyLoss()
     # optimizer = Adam(model_device.parameters(), lr=0.001)
     optimizer = RMSprop(model_device.parameters(), lr=0.001)
-    opt_zero_grad = torch.compile()(optimizer.zero_grad)
-    opt_step = torch.compile()(optimizer.step)
+    opt_zero_grad = torch.compile(optimizer.zero_grad, dynamic=False)
+    opt_step = torch.compile(optimizer.step, dynamic=False)
 
     loss_print_interval = 1
     evaluation_interval = 5

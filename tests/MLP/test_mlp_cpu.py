@@ -137,7 +137,7 @@ def train_mlp_mnist(device):
     # optimizer = Adam(model_device.parameters(), lr=0.001)
     optimizer = RMSprop(model_device.parameters(), lr=0.001)
 
-    opt_zero_grad = torch.compile()(optimizer.zero_grad)
+    opt_zero_grad = torch.compile(optimizer.zero_grad, dynamic=False)
 
     loss_print_interval = 1
     def train(model, device):

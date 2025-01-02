@@ -548,7 +548,7 @@ def test_moe(device):
     # model.train()
     model.eval()
     model_device = model.to(device=device)
-    opt_model = torch.compile(model_device)
+    opt_model = torch.compile(model_device, dynamic=False)
     y_hat, aux_loss = opt_model(x1)
     print("MoE Custom Device Done!")
 
@@ -638,8 +638,8 @@ def train_moe(device):
     model.train()
     # model.eval()
     model_device = model.to(device=device)
-    opt_model = torch.compile(model_device)
-    opt_w = torch.compile()(weight_update)
+    opt_model = torch.compile(model_device, dynamic=False)
+    opt_w = torch.compile()(weight_update, dynamic=False)
     y_hat, aux_loss = opt_model(x1)
     print("MoE Custom Device Done!")
 
@@ -688,8 +688,8 @@ def train_moe(device):
     loss_fn = nn.CrossEntropyLoss()
     lr = 0.001
     optimizer = Adam(opt_model.parameters(), lr=lr)
-    opt_step = torch.compile(optimizer.step)
-    opt_zero_grad = torch.compile(optimizer.zero_grad)
+    opt_step = torch.compile(optimizer.step, dynamic=False)
+    opt_zero_grad = torch.compile(optimizer.zero_grad, dynamic=False)
 
     # To record loss values
     loss_values = []
@@ -750,13 +750,13 @@ def train_moe_mnist(device):
         model_cpu.experts[i].requires_grad = True
 
     model_device = model.to(device=device)
-    opt_model = torch.compile(model_device)
+    opt_model = torch.compile(model_device, dynamic=False)
 
     loss_fn = nn.CrossEntropyLoss()
     lr = 0.001
     optimizer = Adam(opt_model.parameters(), lr=lr)
-    opt_step = torch.compile(optimizer.step)
-    opt_zero_grad = torch.compile(optimizer.zero_grad)
+    opt_step = torch.compile(optimizer.step, dynamic=False)
+    opt_zero_grad = torch.compile(optimizer.zero_grad, dynamic=False)
 
     def train(model, device, train_loader, optimizer, epochs):
         model.train()
@@ -839,13 +839,13 @@ def train_moe_single_iteration(device, iter_idx, is_evaluation=0):
             print(f"Model loaded from {path}")
 
     model_device = model.to(device=device)
-    opt_model = torch.compile(model_device)
+    opt_model = torch.compile(model_device, dynamic=False)
 
     loss_fn = nn.CrossEntropyLoss()
     lr = 0.001
     optimizer = Adam(opt_model.parameters(), lr=lr)
-    opt_step = torch.compile(optimizer.step)
-    opt_zero_grad = torch.compile(optimizer.zero_grad)
+    opt_step = torch.compile(optimizer.step, dynamic=False)
+    opt_zero_grad = torch.compile(optimizer.zero_grad, dynamic=False)
 
 
     def train(opt_model, train_loader):
