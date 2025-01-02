@@ -82,6 +82,19 @@ jobs:
             -e TORCHSIM_DUMP_PATH=/dump \
             ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/test_add.py
 
+  test_add:
+    name: Run test_relu.py
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Run test_relu.py
+        run: |
+          echo "Running test_relu.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/test_relu.py
+
   test_batchnorm:
     name: Run test_batchnorm.py
     runs-on: self-hosted
@@ -284,7 +297,7 @@ jobs:
             test_matmul, test_reduce, test_softmax,
             test_transpose2D, test_view3D_2D, test_layernorm,
             test_mlp, test_resnet, test_transformer, test_transpose3D,
-            test_sparsity]
+            test_sparsity, test_relu]
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
