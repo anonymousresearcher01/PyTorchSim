@@ -3,7 +3,7 @@ import sys
 import torch
 from torchvision.models import resnet18 as model1
 
-sys.path.append(os.path.abspath("/workspace/PyTorchSim"))
+sys.path.append(os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim'))
 from Scheduler.scheduler import Scheduler, SchedulerDNNModel, Request
 from test_extension_backend import DecoderBlock as model2
 

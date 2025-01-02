@@ -67,7 +67,7 @@ def test_matmul_activation(device, batch_size=16, input_size=32, output_size=8, 
 if __name__ == "__main__":
     import os
     import sys
-    sys.path.append(os.path.abspath("/workspace/PyTorchSim"))
+    sys.path.append(os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim'))
 
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()

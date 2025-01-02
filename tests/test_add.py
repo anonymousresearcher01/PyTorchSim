@@ -27,7 +27,7 @@ def test_vectoradd(device, size=(128, 128)):
 if __name__ == "__main__":
     import os
     import sys
-    sys.path.append(os.path.abspath("/workspace/PyTorchSim"))
+    sys.path.append(os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim'))
 
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()

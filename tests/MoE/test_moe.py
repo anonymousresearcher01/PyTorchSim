@@ -20,7 +20,7 @@ import torch._dynamo
 import torch.utils.cpp_extension
 from torch._inductor import config
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+sys.path.append(os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim'))
 
 try:
     from PyTorchSimFrontend.mlir.mlir_codegen_backend import (

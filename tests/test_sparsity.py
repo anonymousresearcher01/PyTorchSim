@@ -7,7 +7,7 @@ import argparse
 import torch
 import torch._dynamo
 import torch.utils.cpp_extension
-sys.path.append(os.path.abspath("/workspace/PyTorchSim"))
+sys.path.append(os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim'))
 from test_extension_backend import DecoderBlock, MLP, test_result
 
 def apply_random_zero(tensor, zero_prob, block_size=8):
