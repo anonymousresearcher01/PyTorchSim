@@ -2,7 +2,7 @@ name: Docker Base Image CI
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "base" ]
 
 jobs:
   build:
@@ -27,21 +27,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Step 3: Check if the Base Image Exists
-      - name: Check if Base Image Exists
-        id: check-image
-        run: |
-          if docker pull ghcr.io/psal-postech/torchsim_base:latest; then
-            echo "Base image already exists. Skipping build and push."
-            echo "exists=true" >> $GITHUB_ENV
-          else
-            echo "Base image does not exist. Proceeding with build and push."
-            echo "exists=false" >> $GITHUB_ENV
-          fi
-
       # Step 4: Build and Push Docker Image
       - name: Build and Push Docker Image
-        if: env.exists == 'false'
         uses: docker/build-push-action@v4
         with:
           context: .
