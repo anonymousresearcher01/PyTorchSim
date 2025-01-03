@@ -23,6 +23,26 @@ uint32_t calculateAddress(const std::vector<uint32_t>& loop_size, const std::vec
   return address;
 }
 
+
+int getLoopIndexValue(const std::map<std::string, int>& iter, const std::string& loop_idx) {
+    // Check if loop_idx starts with "c"
+    if (!loop_idx.empty() && loop_idx[0] == 'c') {
+        // Extract substring after 'c' and convert to integer
+        const char* numberPart = loop_idx.c_str() + 1; // Skip the first character 'c'
+        int convertedValue = std::atoi(numberPart);
+        return convertedValue;
+    }
+
+    // If loop_idx does not start with 'c', check in the map
+    auto it = iter.find(loop_idx);
+    if (it != iter.end()) {
+        return it->second;
+    }
+
+    // If loop_idx is not found, throw an exception
+    throw std::runtime_error("Key not found in map and does not start with 'c': " + loop_idx);
+}
+
 std::vector<uint32_t> calc_output_idx(TileGraphParser* tog_parser, std::map<std::string, int>& iter) {
   // Extract outer loop
   // Extract inner loop
@@ -272,7 +292,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       int nr_inner_loop = 0;
       auto& loop_idx_list = mem_node->get_loop_idx_list();
       for (auto loop_idx: loop_idx_list) {
-        auto iter_value = iter.at(loop_idx);
+        auto iter_value = getLoopIndexValue(iter, loop_idx);
         iter_list.push_back(iter_value);
         loop_size_list.push_back(tog_parser->get_loop_size(loop_idx));
         if (tog_parser->get_loop_type(loop_idx)==LoopType::INNER_LOOP)
@@ -283,7 +303,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
             loop_idx != loop_idx_list.end() - nr_inner_loop; ++loop_idx) {
         // Check loop type and process
         if (tog_parser->get_loop_type(*loop_idx)==LoopType::ACCUMULATION_LOOP) {
-          auto iter_value = iter.at(*loop_idx);
+          auto iter_value = getLoopIndexValue(iter, *loop_idx);
           tag_list.push_back(iter_value);
         }
       }
@@ -292,7 +312,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
             loop_idx != loop_idx_list.end(); ++loop_idx) {
         if (tog_parser->get_loop_type(*loop_idx)==LoopType::PARALLEL_LOOP) {
           uint32_t step = (uint32_t)tog_parser->get_loop_step(*loop_idx);
-          auto iter_value = iter.at(*loop_idx) / step;
+          auto iter_value = getLoopIndexValue(iter, *loop_idx) / step;
           outer_loop_idx.push_back(iter_value);
           outer_loop_size.push_back(tog_parser->get_loop_size(*loop_idx));
         }
@@ -302,7 +322,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
         if (iter.find(loop_idx) == iter.end())
           tag_list.push_back(0);
         else {
-          auto iter_value = iter.at(loop_idx);
+          auto iter_value = getLoopIndexValue(iter, loop_idx);
           tag_list.push_back(iter_value);
         }
       }
@@ -342,14 +362,14 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       int nr_inner_loop = 0;
       auto& loop_idx_list = mem_node->get_loop_idx_list();
       for (auto loop_idx: loop_idx_list) {
-        auto iter_value = iter.at(loop_idx);
+        auto iter_value = getLoopIndexValue(iter, loop_idx);
         iter_list.push_back(iter_value);
         loop_size_list.push_back(tog_parser->get_loop_size(loop_idx));
         if (tog_parser->get_loop_type(loop_idx)==LoopType::INNER_LOOP)
           nr_inner_loop++;
         if (tog_parser->get_loop_type(loop_idx)==LoopType::PARALLEL_LOOP) {
           uint32_t step = (uint32_t) tog_parser->get_loop_step(loop_idx);
-          auto iter_value = iter.at(loop_idx) / step;
+          auto iter_value = getLoopIndexValue(iter, loop_idx) / step;
           outer_loop_idx.push_back(iter_value);
           outer_loop_size.push_back(tog_parser->get_loop_size(loop_idx)/ step);
         }
@@ -400,7 +420,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
         if (iter.find(loop_idx) == iter.end())
           tag_list.push_back(0);
         else {
-          auto iter_value = iter.at(loop_idx) * inner_step;
+          auto iter_value = getLoopIndexValue(iter, loop_idx) * inner_step;
           tag_list.push_back(iter_value);
         }
       }
