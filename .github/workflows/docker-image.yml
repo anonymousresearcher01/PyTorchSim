@@ -37,6 +37,7 @@ jobs:
           docker pull ghcr.io/psal-postech/torchsim_base:latest || echo "No cache available"
           echo "IMAGE_TAG=torchsim-ci:$GITHUB_SHA" >> $GITHUB_ENV
           echo "GITHUB_SHA=$GITHUB_SHA" >> $GITHUB_ENV
+          echo "GITHUB_REF_NAME=$GITHUB_REF_NAME" >> $GITHUB_ENV
 
           gem5_response_file=/tmp/releases-gem5-latest.json
           response=$(curl -sH "Authorization: Bearer ${GIT_ACCESS_TOKEN}" https://api.github.com/repos/PSAL-POSTECH/GEM5/releases/latest > ${gem5_response_file} )
@@ -66,7 +67,7 @@ jobs:
             GEM5_ASSET_ID=${{ env.GEM5_ASSET_ID }}
             LLVM_ASSET_ID=${{ env.LLVM_ASSET_ID }}
             GIT_ACCESS_TOKEN=${{ env.GIT_ACCESS_TOKEN }}
-            TORCHSIM_SHA=${{ env.GITHUB_SHA }}
+            GITHUB_REF_NAME = ${{ env.GITHUB_REF_NAME }}
           tags: ghcr.io/psal-postech/${{ env.IMAGE_TAG }}
 
   test_add:
