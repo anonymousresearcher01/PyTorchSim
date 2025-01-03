@@ -65,7 +65,7 @@ jobs:
             LLVM_ASSET_ID=${{ env.LLVM_ASSET_ID }}
             GIT_ACCESS_TOKEN=${{ env.GIT_ACCESS_TOKEN }}
             TORCHSIM_SHA=${{ env.GITHUB_SHA }}
-          tags: ghcr.io/psal-postech/${{ env.IMAGE_TAG }}
+          tags: ghcr.io/psal-postech/${GITHUB_SHA}
 
   test_add:
     name: Run test_add.py
