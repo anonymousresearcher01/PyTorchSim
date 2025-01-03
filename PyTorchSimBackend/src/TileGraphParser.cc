@@ -638,13 +638,13 @@ TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
       tile->print_node();
   }
 
+  _tile_graph = std::make_unique<TileGraph>(TileGraph(onnx_path, graph_name));
   /* Generate subgraph */
   if (_loop_nodes.empty()) {
-    spdlog::error("[TileGraphParser] No loop found...");
-    exit(EXIT_FAILURE);
+    spdlog::warn("[TileGraphParser] Null Kernel \"{}\"", onnx_path);
+    return;
   }
 
-  _tile_graph = std::make_unique<TileGraph>(TileGraph(onnx_path, graph_name));
   int last_outer_idx = -1;
   /* Extract outer loop */
   for (int i=0;i<_loop_nodes.size();i++) {
