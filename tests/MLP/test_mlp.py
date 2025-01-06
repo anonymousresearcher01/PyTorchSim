@@ -21,133 +21,6 @@ from torch._inductor import config
 
 sys.path.append(os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim'))
 
-try:
-    from PyTorchSimFrontend.mlir.mlir_codegen_backend import (
-        MLIRScheduling,
-        ExtensionWrapperCodegen,
-    )
-except ImportError:
-    from PyTorchSimFrontend.mlir.mlir_codegen_backend import (
-        MLIRScheduling,
-        ExtensionWrapperCodegen,
-    )
-
-from torch._C import FileCheck
-from torch._inductor import metrics
-from torch._inductor.codegen.common import (
-    get_scheduling_for_device,
-    get_wrapper_codegen_for_device,
-    register_backend_for_device,
-)
-from torch.testing._internal.common_utils import IS_MACOS
-from torch.testing._internal.common_utils import TestCase as TorchTestCase
-
-
-def remove_build_path():
-    if sys.platform == "win32":
-        # Not wiping extensions build folder because Windows
-        return
-    default_build_root = torch.utils.cpp_extension.get_default_build_root()
-    if os.path.exists(default_build_root):
-        shutil.rmtree(default_build_root, ignore_errors=True)
-
-class TestCase(TorchTestCase):
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls._stack = contextlib.ExitStack()
-        cls._stack.enter_context(
-            config.patch(
-                {
-                    "debug": True,
-                    "debug_index_asserts": True,
-                    "cpp.min_chunk_size": 1,
-                    "triton.autotune_pointwise": False,  # too slow
-                    "implicit_fallbacks": False,
-                    "generate_intermediate_hooks": True,
-                }
-            )
-        )
-
-    @classmethod
-    def tearDownClass(cls):
-        cls._stack.close()
-        super().tearDownClass()
-
-    def setUp(self):
-        torch._dynamo.reset()
-        torch._inductor.metrics.reset()
-        super().setUp()
-        self._start = time.perf_counter()
-
-    def tearDown(self):
-        super().tearDown()
-        torch._dynamo.reset()
-        if os.environ.get("ERROR_ON_SLOW") == "1":
-            elapsed = time.perf_counter() - self._start
-            assert elapsed < 120
-
-
-class ExtensionBackendTests(TestCase):
-    module = None
-
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-
-        # Build Extension
-        remove_build_path()
-        source_file_path = os.path.dirname(os.path.abspath(__file__))
-        source_file = os.path.join(
-            source_file_path, "PyTorchSimFrontend/extension_device.cpp"
-        )
-        cls.module = torch.utils.cpp_extension.load(
-            name="extension_device",
-            sources=[
-                str(source_file),
-            ],
-            extra_cflags=["-g"],
-            verbose=True,
-        )
-
-    @classmethod
-    def tearDownClass(cls):
-        cls._stack.close()
-        super().tearDownClass()
-
-        remove_build_path()
-
-    def setUp(self):
-        torch._dynamo.reset()
-        super().setUp()
-
-        # cpp extensions use relative paths. Those paths are relative to
-        # this file, so we'll change the working directory temporarily
-        self.old_working_dir = os.getcwd()
-        os.chdir(os.path.dirname(os.path.abspath(__file__)))
-        assert self.module is not None
-
-    def tearDown(self):
-        super().tearDown()
-        torch._dynamo.reset()
-
-        # return the working directory (see setUp)
-        os.chdir(self.old_working_dir)
-
-    def test_open_device_registration(self):
-        torch.utils.rename_privateuse1_backend("extension_device")
-
-        register_backend_for_device(
-            "extension_device", MLIRScheduling, ExtensionWrapperCodegen
-        )
-        self.assertTrue(
-            get_scheduling_for_device("extension_device") == MLIRScheduling
-        )
-        self.assertTrue(
-            get_wrapper_codegen_for_device("extension_device")
-            == ExtensionWrapperCodegen
-        )
-
 def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
     pass_message = f"|{name} Test Passed|"
     fail_message = f"|{name} Test Failed|"
@@ -162,6 +35,7 @@ def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
 
         print("custom out: ", out.cpu())
         print("cpu out: ", cpu_out)
+        exit(1)
 
 class MLP(nn.Module):
     def __init__(self, input_size, output_size, hidden_size):
