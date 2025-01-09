@@ -8,7 +8,8 @@ import torch
 import torch._dynamo
 import torch.utils.cpp_extension
 sys.path.append(os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim'))
-from test_extension_backend import DecoderBlock, MLP, test_result
+from test_transformer import DecoderBlock, test_result
+from test_mlp import MLP
 
 def apply_random_zero(tensor, zero_prob, block_size=8):
     if not 0 <= zero_prob <= 1:
