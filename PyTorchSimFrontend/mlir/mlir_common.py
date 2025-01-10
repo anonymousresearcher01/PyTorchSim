@@ -141,6 +141,56 @@ class MLIRKernelArgs(common.KernelArgs):
             set_info(outer, inner, self.MLIR_ARGS_VAR)
         return arg_defs, call_args, arg_attributes, buffer_types
 
+
+class MLIRTile():
+    TILE_ROW_WISE = 0
+    TILE_COL_WISE = 1
+    TILE_PER_LANE_ROW_WISE = 2
+    TILE_PER_LANE_COL_WISE = 3
+    def __init__(self, n_row, n_col, vector_lane, used_vector_lane=None) -> None:
+        self.n_row = n_row
+        self.n_col = n_col
+        self.vector_lane = vector_lane
+        if used_vector_lane is None:
+            self.used_vector_lane = self.vector_lane
+        else:
+            self.used_vector_lane = used_vector_lane
+        self.tile_per_lane_layout = self.TILE_PER_LANE_ROW_WISE # How a given tile per lane is stored
+        self.tile_layout = self.TILE_ROW_WISE # How a given tile is stored per lane
+        self.vector_lane_axis = (self.n_col//self.used_vector_lane) > 0 #(0: Col major, 1: Row major)
+
+    def get_tile_size(self):
+        return self.n_row * self.n_col
+
+    def get_rows_per_lane(self):
+        if self.n_row % self.used_vector_lane != 0 and self.n_row > 1:
+            print(f"[Warning] n_row({self.n_row}) % vector_lane({self.used_vector_lane}) != 0")
+        return self.div_round_up(self.n_row, self.used_vector_lane)
+
+    def get_cols_per_lane(self):
+        if self.n_col % self.used_vector_lane != 0 and self.n_col > 1:
+            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.used_vector_lane}) != 0")
+        return self.div_round_up(self.n_col, self.used_vector_lane)
+
+    def get_tile_size_per_lane(self):
+        if self.get_tile_size() % self.used_vector_lane != 0:
+            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.used_vector_lane}) != 0")
+        return self.div_round_up(self.get_tile_size(), self.used_vector_lane)
+
+    def get_tile_shape(self):
+        return f"{self.n_row}x{self.n_col}"
+
+    def get_chunk_size(self):
+        if self.tile_layout == self.TILE_ROW_WISE:
+            chunk_size = self.get_tile_size_per_lane()
+        else:
+            chunk_size = self.get_cols_per_lane()
+        return chunk_size
+
+    @staticmethod
+    def div_round_up(size, round_val):
+        return (size + round_val - 1) // round_val
+
 class BaseMLIRHardwareInfo():
     def __init__(self):
         # Default HW setting
@@ -163,18 +213,43 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
 
     def __init__(self, args=None):
         super().__init__(args)
+        self.kernel_group = None
+        # Kernel iteration range info
+        self.call_ranges = None
+        self.ranges = None
+        self.reduction_depth = None
         self.itervars = None
-
+        # Code buffer
         self.vector_compute = IndentedBuffer()
         self.reductions_suffix = IndentedBuffer()
         self.cse = common.CSE(self.newvar_prefix, self.suffix)
-        self.tile_row = extension_config.CONFIG_TILE_ROW
-        if self.tile_row == -1:
-            self.tile_row = self.vlen * self.vector_lane
-        self.tile_col = extension_config.CONFIG_TILE_COL
-        if self.tile_col == -1:
-            self.tile_col = 8 # FIXME: tile_col is not always vector_lane * vlen
-        self.var_info = {}
+        # Tile size setting
+        tile_row = extension_config.CONFIG_TILE_ROW
+        if tile_row == -1:
+            tile_row = self.vlen * self.vector_lane
+        tile_col = extension_config.CONFIG_TILE_COL
+        if tile_col == -1:
+            tile_col = 8 # FIXME: tile_col is not always vector_lane * vlen
+        self.tile_desc = MLIRTile(tile_row, tile_col, self.vector_lane)
+        self.var_info = {} # MLIR variable info
+
+    def set_ranges(self, lengths, reduction_lengths, read_writes):
+        self.read_writes = read_writes
+        if self.call_ranges:
+            assert self.call_ranges == tuple(lengths) + tuple(
+                reduction_lengths
+            ), f"{self.call_ranges} == {tuple(lengths)} + {tuple(reduction_lengths)}"
+            assert self.reduction_depth == len(lengths)
+        else:
+            self.call_ranges = tuple(lengths) + tuple(reduction_lengths)
+            self.ranges = [self.rename_indexing(x) for x in self.call_ranges]
+            self.itervars = [sympy.Symbol(f"index{n}") for n in range(len(self.ranges))]
+            self.reduction_depth = len(lengths)
+
+        return (
+            self.itervars[: self.reduction_depth],
+            self.itervars[self.reduction_depth :],
+        )
 
     def load(self, name: str, index: sympy.Expr):
         raise NotImplementedError()
@@ -187,13 +262,6 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
         raise NotImplementedError()
-
-    def check_dtype_in_args(self, args):
-        dtype = torch.float32 # default dtype
-        for arg in args:
-            if arg in list(DTYPE_TO_MLIR.keys()):
-                dtype = arg
-        return dtype
 
     def get_constant_vector(self, expr):
         constant_vector = [[int(expr.coeff(var)),None] for var in self.itervars]
@@ -228,6 +296,9 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
             for output_node in V.graph.graph_outputs:
                 if output_node.data.name == name:
                     return output_node
+
+    def roundup_vectorlane(self, size, amp=1):
+        return ((size + self.vector_lane - 1) // self.vector_lane) * self.vector_lane * amp
 
     def register_var_info(self, var, var_info):
         self.var_info[var] = var_info

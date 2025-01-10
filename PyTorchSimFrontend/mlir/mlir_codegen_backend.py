@@ -604,65 +604,12 @@ DMA_TYPE = {
     "MVOUT": 3,
 }
 
-class MLIRTile():
-    TILE_ROW_WISE = 0
-    TILE_COL_WISE = 1
-    TILE_PER_LANE_ROW_WISE = 2
-    TILE_PER_LANE_COL_WISE = 3
-    def __init__(self, n_row, n_col, vector_lane, used_vector_lane=None) -> None:
-        self.n_row = n_row
-        self.n_col = n_col
-        self.vector_lane = vector_lane
-        if used_vector_lane is None:
-            self.used_vector_lane = self.vector_lane
-        else:
-            self.used_vector_lane = used_vector_lane
-        self.tile_per_lane_layout = self.TILE_PER_LANE_ROW_WISE # How a given tile per lane is stored
-        self.tile_layout = self.TILE_ROW_WISE # How a given tile is stored per lane
-        self.vector_lane_axis = (self.n_col//self.used_vector_lane) > 0 #(0: Col major, 1: Row major)
-
-    def get_tile_size(self):
-        return self.n_row * self.n_col
-
-    def get_rows_per_lane(self):
-        if self.n_row % self.used_vector_lane != 0 and self.n_row > 1:
-            print(f"[Warning] n_row({self.n_row}) % vector_lane({self.used_vector_lane}) != 0")
-        return self.div_round_up(self.n_row, self.used_vector_lane)
-
-    def get_cols_per_lane(self):
-        if self.n_col % self.used_vector_lane != 0 and self.n_col > 1:
-            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.used_vector_lane}) != 0")
-        return self.div_round_up(self.n_col, self.used_vector_lane)
-
-    def get_tile_size_per_lane(self):
-        if self.get_tile_size() % self.used_vector_lane != 0:
-            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.used_vector_lane}) != 0")
-        return self.div_round_up(self.get_tile_size(), self.used_vector_lane)
-
-    def get_tile_shape(self):
-        return f"{self.n_row}x{self.n_col}"
-
-    def get_chunk_size(self):
-        if self.tile_layout == self.TILE_ROW_WISE:
-            chunk_size = self.get_tile_size_per_lane()
-        else:
-            chunk_size = self.get_cols_per_lane()
-        return chunk_size
-
-    @staticmethod
-    def div_round_up(size, round_val):
-        return (size + round_val - 1) // round_val
-
 class MLIRKernel(mlir_common.BaseMLIRKernel):
     overrides = ExtensionOverrides
     newvar_prefix = "%"
 
     def __init__(self):
         super().__init__(mlir_common.MLIRKernelArgs())
-        self.kernel_group = None
-        self.call_ranges = None
-        self.ranges = None
-        self.reduction_depth = None
         self.reduction_prefix = IndentedBuffer()
         self.reduction_suffix = IndentedBuffer()
         self.body = IndentedBuffer()
@@ -678,7 +625,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.map_cse = common.CSE("#", self.suffix, name_prefix="map")
         self.consts = set()
         self.tags = set()
-        self.tile_desc = MLIRTile(self.tile_row, self.tile_col, self.vector_lane)
         self.dma_cache = {}
         self.dma_counter = 1
         self.reduction_idx = {}
@@ -1067,12 +1013,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.cse.generate(self.reductions_suffix, code, assignment = False)
 
     def codegen_body(self):
-        # if not (
-        #     self.loads
-        #     or self.stores
-        #     or self.compute
-        # ):
-        #     return
         def template_store(options):
             subtile_size = [self.vector_lane, self.vector_lane]
             async_flag = 1
@@ -1228,25 +1168,11 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             raise NotImplementedError()
 
     def set_ranges(self, lengths, reduction_lengths, read_writes):
-        self.read_writes = read_writes
-        if self.call_ranges:
-            assert self.call_ranges == tuple(lengths) + tuple(
-                reduction_lengths
-            ), f"{self.call_ranges} == {tuple(lengths)} + {tuple(reduction_lengths)}"
-            assert self.reduction_depth == len(lengths)
-        else:
-            self.call_ranges = tuple(lengths) + tuple(reduction_lengths)
-            self.ranges = [self.rename_indexing(x) for x in self.call_ranges]
-            self.itervars = [sympy.Symbol(f"index{n}") for n in range(len(self.ranges))]
-            self.reduction_depth = len(lengths)
+        ret = super().set_ranges(lengths, reduction_lengths, read_writes)
 
         # Adjust time size when it is vector
         self.adjust_tile_size()
-
-        return (
-            self.itervars[: self.reduction_depth],
-            self.itervars[self.reduction_depth :],
-        )
+        return ret
 
     def get_scratchpad_buffer(self, dtype, name, tile_row, tile_col, dram_tile_shape, code_buffer, indices, raw_index):
         c_type = mlir_common.DTYPE_TO_C[dtype]
@@ -1276,8 +1202,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         buffer = self.cse.generate(code_buffer, f"memref.get_global @{new_name}_spad : memref<{dram_tile_shape}x{mlir_type}, 1>")
         return buffer, indices
 
-    def roundup_vectorlane(self, size, amp=1):
-        return ((size + self.vector_lane - 1) // self.vector_lane) * self.vector_lane * amp
+
 
 @dataclasses.dataclass
 class LoopLevel:
