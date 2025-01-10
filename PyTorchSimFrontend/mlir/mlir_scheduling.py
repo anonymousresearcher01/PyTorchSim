@@ -1,9 +1,8 @@
+import math
 from PyTorchSimFrontend import extension_config
 from PyTorchSimFrontend.mlir.mlir_codegen_backend import MLIRKernel
 
-
 from torch._inductor import config
-from torch._inductor.codegen import cpp
 from torch._inductor.scheduler import BaseScheduling
 from torch._inductor.utils import IndentedBuffer
 from torch._inductor.virtualized import V
@@ -11,17 +10,12 @@ from torch._inductor.virtualized import V
 from . import mlir_common
 from . import mlir_lowering
 
-class MLIRWrapperKenrelGroup(cpp.KernelGroup):
-    def __init__(self):
-        super().__init__()
-        self.args = mlir_common.MLIRKernelArgs()
-
 class MLIRScheduling(BaseScheduling):
     count = 0
     target_kernel = MLIRKernel
     def __init__(self, scheduler):
         self.scheduler = scheduler
-        self.kernel_group = MLIRWrapperKenrelGroup()
+        self.kernel_group = mlir_common.MLIRWrapperKenrelGroup()
         self._ready_to_flush = False
         self.outer_function = set()
         config.inplace_buffers = False # FIXME. inout kernel makes trouble.. So disabled it!
@@ -82,7 +76,7 @@ class MLIRScheduling(BaseScheduling):
 
     def flush(self):
         self.kernel_group.codegen_define_and_call(V.graph.wrapper_code)
-        self.kernel_group = MLIRWrapperKenrelGroup()
+        self.kernel_group = mlir_common.MLIRWrapperKenrelGroup()
         self._set_flush_status(False)
 
     def define_function(self, kernel):
