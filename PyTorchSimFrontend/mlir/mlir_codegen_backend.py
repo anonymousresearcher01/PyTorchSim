@@ -1372,7 +1372,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             indices = self.cse.generate(self.loads, f"affine.apply #{mapping}(%{indices})") # FIXME. Only loads?
 
         if name not in self.global_vars_dict:
-            self.global_vars_dict[name] = set()
+            self.global_vars_dict[name] = list()
 
         if str(raw_index) not in self.global_vars_dict[name]:
             new_name = f"{name}_{len(self.global_vars_dict[name])}"
@@ -1380,7 +1380,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             self.header.writeline(f"{c_type} {new_name}_spad[{tile_size // self.vector_lane}] __attribute__ ((section(\".spad\")));")
             self.gem5_header.writeline(f"{c_type} {new_name}_spad[{tile_size}];")
             self.global_vars.writeline(f"memref.global @{new_name}_spad : memref<{dram_tile_shape}x{mlir_type}, 1>")
-        self.global_vars_dict[name].add(str(raw_index))
+            self.global_vars_dict[name].append(str(raw_index))
+        else:
+            new_name = f"{name}_{self.global_vars_dict[name].index(str(raw_index))}"
         buffer = self.cse.generate(code_buffer, f"memref.get_global @{new_name}_spad : memref<{dram_tile_shape}x{mlir_type}, 1>")
         return buffer, indices
 
