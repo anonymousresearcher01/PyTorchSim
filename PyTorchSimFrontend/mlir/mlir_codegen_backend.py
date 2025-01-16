@@ -707,12 +707,13 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
         stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(name, index, dtype)
+        dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         tile_shape = f"{tile_shape[0]}x{tile_shape[1]}"
 
         # Define scratch pad buffer
         sram_var, index_var = self.get_scratchpad_buffer(dtype, name, self.tile_desc.n_row, self.tile_desc.n_col, tile_shape, self.loads, index_var, index)
         # MVIN Encoding
-        code = self.get_dma_code("MVIN", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", self.buffer_types[name][1], tile_shape, padding)
+        code = self.get_dma_code("MVIN", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape, padding)
         self.cse.generate(self.loads, code, assignment = False) # FIXME: assignment = False does not support caching
 
         # Generate vector load instruction
@@ -730,6 +731,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
         stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(name, index, dtype)
+        dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         tile_shape = f"{tile_shape[0]}x{tile_shape[1]}"
 
         # Define scratch pad buffer
@@ -746,7 +748,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.cse.generate(self.stores, line, assignment = False)
 
         # Generate DMA instruction
-        code = self.get_dma_code("MVOUT", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", self.buffer_types[name][1], tile_shape)
+        code = self.get_dma_code("MVOUT", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape)
         self.cse.generate(self.stores, code, assignment = False)
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
@@ -878,10 +880,10 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         is_col_major = mlir_common.MLIRTile.TILE_PER_LANE_ROW_WISE
         chunk_size = self.tile_desc.get_rows_per_lane()
         chunk = chunk_size << 1 | (is_col_major == mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE)
-
+        dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         # Generate DMA instruction
         # Change row, col
-        code = self.get_dma_code("MVOUT", mm_stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", self.buffer_types[name][1], f"{tile_row}x{tile_col}")
+        code = self.get_dma_code("MVOUT", mm_stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, f"{tile_row}x{tile_col}")
         self.cse.generate(self.reductions_suffix, code, assignment = False)
 
     def codegen_global_init(self):
@@ -1080,7 +1082,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         sram_operand = f"%{sram_var}[%{zero_cse}, %{zero_cse}]"
         tag_var = f"%{tag}[0]"
         dma_attribute = f"%{dma_type}, %{mm_stride}, %{chunk}"
-        dram_shape = f"memref<{dram_shape}x{mlir_dtype}>"
+        #dram_shape = f"memref<{dram_shape}x{mlir_dtype}>"
         sram_shape = f"memref<{tile_shape}x{mlir_dtype}, 1>"
         tag_shape = "memref<1xi32>"
 

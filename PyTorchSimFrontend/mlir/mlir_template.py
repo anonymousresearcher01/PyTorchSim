@@ -170,7 +170,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             stride = options['N']
             chunk = 2
             mlir_dtype = "f32"
-            dram_shape = f"{options['M'] * options['N']}"
+            dram_shape = f"memref<{options['M']}x{options['N']}x{mlir_dtype}>"
             tile_shape = f"{options['TILE_M']}x{options['TILE_N']}"
             code = self.get_dma_code("MVOUT", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, tag_var, dram_shape, tile_shape)
             self.cse.generate(self.stores, code, assignment = False)
@@ -302,6 +302,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
         if name not in self.buffer_names:
             # Allocate sram buffer
+            dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
             tile_shape = f"{self.render_options['TILE_M']}x{self.render_options['TILE_N']}"
             sram_var, index_var = self.get_scratchpad_buffer(dtype, name, self.render_options['TILE_M'], self.render_options['TILE_N'], tile_shape, self.loads, index_var, index)
             self.buffer_names[name] = sram_var
@@ -310,7 +311,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             stride = self.render_options['N']   # FIXME. Is it okay?
             chunk = 2                           # FIXME. Is it okay?
             index_var = "index2"                # FIXME. Is it okay?
-            code = self.get_dma_code("MVIN", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", self.buffer_types[name][1], tile_shape)
+            code = self.get_dma_code("MVIN", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape)
             self.cse.generate(self.loads, code, assignment = False)
 
         # Load vector from sram
@@ -349,7 +350,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
 
         stride = self.render_options['N']   # FIXME. Is it okay?
         index_var = "index2"                # FIXME. Is it okay?
-        dram_shape = f"{self.render_options['M'] * self.render_options['N']}"
+        dram_shape = f"memref<{self.render_options['M']}x{self.render_options['N']}x{mlir_dtype}>"
         tile_shape = f"{self.render_options['TILE_M']}x{self.render_options['TILE_N']}"
         code = self.get_dma_code("MVOUT", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape)
         self.cse.generate(self.stores, code, assignment = False)

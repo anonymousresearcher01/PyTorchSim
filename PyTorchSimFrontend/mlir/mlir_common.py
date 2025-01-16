@@ -99,28 +99,36 @@ class MLIRKernelArgs(common.KernelArgs):
     def is_mlir_arg_inout(value):
         return MLIRKernelArgs.MLIR_ARGS_INOUT & value
 
+    @staticmethod
+    def get_mlir_shape(info):
+        tensor_shape = "x".join([str(i) for i in info[1]])
+        tensor_type = DTYPE_TO_MLIR[info[0]]
+        return f"memref<{tensor_shape}x{tensor_type}, strided<{info[2]}>>"
+
     def mlir_argdefs(self, extra_node=dict()):
         buffer_types = {}
         for x in V.graph.buffers:
             if not isinstance(x.layout, MultiOutputLayout): # FIXME: MultiOutputLayout should be handled
-                buffer_types[x.get_name()] = [x.get_dtype(), x.get_numel()]
+                buffer_types[x.get_name()] = [x.get_dtype(), x.get_size(), x.get_stride()]
         for name, val in V.graph.graph_inputs.items():
             if isinstance(val, sympy.Expr):
                 buffer_types[name] = [get_sympy_Expr_dtype(val), 1]
+                buffer_types[name] = [get_sympy_Expr_dtype(val), [1], [1]]
             else:
-                buffer_types[name] = [val.get_dtype(), val.get_numel()]
+                buffer_types[name] = [val.get_dtype(), val.get_size(), val.get_stride()]
         buffer_types.update(
             {name: val.dtype for name, val in V.graph.constants.items()}
         )
         buffer_types.update(
-            {name: [val.get_dtype(), val.get_numel()] for name, val in extra_node.items()}
+            {name: [val.get_dtype(), val.get_size(), val.get_stride()] for name, val in extra_node.items()}
         )
 
         call_args = []
         arg_defs = []
         arg_attributes = []
         def set_info(outer, inner, arg_type):
-            arg_defs.append(f"%{inner}: memref<{buffer_types[outer][1]}x{DTYPE_TO_MLIR[buffer_types[outer][0]]}>")
+            mlir_shape = self.get_mlir_shape(buffer_types[outer])
+            arg_defs.append(f"%{inner}: {mlir_shape}")
             call_args.append(outer)
             arg_attributes.append([outer] + [[arg_type] + buffer_types[outer]])
 
@@ -141,7 +149,6 @@ class MLIRKernelArgs(common.KernelArgs):
         for outer, inner in self.sizevars.items():
             set_info(outer, inner, self.MLIR_ARGS_VAR)
         return arg_defs, call_args, arg_attributes, buffer_types
-
 
 class MLIRTile():
     TILE_ROW_WISE = 0
