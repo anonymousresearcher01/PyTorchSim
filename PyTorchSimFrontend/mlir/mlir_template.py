@@ -168,11 +168,12 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             index_var = "index2"
             tag_var = "tag"
             stride = options['N']
-            chunk = 2
+            vlane_split_axis = 0
+            vlane_stride = 1
             mlir_dtype = "f32"
             dram_shape = f"memref<{options['M']}x{options['N']}x{mlir_dtype}>"
             tile_shape = f"{options['TILE_M']}x{options['TILE_N']}"
-            code = self.get_dma_code("MVOUT", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, tag_var, dram_shape, tile_shape)
+            code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, tag_var, dram_shape, tile_shape)
             self.cse.generate(self.stores, code, assignment = False)
         self.body.splice(self.loads)
         self.body.splice(self.compute)
@@ -308,10 +309,10 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             self.buffer_names[name] = sram_var
 
             # Generate DMA instruction
-            stride = self.render_options['N']   # FIXME. Is it okay?
-            chunk = 2                           # FIXME. Is it okay?
+            vlane_split_axis = 0                # FIXME. Is it okay?
+            vlane_stride = 1                    # FIXME. Is it okay?
             index_var = "index2"                # FIXME. Is it okay?
-            code = self.get_dma_code("MVIN", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape)
+            code = self.get_dma_code("MVIN", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape)
             self.cse.generate(self.loads, code, assignment = False)
 
         # Load vector from sram
@@ -332,8 +333,9 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
 
-        chunk_size = 1  # Fixed for template kernel
-        chunk = chunk_size << 1 | (self.tile_desc.tile_per_lane_layout == MLIRTile.TILE_PER_LANE_COL_WISE)
+        vlane_split_axis = 0
+        vlane_stride = 1  # Fixed for template kernel
+        #chunk = chunk_size << 1 | (self.tile_desc.tile_per_lane_layout == MLIRTile.TILE_PER_LANE_COL_WISE)
 
         if name not in self.buffer_names:
             dram_tile_shape = f"{self.render_options['TILE_M']}x{self.render_options['TILE_N']}"
@@ -348,11 +350,10 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         line = f"{operation} %{value}, %{sram_var}[%{zero_var}, %{zero_var}] : memref<{self.render_options['TILE_M']}x{self.render_options['TILE_N']}x{mlir_dtype}, 1>{shape}"
         self.cse.generate(self.stores, line, assignment = False)
 
-        stride = self.render_options['N']   # FIXME. Is it okay?
         index_var = "index2"                # FIXME. Is it okay?
         dram_shape = f"memref<{self.render_options['M']}x{self.render_options['N']}x{mlir_dtype}>"
         tile_shape = f"{self.render_options['TILE_M']}x{self.render_options['TILE_N']}"
-        code = self.get_dma_code("MVOUT", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape)
+        code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape)
         self.cse.generate(self.stores, code, assignment = False)
 
     def get_scratchpad_buffer(self, dtype, name, tile_row, tile_col, dram_tile_shape, code_buffer, index_var, raw_index):

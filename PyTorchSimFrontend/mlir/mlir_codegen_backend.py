@@ -706,14 +706,14 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dram_var = self.args.input(name)
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
-        stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(name, index, dtype)
+        vlane_split_axis, vlane_stride, tile_shape, tile_size_per_lane = self.get_dma_info(name, index)
         dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         tile_shape = f"{tile_shape[0]}x{tile_shape[1]}"
 
         # Define scratch pad buffer
         sram_var, index_var = self.get_scratchpad_buffer(dtype, name, self.tile_desc.n_row, self.tile_desc.n_col, tile_shape, self.loads, index_var, index)
         # MVIN Encoding
-        code = self.get_dma_code("MVIN", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape, padding)
+        code = self.get_dma_code("MVIN", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape, padding)
         self.cse.generate(self.loads, code, assignment = False) # FIXME: assignment = False does not support caching
 
         # Generate vector load instruction
@@ -730,7 +730,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dram_var = self.args.output(name)
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
-        stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(name, index, dtype)
+        vlane_split_axis, vlane_stride, tile_shape, tile_size_per_lane = self.get_dma_info(name, index)
         dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         tile_shape = f"{tile_shape[0]}x{tile_shape[1]}"
 
@@ -748,7 +748,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.cse.generate(self.stores, line, assignment = False)
 
         # Generate DMA instruction
-        code = self.get_dma_code("MVOUT", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape)
+        code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, tile_shape)
         self.cse.generate(self.stores, code, assignment = False)
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
@@ -877,13 +877,13 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         # MVOUT Encoding
         mm_stride = tile_col
-        is_col_major = mlir_common.MLIRTile.TILE_PER_LANE_ROW_WISE
-        chunk_size = self.tile_desc.get_rows_per_lane()
-        chunk = chunk_size << 1 | (is_col_major == mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE)
+        vlane_split_axis = 0 #FIXME.
+        vlane_stride = self.tile_desc.get_rows_per_lane()
         dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
+
         # Generate DMA instruction
         # Change row, col
-        code = self.get_dma_code("MVOUT", mm_stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, f"{tile_row}x{tile_col}")
+        code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", dram_shape, f"{tile_row}x{tile_col}")
         self.cse.generate(self.reductions_suffix, code, assignment = False)
 
     def codegen_global_init(self):
@@ -946,7 +946,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             write_atomic(gem5_write_path, self.gem5_header.getvalue())
         return src_code
 
-    def get_dma_info(self, name, index, dtype):
+    def get_dma_info(self, name, index):
         current_tile = mlir_common.MLIRTile(self.tile_desc.n_row, self.tile_desc.n_col, self.tile_desc.vector_lane, self.tile_desc.used_vector_lane)
         cv = self.get_constant_vector(index)
         cv2 = self.get_constant_vector2(index)
@@ -966,14 +966,14 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             current_tile.tile_layout = mlir_common.MLIRTile.TILE_ROW_WISE
             current_tile.tile_per_lane_layout = mlir_common.MLIRTile.TILE_PER_LANE_ROW_WISE
             mm_stride, tile_size_per_lane = 1, 1
-            chunk_size = current_tile.get_chunk_size()
+            vlane_stride = current_tile.get_vlane_stride()
         # Case 1. Tile is 1-D vector type
         elif len(cv) == 1 and len(cv) <= self.reduction_depth:
             current_tile.n_row = 1
             current_tile.n_col = self.tile_desc.get_tile_size()
             current_tile.tile_layout = mlir_common.MLIRTile.TILE_ROW_WISE
             current_tile.tile_per_lane_layout = mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE # Actually it is not needed in vector case
-            chunk_size = current_tile.get_chunk_size()
+            vlane_stride = current_tile.get_vlane_stride()
             mm_stride = current_tile.n_col
             if self.is_scalar(name): # scalar to vector broadcasting
                 mm_stride = 0
@@ -986,7 +986,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             current_tile.n_row = 1
             current_tile.n_col = self.tile_desc.get_tile_size()
             current_tile.used_vector_lane = 1
-            chunk_size = current_tile.get_chunk_size()
+            vlane_stride = current_tile.get_vlane_stride()
             mm_stride = 0 # don't care
             tile_size_per_lane = current_tile.get_tile_size_per_lane()
             if self.is_scalar(name): # scalar to vector broadcasting
@@ -1008,20 +1008,20 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 if is_reduction and is_transposed:
                     current_tile.tile_layout = mlir_common.MLIRTile.TILE_COL_WISE
                     current_tile.tile_per_lane_layout = mlir_common.MLIRTile.TILE_PER_LANE_ROW_WISE
-                    chunk_size = current_tile.get_chunk_size()
+                    vlane_stride = current_tile.get_vlane_stride()
                 elif is_reduction and not is_transposed:
                     current_tile.tile_layout = mlir_common.MLIRTile.TILE_ROW_WISE
                     current_tile.tile_per_lane_layout = mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE
-                    chunk_size = current_tile.get_chunk_size()
+                    vlane_stride = current_tile.get_vlane_stride()
                 elif not is_reduction and is_transposed:
                     # Transposed case
                     current_tile.tile_layout = mlir_common.MLIRTile.TILE_COL_WISE
                     current_tile.tile_per_lane_layout = mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE
-                    chunk_size = current_tile.get_chunk_size()
+                    vlane_stride = current_tile.get_vlane_stride()
                 else: # not is_reduction and not is_transpose
                     current_tile.tile_layout = mlir_common.MLIRTile.TILE_COL_WISE if self.tile_desc.vector_lane_axis else mlir_common.MLIRTile.TILE_ROW_WISE
                     current_tile.tile_per_lane_layout = mlir_common.MLIRTile.TILE_PER_LANE_ROW_WISE
-                    chunk_size = current_tile.get_chunk_size()
+                    vlane_stride = current_tile.get_vlane_stride()
             else:
                 # Broadcast pattern
                 current_tile.tile_per_lane_layout = mlir_common.MLIRTile.TILE_PER_LANE_ROW_WISE
@@ -1030,14 +1030,14 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                     current_tile.tile_layout = mlir_common.MLIRTile.TILE_COL_WISE if self.tile_desc.vector_lane_axis else mlir_common.MLIRTile.TILE_ROW_WISE
                     current_tile.n_row = self.tile_desc.n_row
                     current_tile.n_col = self.tile_desc.n_col
-                    chunk_size = current_tile.get_chunk_size()
+                    vlane_stride = current_tile.get_vlane_stride()
                 else: # cv[1][0] == 0
                     current_tile.n_row = self.tile_desc.n_col
                     current_tile.n_col = self.tile_desc.n_row
-                    chunk_size = current_tile.get_cols_per_lane()
+                    vlane_stride = current_tile.get_cols_per_lane()
                     if not is_reduction:
                         current_tile.tile_per_lane_layout = mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE
-                        chunk_size = current_tile.n_col if self.tile_desc.vector_lane_axis else chunk_size
+                        vlane_stride = current_tile.n_col if self.tile_desc.vector_lane_axis else vlane_stride
         elif len(cv) == 3:
             current_tile.tile_per_lane_layout = mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE # Actually it is not needed in vector case
             mm_stride = cv[-1][0]
@@ -1049,31 +1049,31 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             else:
                 current_tile.n_row = self.tile_desc.get_tile_size()
                 current_tile.n_col = 1
-            chunk_size = current_tile.get_tile_size_per_lane()
+            vlane_stride = current_tile.get_tile_size_per_lane()
         else:
             raise NotImplementedError()
 
-        #assert(not (dtype==torch.bool and chunk_size < 8))
-        chunk = chunk_size << 1 | (current_tile.tile_per_lane_layout == mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE)
-        return mm_stride, chunk, [current_tile.n_row, current_tile.n_col], tile_size_per_lane
+        #assert(not (dtype==torch.bool and vlane_stride < 8))
+        vlane_split_axis = int(current_tile.tile_per_lane_layout == mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE)
+        return vlane_split_axis, vlane_stride, [current_tile.n_row, current_tile.n_col], tile_size_per_lane
 
-    def get_dma_code(self, dma_type_name, stride, chunk, mlir_dtype, dram_var, index_var, sram_var, tag_name, dram_shape, tile_shape, padding_type=None):
-        dma_key = (stride, chunk, mlir_dtype)
+    def get_dma_code(self, dma_type_name, attribute1, attribute2, mlir_dtype, dram_var, index_var, sram_var, tag_name, dram_shape, tile_shape, padding_type=None):
+        dma_key = (attribute1, attribute2, mlir_dtype)
         if dma_type_name == "MVIN" and dma_key in self.dma_read_cache:
-            dma_type, mm_stride, chunk = self.dma_read_cache[dma_key]
+            dma_type, attribute1, attribute2 = self.dma_read_cache[dma_key]
         elif dma_type_name == "MVOUT" and dma_key in self.dma_write_cache:
-            dma_type, mm_stride, chunk = self.dma_write_cache[dma_key]
+            dma_type, attribute1, attribute2 = self.dma_write_cache[dma_key]
         else:
-            mm_stride = self.get_const_cse(stride)
-            chunk = self.get_const_cse(chunk)
+            attribute1 = self.get_const_cse(attribute1)
+            attribute2 = self.get_const_cse(attribute2)
             if dma_type_name == "MVIN":
                 dma_type = self.get_const_cse(DMA_TYPE[f"{dma_type_name}{self.dma_read_counter}"])
                 self.dma_read_counter += 1
-                self.dma_read_cache[dma_key] = [dma_type, mm_stride, chunk]
+                self.dma_read_cache[dma_key] = [dma_type, attribute1, attribute2]
             else:
                 dma_type = self.get_const_cse(DMA_TYPE[f"{dma_type_name}{self.dma_write_counter}"])
                 # self.dma_write_counter += 1 Is it okay?
-                self.dma_write_cache[dma_key] = [dma_type, mm_stride, chunk]
+                self.dma_write_cache[dma_key] = [dma_type, attribute1, attribute2]
         tag = self.get_tag_cse(tag_name)
         zero_cse = self.get_const_cse(0)
 
@@ -1081,7 +1081,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dram_operand = f"%{dram_var}[%{index_var}]"
         sram_operand = f"%{sram_var}[%{zero_cse}, %{zero_cse}]"
         tag_var = f"%{tag}[0]"
-        dma_attribute = f"%{dma_type}, %{mm_stride}, %{chunk}"
+        dma_attribute = f"%{dma_type}, %{attribute1}, %{attribute2}"
         #dram_shape = f"memref<{dram_shape}x{mlir_dtype}>"
         sram_shape = f"memref<{tile_shape}x{mlir_dtype}, 1>"
         tag_shape = "memref<1xi32>"

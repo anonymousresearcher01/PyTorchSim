@@ -188,12 +188,12 @@ class MLIRTile():
     def get_tile_shape(self):
         return f"{self.n_row}x{self.n_col}"
 
-    def get_chunk_size(self):
+    def get_vlane_stride(self):
         if self.tile_layout == self.TILE_ROW_WISE:
-            chunk_size = self.get_tile_size_per_lane()
+            vlane_stride = self.get_tile_size_per_lane()
         else:
-            chunk_size = self.get_cols_per_lane()
-        return chunk_size
+            vlane_stride = self.get_cols_per_lane()
+        return vlane_stride
 
     @staticmethod
     def div_round_up(size, round_val):
