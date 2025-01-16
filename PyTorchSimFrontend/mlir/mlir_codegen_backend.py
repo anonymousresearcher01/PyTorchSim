@@ -1078,7 +1078,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if dma_type_name == "MVIN" and dma_key in self.dma_read_cache:
             dma_type, mm_stride, chunk = self.dma_read_cache[dma_key]
         elif dma_type_name == "MVOUT" and dma_key in self.dma_write_cache:
-            dma_type, mm_stride, chunk = self.dma_read_cache[dma_key]
+            dma_type, mm_stride, chunk = self.dma_write_cache[dma_key]
         else:
             mm_stride = self.get_const_cse(stride)
             chunk = self.get_const_cse(chunk)
