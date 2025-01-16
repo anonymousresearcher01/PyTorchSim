@@ -647,6 +647,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.welford_reduce_out = None
         self.reduce_iterator = {}
         self.is_template_kernel = False
+
     def set_ranges(self, lengths, reduction_lengths, read_writes):
         ret = super().set_ranges(lengths, reduction_lengths, read_writes)
 
