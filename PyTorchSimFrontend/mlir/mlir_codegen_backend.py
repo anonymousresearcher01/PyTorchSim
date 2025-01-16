@@ -884,24 +884,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         code = self.get_dma_code("MVOUT", mm_stride, chunk, mlir_dtype, dram_var, index_var, sram_var, f"{name}_tag", self.buffer_types[name][1], f"{tile_row}x{tile_col}")
         self.cse.generate(self.reductions_suffix, code, assignment = False)
 
-    def codegen_body(self):
-        def template_store(options):
-            subtile_size = [self.vector_lane, self.vector_lane]
-            async_flag = 1
-            zero_var = self.get_const_cse(0)
-            line = f"affine.dma_start %Y_buffer[%{zero_var}, %{zero_var}], %Y[%index2], %tag[0], %c_mvout, %N, %c_set"\
-                   f": memref<{options['TILE_M']}x{options['TILE_N']}xf32, 1>,"\
-                   f"memref<{options['M'] * options['N']}xf32>, memref<1xi32>" #FIXME: Using constant index
-            self.cse.generate(self.stores, line, assignment = False)
-        self.body.splice(self.loads)
-        self.body.splice(self.compute)
-        if len(self.stores._lines) == 0:
-            template_store(self.render_options)
-        self.body.splice(self.stores)
-        self.loads.clear()
-        self.compute.clear()
-        self.stores.clear()
-
     def codegen_global_init(self):
         return self.global_vars
 

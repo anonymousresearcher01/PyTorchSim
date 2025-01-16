@@ -161,6 +161,28 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             kernel_name if self.outer_func_name is None else self.outer_func_name,
             call_args, cuda=False)
 
+    def codegen_body(self):
+        def template_store(options):
+            sram_var = "Y_buffer"
+            dram_var = "Y"
+            index_var = "index2"
+            tag_var = "tag"
+            stride = options['N']
+            chunk = 2
+            mlir_dtype = "f32"
+            dram_shape = f"{options['M'] * options['N']}"
+            tile_shape = f"{options['TILE_M']}x{options['TILE_N']}"
+            code = self.get_dma_code("MVOUT", stride, chunk, mlir_dtype, dram_var, index_var, sram_var, tag_var, dram_shape, tile_shape)
+            self.cse.generate(self.stores, code, assignment = False)
+        self.body.splice(self.loads)
+        self.body.splice(self.compute)
+        if len(self.stores._lines) == 0:
+            template_store(self.render_options)
+        self.body.splice(self.stores)
+        self.loads.clear()
+        self.compute.clear()
+        self.stores.clear()
+
     def def_kernel(
         self,
         inputs: List[IRNode],
