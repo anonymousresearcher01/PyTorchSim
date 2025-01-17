@@ -349,9 +349,19 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         # Set node range info
         vars, reduction_vars = self.set_ranges(group, reduction_group)
 
+        # Dummy tile size
+        tile_size = [1] * (len(vars) + len(reduction_vars))
+        if len(tile_size) >= 2:
+            tile_size[-1] = 128
+            tile_size[-2] = 128
+        elif len(tile_size) == 1:
+            tile_size[0] = 256
+        else:
+            raise NotImplementedError("dummy tile size fail!")
+
         # Select tile info.
         # Note: Kernel Group have to share same tile desc for fusion
-        tile_desc = MLIRMultiDimTile([128, 128], self.vector_lane)
+        tile_desc = MLIRMultiDimTile(tile_size, self.vector_lane)
         self.kernel_group.set_tile_info(tile_desc)
         _, _, _, self.buffer_types = self.kernel_group.args.mlir_argdefs()
 

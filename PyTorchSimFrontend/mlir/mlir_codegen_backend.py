@@ -847,15 +847,12 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         tile_shape = local_tile_desc.get_mlir_shape(mlir_dtype)
-        #tile_col = self.tile_desc.n_row
-        #tile_row = 1
-        #dram_tile_shape = f"{tile_row}x{tile_col}"
 
         sram_var, index_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, tile_size_per_lane, tile_shape, self.reductions_suffix, index_var, index)
         if self.welford_reduce_out is not None:
             # raise NotImplementedError()
             sum, sqr_sum, _ = self.welford_reduce_out
-            shape = f"vector<{self.tile_desc.get_rows_per_lane()}x{mlir_dtype}>" if self.buffer_types[name][1] > 1 else mlir_dtype
+            shape = f"vector<{tile_size_per_lane}x{mlir_dtype}>" if self.buffer_types[name][1] > 1 else mlir_dtype
             # mean
             divider = self.cse.generate(self.reductions_suffix, f"arith.constant {float(self.ranges[self.reduction_depth])} : f32")
             if self.buffer_types[name][1] > 1:
@@ -906,7 +903,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         # Loop body part
         tile_size = self.kernel_group.tile_desc.tile_size
         # Apply paddings
-        tile_size = [1] * (len(self.itervars) - len(tile_size)) + tile_size
         loops = [LoopLevel(var, size, idx-len(self.itervars), tile_size=tile_size) for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
         loops, reductions = [LoopNest(loops[: self.reduction_depth]),
                              LoopNest(loops[self.reduction_depth :])]
@@ -1100,8 +1096,19 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         elif len(dims) == 1 and len(dims) == self.reduction_depth + 1:
             local_tile_desc.tile_size = [1, kg_tile_desc.get_dim_size(dims[0])]
             local_tile_desc.tile_stride = [0, 1]
-            local_tile_desc.vlane_split_axis = 1
+            local_tile_desc.vlane_split_axis = 0
             local_tile_desc.vlane_stride = 1
+        # Case 3. Tile is 2-D tile
+        elif len(dims) == 2:
+            is_reduction = self.reduction_depth == 1
+            local_tile_desc.tile_size = [kg_tile_desc.get_dim_size(dim) for dim in dims]
+            if is_reduction:
+                local_tile_desc.vlane_split_axis = 0
+                local_tile_desc.vlane_stride = 8
+            else:
+                local_tile_desc.vlane_split_axis= 1
+                local_tile_desc.vlane_stride = 1
+
         else:
             raise NotImplementedError("Currently not implemented... ;)")
 
@@ -1129,8 +1136,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         zero_cse = self.get_const_cse(0)
 
         # Prepare opearnds and attributes
-        sram_dims = len(tile_shape.split("x")) - 1
-        sram_index = [f"%{zero_cse}"] * sram_dims
         dram_operand = f"%{dram_var}[%{dram_index_var}]"
         sram_operand = f"%{sram_var}[{sram_index_var}]" # Use string
         tag_var = f"%{tag}[%{zero_cse}]"
