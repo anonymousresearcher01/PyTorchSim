@@ -648,13 +648,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.reduce_iterator = {}
         self.is_template_kernel = False
 
-    def set_ranges(self, lengths, reduction_lengths, read_writes):
-        ret = super().set_ranges(lengths, reduction_lengths, read_writes)
-
-        # Adjust time size when it is vector
-        self.adjust_tile_size()
-        return ret
-
     # padding type 0: zero-padding 1: negative-padding(-inf) ...
     def get_padding_type(self):
         ops = self.current_node.node.origins
@@ -731,6 +724,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dram_var = self.args.output(name)
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
+
+        # Prepare dma instruction
         vlane_split_axis, vlane_stride, tile_shape, tile_size_per_lane = self.get_dma_info(name, index)
         dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         tile_shape = f"{tile_shape[0]}x{tile_shape[1]}"
@@ -1057,6 +1052,20 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         #assert(not (dtype==torch.bool and vlane_stride < 8))
         vlane_split_axis = int(current_tile.tile_per_lane_layout == mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE)
         return vlane_split_axis, vlane_stride, [current_tile.n_row, current_tile.n_col], tile_size_per_lane
+
+    def get_dma_info(self, name, index): # Need more argument?
+        """
+        A tile descriptor exists that is configured on a kernel group
+        DMA desc should be adjusted according to buffer.
+        Therefore, this function shoulde determin DRAM, SRAM stride and
+        vectorlane mapping policy
+        """
+        # TODO.
+        kg_tile_desc = self.kernel_group.tile_desc
+        vlane_split_axis = 0
+        vlane_stride = 1
+        local_tile_desc = mlir_common.MLIRMultiDimTile()
+        return vlane_split_axis, vlane_stride, local_tile_desc
 
     def get_dma_code(self, dma_type_name, attribute1, attribute2, mlir_dtype, dram_var, index_var, sram_var, tag_name, dram_shape, tile_shape, padding_type=None):
         dma_key = (attribute1, attribute2, mlir_dtype)

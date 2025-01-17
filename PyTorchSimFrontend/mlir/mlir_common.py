@@ -151,7 +151,7 @@ class MLIRKernelArgs(common.KernelArgs):
 class MLIRMultiDimTile():
     def __init__(self, tile_size, vector_lane, vlane_split_axis=None, vlane_stride=None):
         self.tile_size = list(tile_size)
-        self.tile_order = list(range(len(self.tile_size)))[::-1]
+        self.tile_stride = None # Todo.
 
         # Vector lane mapping config
         self.vector_lane = vector_lane
@@ -167,6 +167,9 @@ class MLIRMultiDimTile():
             size *= dim_size
         return size
 
+    def get_tile_stride(self):
+        return self.tile_stride
+
     def dim_size(self):
         """
         Return number of dimensions
@@ -178,6 +181,9 @@ class MLIRMultiDimTile():
         Return number of used vector lane
         """
         return self.div_round_up(self.tile_size[self.vlane_split_axis], self.vlane_stride)
+
+    def get_vlane_stride(self):
+        return self.vlane_stride
 
     @staticmethod
     def div_round_up(size, round_val):
@@ -218,9 +224,6 @@ class MLIRTile():
             print(f"[Warning] n_col({self.n_col}) % vector_lane({self.used_vector_lane}) != 0")
         return self.div_round_up(self.get_tile_size(), self.used_vector_lane)
 
-    def get_tile_shape(self):
-        return f"{self.n_row}x{self.n_col}"
-
     def get_vlane_stride(self):
         if self.tile_layout == self.TILE_ROW_WISE:
             vlane_stride = self.get_tile_size_per_lane()
@@ -236,6 +239,10 @@ class MLIRWrapperKenrelGroup(cpp.KernelGroup):
     def __init__(self):
         super().__init__()
         self.args = MLIRKernelArgs()
+        self.tile_desc : MLIRMultiDimTile = None
+
+    def set_tile_info(self, tile_desc : MLIRMultiDimTile):
+        self.tile_desc = tile_desc
 
 class BaseMLIRHardwareInfo():
     def __init__(self):
@@ -270,19 +277,12 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         self.reductions_suffix = IndentedBuffer()
         self.cse = common.CSE(self.newvar_prefix, self.suffix)
         # Tile size setting
-        tile_row = extension_config.CONFIG_TILE_ROW
-        if tile_row == -1:
-            tile_row = self.vlen * self.vector_lane
-        tile_col = extension_config.CONFIG_TILE_COL
-        if tile_col == -1:
-            tile_col = 8 # FIXME: tile_col is not always vector_lane * vlen
-        self.tile_desc = MLIRTile(tile_row, tile_col, self.vector_lane)
+        self.tile_desc : MLIRMultiDimTile = None
+        # MLIR SSA tracker
         self.var_info = {} # MLIR variable info
         self.buffer_types : dict = None
-        self.read_writes = None
 
-    def set_ranges(self, lengths, reduction_lengths, read_writes):
-        self.read_writes = read_writes
+    def set_ranges(self, lengths, reduction_lengths):
         if self.call_ranges:
             assert self.call_ranges == tuple(lengths) + tuple(
                 reduction_lengths
@@ -328,14 +328,17 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
             nodes, key=lambda x: int(x.is_reduction())
         ).group
 
-        self.set_ranges(group, reduction_group, None)
+        # Set node range info
+        vars, reduction_vars = self.set_ranges(group, reduction_group)
+
+        # Select tile info.
+        # Note: Kernel Group have to share same tile desc for fusion
+        tile_desc = MLIRMultiDimTile([128, 128], self.vector_lane)
+        self.kernel_group.set_tile_info(tile_desc)
+
         with self as kernel:
             kernel.args = kernel.kernel_group.args
             for node in nodes:
-                vars, reduction_vars = kernel.set_ranges(group, reduction_group, node.read_writes)
-                kernel.args.tile_row = kernel.tile_desc.n_row
-                kernel.args.tile_col = kernel.tile_desc.n_col
-                _, _, _, kernel.buffer_types = kernel.args.mlir_argdefs()
                 node.run(vars, reduction_vars)
         src_code = self.codegen_kernel(kernel_name=kernel_name)
         self.meta_kernel()
@@ -343,10 +346,6 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
 
     def codegen_kernel(self, kernel_name):
         arg_defs, _, _, _ = self.kernel_group.args.mlir_argdefs()
-        code = self._codegen_kernel(arg_defs, kernel_name)
-        return code.getvalue()
-
-    def _codegen_kernel(self, arg_defs, kernel_name):
         arg_defs = ",\n".ljust(25).join(arg_defs)
         code = common.BracesBuffer()
 
@@ -360,7 +359,7 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
                 code.writeline(f"auto {old} = {new};")
             # Loop body part
             code.splice(self.codegen_loops())
-        return code
+        return code.getvalue()
 
     def meta_kernel(self):
         wrapper = V.graph.wrapper_code
