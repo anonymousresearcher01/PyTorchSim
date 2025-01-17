@@ -108,17 +108,17 @@ class MLIRKernelArgs(common.KernelArgs):
         buffer_types = {}
         for x in V.graph.buffers:
             if not isinstance(x.layout, MultiOutputLayout): # FIXME: MultiOutputLayout should be handled
-                buffer_types[x.get_name()] = [x.get_dtype(), x.get_numel()]
+                buffer_types[x.get_name()] = [x.get_dtype(), x.get_numel(), x.get_size(), x.get_stride()]
         for name, val in V.graph.graph_inputs.items():
             if isinstance(val, sympy.Expr):
-                buffer_types[name] = [get_sympy_Expr_dtype(val), 1]
+                buffer_types[name] = [get_sympy_Expr_dtype(val), 1, [1], [1]]
             else:
-                buffer_types[name] = [val.get_dtype(), val.get_numel()]
+                buffer_types[name] = [val.get_dtype(), val.get_numel(), val.get_size(), val.get_stride()]
         buffer_types.update(
-            {name: val.dtype for name, val in V.graph.constants.items()}
+            {name: [val.dtype, 1, [1], [1]] for name, val in V.graph.constants.items()}
         )
         buffer_types.update(
-            {name: [val.get_dtype(), val.get_numel()] for name, val in extra_node.items()}
+            {name: [val.get_dtype(), val.get_numel(), val.get_size(), val.get_stride()] for name, val in extra_node.items()}
         )
 
         call_args = []
@@ -167,20 +167,40 @@ class MLIRMultiDimTile():
             size *= dim_size
         return size
 
+    def get_tile_size_per_lane(self):
+        tile_size_per_lane = list(self.tile_size)
+        tile_size_per_lane[self.vlane_split_axis] = self.vlane_stride
+        size = 1
+        for dim_size in tile_size_per_lane:
+            size *= dim_size
+        return size
+
     def get_tile_stride(self):
         return self.tile_stride
 
-    def dim_size(self):
+    def get_nr_dim(self):
         """
         Return number of dimensions
         """
         return len(self.tile_size)
 
+    def get_dim_size(self, index):
+        if isinstance(index, int):
+            return self.tile_size[index]
+        elif "index" in str(index):
+            return self.tile_size[int(str(index)[5:])]
+        raise NotImplementedError("Unsupported format of index")
+
+    def get_mlir_shape(self, dtype):
+        str_tile_size = [str(dim) for dim in self.tile_size]
+        shape = "x".join(str_tile_size)
+        return f"memref<{shape}x{dtype}, 1>"
+
     def get_used_vlane(self):
         """
         Return number of used vector lane
         """
-        return self.div_round_up(self.tile_size[self.vlane_split_axis], self.vlane_stride)
+        return min(self.div_round_up(self.tile_size[self.vlane_split_axis], self.vlane_stride), self.vector_lane)
 
     def get_vlane_stride(self):
         return self.vlane_stride
@@ -276,11 +296,9 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         self.vector_compute = IndentedBuffer()
         self.reductions_suffix = IndentedBuffer()
         self.cse = common.CSE(self.newvar_prefix, self.suffix)
-        # Tile size setting
-        self.tile_desc : MLIRMultiDimTile = None
         # MLIR SSA tracker
         self.var_info = {} # MLIR variable info
-        self.buffer_types : dict = None
+        self.buffer_types : dict = None # format: dtype, numel, size, stride
 
     def set_ranges(self, lengths, reduction_lengths):
         if self.call_ranges:
@@ -335,6 +353,7 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         # Note: Kernel Group have to share same tile desc for fusion
         tile_desc = MLIRMultiDimTile([128, 128], self.vector_lane)
         self.kernel_group.set_tile_info(tile_desc)
+        _, _, _, self.buffer_types = self.kernel_group.args.mlir_argdefs()
 
         with self as kernel:
             kernel.args = kernel.kernel_group.args
