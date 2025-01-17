@@ -1133,8 +1133,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         sram_index = [f"%{zero_cse}"] * sram_dims
         dram_operand = f"%{dram_var}[%{dram_index_var}]"
         sram_operand = f"%{sram_var}[{sram_index_var}]" # Use string
-        tag_var = f"%{tag}[0]"
-        dma_attribute = f"%{dma_type}, %{attribute1}, %{attribute2}"
+        tag_var = f"%{tag}[%{zero_cse}]"
+        dma_attribute = f"%{attribute1}, %{attribute2}"
         #dram_shape = f"memref<{dram_shape}x{mlir_dtype}>"
         #sram_shape = f"memref<{tile_shape}x{mlir_dtype}, 1>"
         sram_shape = tile_shape
@@ -1147,7 +1147,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             src_operand, dst_operand = sram_operand, dram_operand
             src_shape, dst_shape = sram_shape, dram_shape
 
-        code = f"affine.dma_start {src_operand}, {dst_operand}, {tag_var}, {dma_attribute} : {src_shape}, {dst_shape}, {tag_shape}"
+        code = f"memref.dma_start {src_operand}, {dst_operand}, %{dma_type}, {tag_var}, {dma_attribute} : {src_shape}, {dst_shape}, {tag_shape}"
         if padding_type is not None:
             code = code + f" {{padding = {padding_type}}}"
         return code
