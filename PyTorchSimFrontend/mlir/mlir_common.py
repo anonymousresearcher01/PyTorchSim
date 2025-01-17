@@ -151,7 +151,7 @@ class MLIRKernelArgs(common.KernelArgs):
 class MLIRMultiDimTile():
     def __init__(self, tile_size, vector_lane, vlane_split_axis=None, vlane_stride=None):
         self._tile_size = list(tile_size)
-        self.tile_axis_order = range(len(tile_size))
+        self.tile_axis_order = list(range(len(tile_size)-1))
 
         # Vector lane mapping config
         self.vector_lane = vector_lane
@@ -161,7 +161,7 @@ class MLIRMultiDimTile():
     def set_tile_size(self, tile_size, tile_axis_order=None):
         self._tile_size = tile_size
         if tile_axis_order is None:
-            self.tile_axis_order = range(len(tile_size))
+            self.tile_axis_order = list(range(len(tile_size)-1))
         else:
             self.tile_axis_order = tile_axis_order
 
@@ -176,12 +176,9 @@ class MLIRMultiDimTile():
         for dim_size in self._tile_size:
             size *= dim_size
         return size
-
-    def get_tile_size_per_lane(self):
-        tile_size_per_lane = list(self._tile_size)
-        used_vlane = self.get_used_vlane()
-        tile_size_per_lane[self.vlane_split_axis] = \
-            self.div_round_up(tile_size_per_lane[self.vlane_split_axis], used_vlane)
+ 
+    def get_numel_per_lane(self):
+        tile_size_per_lane = self.get_tile_size_per_lane()
         size = 1
         for dim_size in tile_size_per_lane:
             size *= dim_size
@@ -191,7 +188,7 @@ class MLIRMultiDimTile():
         strides = [1] * len(self._tile_size)
         init = 1
 
-        original_indices = list(range(len(self.tile_axis_order)))
+        original_indices = list(range(len(self.tile_axis_order)-1))
         sorted_pairs = sorted(
             zip(self.tile_axis_order, self._tile_size, original_indices),
             key=lambda x: x[0], reverse=True
@@ -200,6 +197,13 @@ class MLIRMultiDimTile():
             strides[original_indices] = init
             init *= size
         return strides
+
+    def get_tile_size_per_lane(self):
+        tile_size_per_lane = list(self._tile_size)
+        used_vlane = self.get_used_vlane()
+        tile_size_per_lane[self.vlane_split_axis] = \
+            self.div_round_up(tile_size_per_lane[self.vlane_split_axis], used_vlane)
+        return tile_size_per_lane
 
     def get_nr_dim(self):
         """
@@ -217,7 +221,7 @@ class MLIRMultiDimTile():
     def get_mlir_shape(self, dtype):
         str_tile_size = [str(dim) for dim in self._tile_size]
         shape = "x".join(str_tile_size)
-        return f"memref<{shape}x{dtype}, strided<{self.get_tile_stride()}>, 1>"
+        return f"memref<{shape}x{dtype}, 1>"
 
     def get_used_vlane(self):
         """
@@ -385,9 +389,11 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         # Select tile info.
         # Note: Kernel Group have to share same tile desc for fusion
         tile_desc = MLIRMultiDimTile(tile_size, self.vector_lane)
+        tile_desc.vlane_split_axis = len(vars) - 1
+        tile_desc.vlane_stride = 2
         self.kernel_group.set_tile_info(tile_desc)
-        _, _, _, self.buffer_types = self.kernel_group.args.mlir_argdefs()
 
+        _, _, _, self.buffer_types = self.kernel_group.args.mlir_argdefs()
         with self as kernel:
             for node in nodes:
                 node.run(vars, reduction_vars)
