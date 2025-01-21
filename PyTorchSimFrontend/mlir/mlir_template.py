@@ -170,9 +170,13 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             vlane_split_axis = 0
             vlane_stride = 1
             mlir_dtype = "f32"
-            dram_shape = f"memref<{options['M']}x{options['N']}x{mlir_dtype}>"
-            tile_shape = f"{options['TILE_M']}x{options['TILE_N']}"
-            code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, tag_var, dram_shape, tile_shape)
+            dram_shape = f"memref<{options['M']*options['N']}x{mlir_dtype}>"
+            tile_shape = f"memref<{options['TILE_M']}x{options['TILE_N']}x{mlir_dtype}, 1>"
+            zero_cse = self.get_const_cse(0)
+            sram_index_var = ",".join([f"%{zero_cse}"] * 2)
+            tile_stride = [options['N'], 1]
+            code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
+                                 tag_var, dram_shape, tile_shape, tile_stride)
             self.cse.generate(self.stores, code, assignment = False)
         self.body.splice(self.loads)
         self.body.splice(self.compute)

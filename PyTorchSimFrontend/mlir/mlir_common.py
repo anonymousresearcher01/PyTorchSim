@@ -313,7 +313,7 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
 
     def __init__(self, args=None):
         super().__init__(args)
-        self.kernel_group : MLIRWrapperKenrelGroup = None
+        self.kernel_group : MLIRWrapperKenrelGroup = MLIRWrapperKenrelGroup()
         # Kernel iteration range info
         self.call_ranges = None
         self.ranges = None
