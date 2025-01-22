@@ -23,6 +23,16 @@ def test_vectoradd(device, size=(128, 128)):
     out = vectoradd(x.cpu(), y.cpu())
     test_result("VectorAdd", res, out)
 
+def test_vector_scalar_add(device, size=(128, 128)):
+    def vectoradd(a, b):
+        return a + b
+    x = torch.randn(size).to(device=device)
+    y = torch.randn([1]).to(device=device)
+    opt_fn = torch.compile(dynamic=False)(vectoradd)
+    res = opt_fn(x, y)
+    out = vectoradd(x.cpu(), y.cpu())
+    test_result("VectorScalarAdd", res, out)
+
 
 if __name__ == "__main__":
     import os

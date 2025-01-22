@@ -1,6 +1,6 @@
 import torch._dynamo
 import torch.utils.cpp_extension
-from tests.test_add import test_vectoradd
+from tests.test_add import test_vectoradd, test_vector_scalar_add
 from tests.test_reduce import test_reduce_sum
 from tests.test_transpose2D import test_Transpose2D, test_Transpose2D_2
 from tests.test_transpose3D import test_Transpose3D_1, test_Transpose3D_2, test_Transpose3D_3
@@ -26,6 +26,7 @@ if __name__ == "__main__":
     module = ExecutionEngine.setup_device()
     device = module.custom_device()
     test_vectoradd(device, (47, 10))
+    test_vector_scalar_add(device, (10, 10))
     test_reduce_sum(device, (29, 47), 1, keepdim=True)
     test_reduce_sum(device, (17, 68), 0, keepdim=True)
     test_Transpose2D(device, [64, 156])
