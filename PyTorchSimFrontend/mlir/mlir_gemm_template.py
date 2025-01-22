@@ -23,7 +23,6 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
   %c_mvin2 = arith.constant 1 : index{% if Bias %}
   %c_mvin3 = arith.constant 14 : index{% endif %}
   %c_mvout = arith.constant 3 : index
-  %c_set = arith.constant 2 : index
   %vstride = arith.constant 1 : index
   %axis = arith.constant 1 : index
   %X_buffer = memref.get_global @X_spad : memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>
