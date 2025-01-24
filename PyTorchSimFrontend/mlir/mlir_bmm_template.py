@@ -49,13 +49,13 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
           %index0 = affine.apply #map0(%b, %t_m, %t_k)
           %index1 = affine.apply #map1(%b, %t_k, %t_n)
           memref.dma_start %X[%index0], %X_buffer[%c0, %c0], %c_mvin, %tag[%c0], %axis, %vstride
-             : memref<{{ B * M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32> { subtile_size=[{{ kernel.vector_lane }}, {{ TILE_K }}], async=1, sram_stride=[1, {{ TILE_K }}]}
+             : memref<{{ B * M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32> { subtile_size=[{{ kernel.vector_lane }}, {{ TILE_K }}], async=1, sram_stride=[1, {{ TILE_M }}]}
           memref.dma_start %W[%index1], %W_buffer[%c0, %c0], %c_mvin2, %tag[%c0], %axis, %vstride
-             : memref<{{ B * K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ TILE_K }}, {{ kernel.vector_lane }}], async=1, sram_stride=[1, {{ TILE_N }}]}
+             : memref<{{ B * K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ TILE_K }}, {{ kernel.vector_lane }}], async=1, sram_stride=[1, 1]}
           linalg.matmul ins(%X_buffer, %W_buffer : memref<{{ TILE_M }}x{{ TILE_K }}x{{ DATA_STYPE }}, 1>, memref<{{ TILE_K }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
                   outs(%Y_buffer : memref<{{ TILE_M }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
         } { accumulation_loop=true }
-       {{kernel.store_output()}}
+       {{kernel.store_output(vlane_split_axis=2)}}
       } { outer_loop=true }
     } { outer_loop=true }
   } { outer_loop=true }
@@ -91,7 +91,7 @@ class MLIRBMMTemplate(MLIRTemplate):
         Y = self.output_node
         Bias = None if len(self.input_nodes) == 2 else self.input_nodes[2]
 
-        M, N, K = X.get_size()[1], W.get_size()[2], X.get_size()[2]
+        B, M, N, K = X.get_size()[0], X.get_size()[1], W.get_size()[2], X.get_size()[2]
         TILE_M, TILE_N, TILE_K = kernel.gemmini_gemm_mapping(M, N, K)
         kernel.tile_size = [TILE_M, TILE_N, TILE_K]
         kernel.loop_size = [M, N, K]
@@ -102,7 +102,7 @@ class MLIRBMMTemplate(MLIRTemplate):
         kernel.render_options = dict(
             KERNEL_NAME=self.name,
             kernel=kernel,
-            B=X.get_size()[0],
+            B=B,
             M=M,
             N=N,
             K=K,
@@ -118,6 +118,7 @@ class MLIRBMMTemplate(MLIRTemplate):
             Bias_rank = len(Bias.data.get_size()) if Bias is not None else 0,
             W_transposed = W_transposed,
             X_transposed = X_transposed,
+            Y_numel = B * M * N,
             input_reorder = self.input_reorder
         )
         code = self._template_from_string(BMM_TEMPLATE).render(**kernel.render_options)

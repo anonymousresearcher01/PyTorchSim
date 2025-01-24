@@ -36,7 +36,7 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
   affine.for %t_m = 0 to {{ M }} step {{ TILE_M }} {
     affine.for %t_n = 0 to {{ N }} step {{ TILE_N }} {
       %index2 = affine.apply #map2(%t_m, %t_n)
-      {% if Bias -%}
+      {%- if Bias -%}
       memref.dma_start %Bias[
         {%- if Bias_rank == 2 -%} %index2 {%- else -%} %t_n {%- endif -%}
         ], %Y_buffer[%c0, %c0], %c_mvin3, %tag[%c0], %
@@ -51,13 +51,13 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
         %index0 = affine.apply #map0(%t_m, %t_k)
         %index1 = affine.apply #map1(%t_k, %t_n)
         memref.dma_start %X[%index0], %X_buffer[%c0, %c0], %c_mvin, %tag[%c0], %axis, %vstride
-           : memref<{{ M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32> { subtile_size=[{{ kernel.vector_lane }}, {{ TILE_K }}], async=1, sram_stride=[1, {{ TILE_K }}]}
+           : memref<{{ M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32> { subtile_size=[{{ kernel.vector_lane }}, {{ TILE_K }}], async=1, sram_stride=[1, {{ TILE_M }}]}
         memref.dma_start %W[%index1], %W_buffer[%c0, %c0], %c_mvin2, %tag[%c0], %axis, %vstride
-           : memref<{{ K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ TILE_K }}, {{ kernel.vector_lane }}], async=1, sram_stride=[1, {{ TILE_N }}]}
+           : memref<{{ K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ TILE_K }}, {{ kernel.vector_lane }}], async=1, sram_stride=[1, 1]}
         linalg.matmul ins(%X_buffer, %W_buffer : memref<{{ TILE_M }}x{{ TILE_K }}x{{ DATA_STYPE }}, 1>, memref<{{ TILE_K }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
                 outs(%Y_buffer : memref<{{ TILE_M }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
       } { accumulation_loop=true }
-      {{kernel.store_output()}}
+      {{kernel.store_output(vlane_split_axis=1)}}
     } { outer_loop=true }
   } { outer_loop=true }
   return
@@ -131,6 +131,7 @@ class MLIRGemmTemplate(MLIRTemplate):
             Bias_rank = len(Bias.data.get_size()) if Bias is not None else 0,
             W_transposed = W_transposed,
             X_transposed = X_transposed,
+            Y_numel = M * N,
             epilogue_nodes = epilogue_nodes,
             input_reorder = self.input_reorder
         )

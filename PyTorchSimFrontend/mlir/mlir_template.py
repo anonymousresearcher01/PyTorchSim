@@ -161,20 +161,19 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             kernel_name if self.outer_func_name is None else self.outer_func_name,
             call_args, cuda=False)
 
-    def codegen_body(self):
+    def codegen_body(self, vlane_split_axis):
         def template_store(options):
             sram_var = "Y_buffer"
             dram_var = "Y"
             index_var = "index2"
             tag_var = "tag"
-            vlane_split_axis = 1
             vlane_stride = 1
             mlir_dtype = "f32"
-            dram_shape = f"memref<{options['M']*options['N']}x{mlir_dtype}>"
+            dram_shape = f"memref<{options['Y_numel']}x{mlir_dtype}>"
             tile_shape = f"memref<{options['TILE_M']}x{options['TILE_N']}x{mlir_dtype}, 1>"
             zero_cse = self.get_const_cse(0)
             sram_index_var = ",".join([f"%{zero_cse}"] * 2)
-            tile_stride = [1, options['TILE_N']]
+            tile_stride = [1, options['TILE_M']]
             code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
                                  tag_var, dram_shape, tile_shape, tile_stride)
             self.cse.generate(self.stores, code, assignment = False)
@@ -219,7 +218,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
                 self.kernel_group.args.output_buffers[node.get_name()] = name
                 self.store_buffer_names.add(node.get_name())    #TODO: Is this enough not calling store() in mlir_common.py?
                 extra_node[node.get_name()] = node
-                self.buffer_names[node.name] = 'Y_buffer'   #TODO: Buffer name fixed
+                self.buffer_names[node.get_name()] = 'Y_buffer'   #TODO: Buffer name fixed
 
         def hook():
             arg_defs, *_ = self.kernel_group.args.mlir_argdefs(extra_node=extra_node)
@@ -241,9 +240,9 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         self.render_hooks["<OUPUT>"] = hook
         return "<OUPUT>"
 
-    def store_output(self):
+    def store_output(self, vlane_split_axis=1):
         def hook():
-            self.codegen_body()
+            self.codegen_body(vlane_split_axis)
             return textwrap.indent(self.body.getvalue(), "      ").strip()  #TODO: First line is not indented
 
         assert "<STORE_OUTPUT>" not in self.render_hooks
