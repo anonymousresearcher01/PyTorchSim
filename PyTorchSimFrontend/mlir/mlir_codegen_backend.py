@@ -606,8 +606,8 @@ class ExtensionOverrides(common.OpOverrides):
     def broadcast(operand1, operand2, *args, var_info=None):
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
-        src_shape = f"vector<{op_type1[0]}x{op_type1[1]}>"# if op_type1[0] > 1 else op_type1[1]
-        des_shape = f"vector<{op_type2[0]}x{op_type1[1]}>"# if op_type2[0] > 1 else op_type1[1] # Use tile size only
+        src_shape = f"vector<{op_type1[0]}x{op_type1[1]}>" if op_type1[0] > 1 else op_type1[1]
+        des_shape = f"vector<{op_type2[0]}x{op_type1[1]}>" # if op_type2[0] > 1 else op_type1[1] # Use tile size only
 
         # Special case for length 2 vector. We used this vector to avoid scalar operations...
         if op_type1[0] != 1 and op_type2[0] % op_type1[0] == 0:
@@ -678,9 +678,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
     def parse_indices(self, expr) -> common.CSEVariable:
         # Constant case
         if expr.is_number:
-            map_var = self.map_cse.generate(self.global_vars, f"affine_map<(d0) -> ({str(expr)}*d0 + 0)>")
-            fake_dim = self.get_const_cse(1)
-            return self.cse.generate(self.loads, f"affine.apply #{map_var}(%{fake_dim})")
+            return self.get_const_cse(int(expr))
 
         # Identity case
         if len(expr.args) == 0:
@@ -720,7 +718,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dram_var = self.kernel_group.args.input(name)
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
-        local_tile_desc = self.get_dma_info(name, index)
+        local_tile_desc, index_var = self.get_dma_info(name, index, index_var)
         vlane_split_axis = local_tile_desc.vlane_split_axis
         vlane_stride = local_tile_desc.vlane_stride
         tile_numel_per_lane = local_tile_desc.get_numel_per_lane()
@@ -753,7 +751,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
 
         # Prepare dma instruction
-        local_tile_desc = self.get_dma_info(name, index)
+        local_tile_desc, index_var = self.get_dma_info(name, index, index_var)
         vlane_split_axis = local_tile_desc.vlane_split_axis
         vlane_stride = local_tile_desc.vlane_stride
         tile_numel_per_lane = local_tile_desc.get_numel_per_lane()
@@ -860,7 +858,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         index_var = self.parse_indices(index)
 
         # Tile is always reuduced in inner loop
-        local_tile_desc = self.get_dma_info(name, index)
+        local_tile_desc, index_var = self.get_dma_info(name, index, index_var)
         vlane_split_axis = local_tile_desc.vlane_split_axis
         vlane_stride = local_tile_desc.vlane_stride
         tile_numel_per_lane = local_tile_desc.get_numel_per_lane()
@@ -1086,7 +1084,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         vlane_split_axis = int(current_tile.tile_per_lane_layout == mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE)
         return vlane_split_axis, vlane_stride, [current_tile.n_row, current_tile.n_col], tile_size_per_lane
 
-    def get_dma_info(self, name, index): # Need more argument?
+    def get_dma_info(self, name, index, index_var): # Need more argument?
         """
         A tile descriptor exists that is configured on a kernel group
         DMA desc should be adjusted according to buffer.
@@ -1098,42 +1096,56 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         buffer_info = self.buffer_types[name]
         # Note: index could contain symbols that represent dynamic axies
         # Extract dimension of index(e.g, index0, index1)
-        dims = [int(str(i)[5:]) for i in index.free_symbols if "index" in str(i)]
+        local_dims = [int(str(i)[5:]) for i in index.free_symbols if "index" in str(i)]
+        total_dims =  [int(str(i)[5:]) for i in self.itervars]
         local_tile_desc = mlir_common.MLIRMultiDimTile([1], self.vector_lane)
-        dims.sort() # Assume that smaller index is placed in the outer loop
-        if kg_tile_desc.vlane_split_axis in dims:
-            local_vlane_split_axis = dims.index(kg_tile_desc.vlane_split_axis)
+        local_dims.sort() # Assume that smaller index is placed in the outer loop
+
+        # Reduction can have two type of tile size
+        if total_dims != local_dims and total_dims[:self.reduction_depth] != local_dims:
+            # We have to create custom apply map to provide dram stride
+            # ex) (d0, d1, ... dn, dn+1, dn+2, dk) -> (s0*d0 + s1*d1 + ... dn*0+ dn+1*0 + ... dk*0 + const)
+            fake_dim = self.get_const_cse(0)
+            input_expr = ",".join(["d"+str(i) for i in total_dims])
+            output_expr = str(index).replace('index', 'd')
+            input_argument = ",".join(["%index" + str(i) if i in local_dims else f"%{fake_dim}" for i in total_dims])
+            map_var = self.map_cse.generate(self.global_vars, f"affine_map<({input_expr}) -> ({output_expr})>")
+            index_var = self.cse.generate(self.loads, f"affine.apply #{map_var}({input_argument})")
+            local_dims = total_dims # Brodatcast tile shape
+
+        if kg_tile_desc.vlane_split_axis in local_dims:
+            local_vlane_split_axis = local_dims.index(kg_tile_desc.vlane_split_axis)
         else:
-            local_vlane_split_axis = max(len(dims) - 1, 0)
+            local_vlane_split_axis = max(len(local_dims) - 1, 0)
 
         # Case 0. Tile is 0-D scalar
-        if len(dims) == 0:
+        if len(local_dims) == 0:
             local_tile_desc.set_tile_size([kg_tile_desc.get_used_vlane() * kg_tile_desc.vlane_stride])         # Force it to use vector instruction.
             local_tile_desc.vlane_split_axis = local_vlane_split_axis    # last axis
             local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
         # Case 1. Tile is 1-D vector type
-        elif len(dims) == 1 and len(dims) <= self.reduction_depth:
-            local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dims[0])])
+        elif len(local_dims) == 1 and len(local_dims) <= self.reduction_depth:
+            local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(local_dims[0])])
             local_tile_desc.vlane_split_axis = local_vlane_split_axis
             local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
         # Case 2. Tile is 1-D vector type with reduction
-        elif len(dims) == 1 and len(dims) == self.reduction_depth + 1:
-            local_tile_desc.set_tile_size([1, kg_tile_desc.get_dim_size(dims[0])])
+        elif len(local_dims) == 1 and len(local_dims) == self.reduction_depth + 1:
+            local_tile_desc.set_tile_size([1, kg_tile_desc.get_dim_size(local_dims[0])])
             local_tile_desc.vlane_split_axis = local_vlane_split_axis
             local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
         # Case 3. Tile is 2-D tile
-        elif len(dims) == 2:
+        elif len(local_dims) == 2:
             is_reduction = self.reduction_depth == 1
             if is_reduction:
-                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in dims], [1, 0])
+                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in local_dims], [1, 0])
                 local_tile_desc.vlane_split_axis = local_vlane_split_axis
                 local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
             else:
-                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in dims])
+                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in local_dims])
                 local_tile_desc.vlane_split_axis = local_vlane_split_axis
                 local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
         # Case 3. Tile is 3-D tile
-        elif len(dims) == 3:
+        elif len(local_dims) == 3:
             is_reduction = self.reduction_depth < 3
             if is_reduction:
                 #local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in dims], [1, 0])
@@ -1141,13 +1153,13 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 #local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
                 raise NotImplementedError("Currently not implemented... ;)")
             else:
-                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in dims])
+                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in local_dims])
                 local_tile_desc.vlane_split_axis = local_vlane_split_axis
                 local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
         else:
             raise NotImplementedError("Currently not implemented... ;)")
 
-        return local_tile_desc
+        return local_tile_desc, index_var
 
     def get_dma_code(self, dma_type_name, attribute1, attribute2, mlir_dtype, dram_var, dram_index_var, sram_var, sram_index_var,
                      tag_name, dram_shape, tile_shape, tile_stride, padding_type=0, ):
