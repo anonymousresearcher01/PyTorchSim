@@ -858,7 +858,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         index_var = self.parse_indices(index)
 
         # Tile is always reuduced in inner loop
-        local_tile_desc, index_var = self.get_dma_info(name, index, index_var)
+        local_tile_desc, index_var = self.get_dma_info(name, index, index_var, broadcast=False)
         vlane_split_axis = local_tile_desc.vlane_split_axis
         vlane_stride = local_tile_desc.vlane_stride
         tile_numel_per_lane = local_tile_desc.get_numel_per_lane()
@@ -1084,7 +1084,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         vlane_split_axis = int(current_tile.tile_per_lane_layout == mlir_common.MLIRTile.TILE_PER_LANE_COL_WISE)
         return vlane_split_axis, vlane_stride, [current_tile.n_row, current_tile.n_col], tile_size_per_lane
 
-    def get_dma_info(self, name, index, index_var): # Need more argument?
+    def get_dma_info(self, name, index, index_var, broadcast=True): # Need more argument?
         """
         A tile descriptor exists that is configured on a kernel group
         DMA desc should be adjusted according to buffer.
@@ -1102,7 +1102,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         local_dims.sort() # Assume that smaller index is placed in the outer loop
 
         # Reduction can have two type of tile size
-        if total_dims != local_dims and total_dims[:self.reduction_depth] != local_dims:
+        if broadcast and (total_dims != local_dims or total_dims[:self.reduction_depth] == local_dims):
             # We have to create custom apply map to provide dram stride
             # ex) (d0, d1, ... dn, dn+1, dn+2, dk) -> (s0*d0 + s1*d1 + ... dn*0+ dn+1*0 + ... dk*0 + const)
             fake_dim = self.get_const_cse(0)
@@ -1162,7 +1162,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         return local_tile_desc, index_var
 
     def get_dma_code(self, dma_type_name, attribute1, attribute2, mlir_dtype, dram_var, dram_index_var, sram_var, sram_index_var,
-                     tag_name, dram_shape, tile_shape, tile_stride, padding_type=0, ):
+                     tag_name, dram_shape, tile_shape, tile_stride, padding_type=0):
         dma_key = (attribute1, attribute2, mlir_dtype)
         if dma_type_name == "MVIN" and dma_key in self.dma_read_cache:
             dma_type, attribute1, attribute2 = self.dma_read_cache[dma_key]
