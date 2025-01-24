@@ -33,6 +33,15 @@ def test_vector_scalar_add(device, size=(128, 128)):
     out = vectoradd(x.cpu(), y.cpu())
     test_result("VectorScalarAdd", res, out)
 
+def test_vector_tensor_add(device, size=(128, 128)):
+    def vectoradd(a, b):
+        return a + b
+    x = torch.randn(size).to(device=device)
+    y = torch.randn(size[0]).to(device=device)
+    opt_fn = torch.compile(dynamic=False)(vectoradd)
+    res = opt_fn(x, y)
+    out = vectoradd(x.cpu(), y.cpu())
+    test_result("VectorTensorAdd", res, out)
 
 if __name__ == "__main__":
     import os
@@ -45,3 +54,4 @@ if __name__ == "__main__":
     test_vectoradd(device, (47, 10))
     test_vectoradd(device, (128, 128))
     test_vectoradd(device, (4071, 429))
+    test_vector_tensor_add(device, (128, 128))

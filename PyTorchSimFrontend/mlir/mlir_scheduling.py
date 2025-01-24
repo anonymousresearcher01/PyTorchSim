@@ -133,7 +133,7 @@ class MLIRScheduling(BaseScheduling):
             partial_code = render()
             for node in epilogue_nodes:
                 ranges = node.get_ranges()
-                node.codegen(kernel.set_ranges(ranges[0], ranges[1], None))
+                node.codegen(kernel.set_ranges(ranges[0], ranges[1]))
         with V.set_kernel_handler(kernel):
             src_code = (
                 partial_code
