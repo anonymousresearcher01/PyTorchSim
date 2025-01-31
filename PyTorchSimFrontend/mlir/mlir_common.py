@@ -380,6 +380,9 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         if len(tile_size) == 2:
             tile_size[-1] = 128
             tile_size[-2] = 128
+        elif len(tile_size) == 0: # Scalar
+            tile_size = [1]
+            self.ranges = [1]
         elif len(tile_size) == 1:
             tile_size[0] = 512
         elif len(tile_size) == 3:
