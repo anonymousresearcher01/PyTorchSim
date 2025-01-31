@@ -103,9 +103,10 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
         )
 
 class ExtensionOverrides(common.OpOverrides):
+    index_set = set()
     # Binary element wise operations
     @staticmethod
-    def custom_cast(operand, target_type, *args, var_info=None):
+    def custom_cast(operand, target_type, *args, var_info=None, **kwargs):
         dtype = var_info[operand][1]
         if dtype == "index":
             ret = ops.index_cast(operand, target_type, var_info=var_info)
@@ -153,28 +154,28 @@ class ExtensionOverrides(common.OpOverrides):
         return tile_size, ret_type, operand1, operand2
 
     @staticmethod
-    def add(operand1, operand2, *args, var_info=None):
+    def add(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         opcode = f'arith.add{ret_type[0]}'
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def sub(operand1, operand2, *args, var_info=None):
+    def sub(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         opcode = f'arith.sub{ret_type[0]}'
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def mul(operand1, operand2, *args, var_info=None):
+    def mul(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         opcode = f'arith.mul{ret_type[0]}'
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def div(operand1, operand2, *args, var_info=None):
+    def div(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         if ret_type[0] == "f":
@@ -184,7 +185,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def truediv(operand1, operand2, *args, var_info=None):
+    def truediv(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         if ret_type[0] == "f":
@@ -194,7 +195,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def minimum(operand1, operand2, *args, var_info=None):
+    def minimum(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         if ret_type[0] == "f":
@@ -204,7 +205,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def maximum(operand1, operand2, *args, var_info=None):
+    def maximum(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         if ret_type[0] == "f":
@@ -214,7 +215,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def to_dtype(operand, dst_mlir_dtype, *args, var_info=None):
+    def to_dtype(operand, dst_mlir_dtype, *args, var_info=None, **kwargs):
         src_mlir_dtype = var_info[operand][1]
         tile_size = var_info[operand][0]
 
@@ -242,7 +243,7 @@ class ExtensionOverrides(common.OpOverrides):
             raise NotImplementedError("Unsupported type for to_dtype ops")
 
     @staticmethod
-    def constant(value, src_type, *args, var_info=None):
+    def constant(value, src_type, *args, var_info=None, **kwargs):
         if isinstance(src_type, torch.dtype):
             src_type = mlir_common.DTYPE_TO_MLIR[src_type]
 
@@ -255,9 +256,13 @@ class ExtensionOverrides(common.OpOverrides):
             value = int(value)
         return f'arith.constant {value} : {src_type}', [1, src_type]
 
+    @staticmethod
+    def alloc(size, src_type, *args, var_info=None, **kwargs):
+        return f"memref.alloc() : memref<{size}x{src_type}>", [size, src_type]
+
     # transcendental functions
     @staticmethod
-    def exp(operand, *args, var_info=None):
+    def exp(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
@@ -266,7 +271,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'math.exp %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
-    def sqrt(operand, *args, var_info=None):
+    def sqrt(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
@@ -280,7 +285,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'math.sqrt %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
-    def rsqrt(operand, *args, var_info=None):
+    def rsqrt(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
@@ -294,7 +299,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'math.rsqrt %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
-    def pow(operand1, operand2, *args, var_info=None):
+    def pow(operand1, operand2, *args, var_info=None, **kwargs):
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
 
@@ -316,7 +321,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f"math.pow{dtype[0]} %{operand1}, %{operand2} : {shape}", []
 
     @staticmethod
-    def log(operand, *args, var_info=None):
+    def log(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
@@ -344,7 +349,7 @@ class ExtensionOverrides(common.OpOverrides):
 
     # Logical operations
     @staticmethod
-    def neg(operand, *args, var_info=None):
+    def neg(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
@@ -358,7 +363,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'arith.negf %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
-    def eq(operand1, operand2, *args, var_info=None):
+    def eq(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -373,7 +378,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def ne(operand1, operand2, *args, var_info=None):
+    def ne(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -388,7 +393,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def lt(operand1, operand2, *args, var_info=None):
+    def lt(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -403,7 +408,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def gt(operand1, operand2, *args, var_info=None):
+    def gt(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -418,7 +423,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def le(operand1, operand2, *args, var_info=None):
+    def le(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -433,7 +438,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def ge(operand1, operand2, *args, var_info=None):
+    def ge(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -448,7 +453,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def and_(operand1, operand2, *args, var_info=None):
+    def and_(operand1, operand2, *args, var_info=None, **kwargs):
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
 
@@ -469,7 +474,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'arith.andi %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def or_(operand1, operand2, *args, var_info=None):
+    def or_(operand1, operand2, *args, var_info=None, **kwargs):
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
 
@@ -490,7 +495,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'arith.ori %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def xor(operand1, operand2, *args, var_info=None):
+    def xor(operand1, operand2, *args, var_info=None, **kwargs):
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
 
@@ -512,30 +517,30 @@ class ExtensionOverrides(common.OpOverrides):
 
 
     @staticmethod
-    def logical_and(operand, *args, var_info=None):
+    def logical_and(operand, *args, var_info=None, **kwargs):
         raise NotImplementedError("logical_and")
 
     @staticmethod
-    def logical_not(operand, *args, var_info=None):
+    def logical_not(operand, *args, var_info=None, **kwargs):
         raise NotImplementedError("logical_not")
 
     @staticmethod
-    def logical_or(operand, *args, var_info=None):
+    def logical_or(operand, *args, var_info=None, **kwargs):
         raise NotImplementedError("logical_not")
 
     @staticmethod
-    def logical_xor(operand, *args, var_info=None):
+    def logical_xor(operand, *args, var_info=None, **kwargs):
         raise NotImplementedError("logical_not")
 
     @staticmethod
-    def relu(operand, *args, var_info=None):
+    def relu(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         ret_type = "f32"
         return ops.maximum(operand, ops.constant(0.0, "f32")), [tile_size, ret_type]
 
     @staticmethod
-    def sigmoid(operand, *args, var_info=None):
+    def sigmoid(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         ret_type = "f32"
@@ -544,7 +549,7 @@ class ExtensionOverrides(common.OpOverrides):
 
     # Special operaitons
     @staticmethod
-    def where(condition, operand1, operand2, *args, var_info=None):
+    def where(condition, operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         cond_type = var_info[condition]
         if cond_type[0] < tile_size:
@@ -560,29 +565,63 @@ class ExtensionOverrides(common.OpOverrides):
 
 
     @staticmethod
-    def masked(mask, body, other, *args, var_info=None, tile_size=16, dtype="f32", ninf_declared=False):
+    def masked(mask, body, other, *args, var_info=None, tile_size=16, dtype="f32", ninf_declared=False, **kwargs):
         result = body()
-        val = ops.constant(0.0, "f32")
+        val = ops.constant(0.0, "f32", *args, **kwargs)
         result = ops.where(mask, result, val)
         return result, var_info[result]
 
     @staticmethod
-    def _index_expr(operand, *args, var_info=None, **kwargs):
-        symbols = sorted([str(i) for i in operand.free_symbols])
-        renamed_symbols = {symbol: sympy.Symbol(f"d{i}") for i, symbol in enumerate(symbols)}
+    def _index_expr(tile_size, buffer, renamed_expression, vec_size, *args, var_info=None, **kwargs):
+        strides = [1] * len(tile_size)
+        for i in range(len(tile_size) - 2, -1, -1):
+            strides[i] = strides[i + 1] * tile_size[i + 1]
 
-        renamed_expression = operand.subs(renamed_symbols)
+        linear_expression = []
+        for i, stride in enumerate(strides):
+            linear_expression.append(f"d{i}*{stride}")
 
-        affine_map_str = "(" + ", ".join([f"d{i}" for i in range(len(symbols))]) + ") -> ("
+        dim = ["%d"+str(i) for i in range(len(tile_size))]
+        sym_dim = ["d"+str(i) for i in range(len(tile_size))]
+        start_dim = [str(0) for i in tile_size]
+        end_dim = [str(i) for i in tile_size]
+
+        affine_map_str = "(" + ", ".join(sym_dim) + ") -> ("
         affine_map_str += sympy.printing.ccode(renamed_expression) + ")"
 
-        map_operands = [f"%{str(symbol)}" for symbol in symbols]
-        return f"affine.apply affine_map<{affine_map_str}>({', '.join(map_operands)})", [1, "index"]
+        affine_map_str2 = "(" + ", ".join(sym_dim) + ") -> ("
+        affine_map_str2 += "+".join(linear_expression) + ")"
+
+        apply_map_var = f"%index_var = affine.apply affine_map<{affine_map_str}>({', '.join(dim)})\n"
+        linear_index_var = f"%buffer_index_var = affine.apply affine_map<{affine_map_str2}>({', '.join(dim)})\n"
+        affine_store_var = f"affine.store %index_var, %{buffer}[%buffer_index_var] : memref<{vec_size}xindex>\n"
+
+        result = f"affine.parallel ({','.join(dim)}) = ({','.join(start_dim)}) to ({','.join(end_dim)}) {{\n" + \
+            apply_map_var + linear_index_var + affine_store_var + f"}}"
+        return result, [None, None]
 
     @staticmethod
-    def index_expr(operand, *args, var_info=None, **kwargs):
-        result = ops._index_expr(operand)
-        ret_type = [1, "index"]
+    def index_expr(operand, *args, var_info=None, tile_desc=None, **kwargs):
+        # Todo. To support index_expr, we have to custom instructions
+        tile_size = tile_desc.get_tile_size()
+        if tile_desc.get_used_vlane() != 1:
+            raise NotImplementedError("Currently index operation is only executable on single vectorlane configuration")
+
+        vec_size = 1
+        for ds in tile_size:
+            vec_size *= ds
+
+        buffer = ops.alloc(vec_size, "index")
+        ret_type = [vec_size, "index"]
+
+        renamed_symbols = {symbol: "d"+str(symbol)[5:] for symbol in operand.free_symbols}
+        renamed_expression = operand.subs(renamed_symbols)
+        if operand not in ExtensionOverrides.index_set:
+            # Register this operand
+            ExtensionOverrides.index_set.add(operand)
+            ops._index_expr(tile_size, buffer, renamed_expression, vec_size)
+
+        result = f"affine.vector_load %{buffer}[0] : memref<{vec_size}xindex>, vector<{vec_size}xindex> // {renamed_expression}"
         return result, ret_type
 
     @staticmethod
@@ -593,7 +632,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f"arith.index_cast %{operand} : {src_shape} to {des_shape}", [op_type[0], target_type]
 
     @staticmethod
-    def broadcast_unflat(operand1, operand2, *args, var_info=None):
+    def broadcast_unflat(operand1, operand2, *args, var_info=None, **kwargs):
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
         src_shape = f"vector<{op_type1[0]}x{op_type1[1]}>"# if op_type1[0] > 1 else op_type1[1]
@@ -603,7 +642,7 @@ class ExtensionOverrides(common.OpOverrides):
         return expand, [op_type2[0], op_type1[1]]
 
     @staticmethod
-    def broadcast(operand1, operand2, *args, var_info=None):
+    def broadcast(operand1, operand2, *args, var_info=None, **kwargs):
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
         src_shape = f"vector<{op_type1[0]}x{op_type1[1]}>" if op_type1[0] > 1 else op_type1[1]

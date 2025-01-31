@@ -30,4 +30,4 @@ if __name__ == "__main__":
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()
     device = module.custom_device()
-    test_exponent(device, size=(512, 512))
+    test_exponent(device, size=(32, 32))

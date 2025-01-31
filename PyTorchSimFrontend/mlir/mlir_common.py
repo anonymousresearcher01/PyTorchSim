@@ -384,7 +384,7 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
             tile_size = [1]
             self.ranges = [1]
         elif len(tile_size) == 1:
-            tile_size[0] = 512
+            tile_size[0] = 128*128*2
         elif len(tile_size) == 3:
             tile_size[-1] = 128
             tile_size[-2] = 128
@@ -514,14 +514,16 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
                         buf_bounds = self.node_to_bounds.get(
                             fx_node, ValueRanges.unknown()
                         )
-                    code, ret_info = getattr(parent_handler, name)(*args, var_info=self.var_info)
+                    code, ret_info = getattr(parent_handler, name)(*args, var_info=self.var_info, tile_desc=self.kernel_group.tile_desc)
                     csevar = self.cse.generate(
                         self.compute,
                         code,
                         bounds=buf_bounds,
+                        assignment=(ret_info[0] is not None)
                     )
-                    self.register_var_info(csevar, ret_info)
-                    csevar.update_on_args(name, args, kwargs)
+                    if ret_info[0] is not None:
+                        self.register_var_info(csevar, ret_info)
+                        csevar.update_on_args(name, args, kwargs)
                     return csevar
 
                 return inner

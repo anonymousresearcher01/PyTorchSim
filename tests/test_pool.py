@@ -15,16 +15,19 @@ def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
 
 def test_maxpool(device):
     torch.manual_seed(0)
-    model = torch.nn.MaxPool2d(kernel_size=3, stride=2, padding=1).eval()
+    model = torch.nn.MaxPool2d(kernel_size=2, stride=2, padding=1).eval()
     model.to(device=device)
-    input = torch.randn(1, 8, 64, 64).to(device=device)
+    input = torch.randn(1, 2, 5, 2).to(device=device)
+    input = torch.arange(2*5*2, 0, -1, dtype=torch.float32)
+    input = input.reshape(1,2,5,2)
+    input = input.to(device=device)
     x1 = input.to(device=device)
     x2 = input.to("cpu")
     opt_fn = torch.compile(dynamic=False)(model)
     res = opt_fn(x1)
     model.to("cpu")
     out = model(x2)
-    # test_result("Maxpool Forward", res, out) # TODO: MaxPool Functionality is not working
+    test_result("Maxpool Forward", res, out) # TODO: MaxPool Functionality is not working
 
 def test_avgpool(device):
     def avgpool(a):
