@@ -594,10 +594,11 @@ class ExtensionOverrides(common.OpOverrides):
 
         apply_map_var = f"%index_var = affine.apply affine_map<{affine_map_str}>({', '.join(dim)})\n"
         linear_index_var = f"%buffer_index_var = affine.apply affine_map<{affine_map_str2}>({', '.join(dim)})\n"
-        affine_store_var = f"affine.store %index_var, %{buffer}[%buffer_index_var] : memref<{vec_size}xindex>\n"
+        broadcast_var = f"%broadcast_var = vector.broadcast %index_var : index to vector<2xindex>\n"
+        affine_store_var = f"affine.vector_store %broadcast_var, %{buffer}[%buffer_index_var] : memref<{vec_size}xindex>, vector<2xindex>\n"
 
         result = f"affine.parallel ({','.join(dim)}) = ({','.join(start_dim)}) to ({','.join(end_dim)}) {{\n" + \
-            apply_map_var + linear_index_var + affine_store_var + f"}}"
+            apply_map_var + linear_index_var + broadcast_var + affine_store_var + f"}}"
         return result, [None, None]
 
     @staticmethod
