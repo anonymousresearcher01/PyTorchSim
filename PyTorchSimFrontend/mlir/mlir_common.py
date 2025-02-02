@@ -1,9 +1,14 @@
 import os
+from collections import defaultdict
+from functools import reduce
+from operator import mul
 import torch
 from torch._inductor.codegen import common
 from torch._inductor.codegen import cpp
 from torch._inductor.virtualized import V
 from torch._inductor.ir import MultiOutputLayout
+from torch._inductor.dependencies import MemoryDep
+from torch.utils._sympy.functions import ModularIndexing
 import sympy
 import contextlib
 
@@ -157,6 +162,7 @@ class MLIRMultiDimTile():
         self.vector_lane = vector_lane
         self.vlane_split_axis = vlane_split_axis
         self.vlane_stride = vlane_stride
+        self.implicit_dim_size = None
 
     def set_tile_size(self, tile_size, tile_axis_order=None):
         self._tile_size = tile_size
@@ -375,6 +381,56 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         # Set node range info
         vars, reduction_vars = self.set_ranges(group, reduction_group)
 
+        # Handle implict dims. Input operand could have larger dimension space.
+        implicit_ranges = False
+        target_operand : MemoryDep = None
+        implicit_dim_size = defaultdict(list)
+        for read_operand in nodes[0].read_writes.reads:
+            read_operand : MemoryDep
+            read_index = read_operand.index
+            for arg in read_index.args:
+                if "ModularIndexing" in str(arg) or "//" in str(arg):
+                    implicit_ranges = True
+                    target_operand = read_operand
+                    break
+
+        if implicit_ranges:
+            print("This operation contina implicit dimension space!")
+            linearized_stride = [1] * len(target_operand.var_names)
+            for i in range(len(target_operand[3])-2, -1, -1):
+                linearized_stride[i] = linearized_stride[i+1] * target_operand[3][i+1]
+
+            linearized_index = sympy.Integer(0)
+            for dim, stride in zip(target_operand[2], linearized_stride):
+                linearized_index += stride * dim
+
+            new_dim_expression = []
+            new_dim_size = []
+            for arg in target_operand.index.args:
+                if len(arg.free_symbols) != 1:
+                    raise NotImplementedError("Not supporting this view operation...!")
+
+                if arg.is_Mul and arg.args[0].is_number:
+                    arg = arg.args[1]
+
+                if isinstance(arg, ModularIndexing):
+                    modular_expr = ModularIndexing(arg.args[0], arg.args[1], arg.args[2])
+                elif arg.is_symbol:
+                    modular_expr = ModularIndexing(arg, 1, target_operand.ranges[arg])
+                elif "//" in str(arg):
+                    modular_expr = ModularIndexing(arg.args[0], arg.args[1], target_operand.ranges[arg.args[0]]//arg.args[1])
+                else:
+                    raise NotImplementedError("What is this case?")
+                new_dim_expression.append(modular_expr)
+                new_dim_size.append(modular_expr.args[2])
+                implicit_dim_size[int(str(modular_expr.args[0])[1:])].append(int(modular_expr.args[2]))
+
+            # Sanity check
+            for dim, sub_dims in implicit_dim_size.items():
+                sz = reduce(mul, sub_dims, 1)
+                if sz != target_operand[3][dim]:
+                    raise NotImplementedError("Not supporting type...")
+
         # Dummy tile size
         tile_size = [1] * (len(vars) + len(reduction_vars))
         if len(tile_size) == 2:
@@ -395,9 +451,13 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         vlane_stride = 2
         # Adjust tile size to avoid too much paddings
         for i in range(1, len(tile_size)+1):
-            if tile_size[-i] > self.ranges[-i]:
-                remains = (self.ranges[-i] % vlane_stride)
-                tile_size[-i] = self.ranges[-i]
+            target_range = self.ranges[-i]
+            if implicit_ranges:
+                target_range = implicit_dim_size[len(tile_size)-i][-1]
+
+            if tile_size[-i] > target_range:
+                remains = (target_range % vlane_stride)
+                tile_size[-i] = target_range
                 if remains:
                     tile_size[-i] += vlane_stride - remains
 
@@ -406,6 +466,7 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         tile_desc = MLIRMultiDimTile(tile_size, self.vector_lane)
         tile_desc.vlane_split_axis = len(vars) - 1 # Set split_axis as a last normal loop not reduction loop
         tile_desc.vlane_stride = vlane_stride
+        tile_desc.implicit_dim_size = implicit_dim_size
         self.kernel_group.set_tile_info(tile_desc)
 
         _, _, _, self.buffer_types = self.kernel_group.args.mlir_argdefs()

@@ -19,6 +19,7 @@ from torch._inductor.utils import (
     IndentedBuffer,
     is_welford_reduction,
 )
+from torch.utils._sympy.functions import ModularIndexing
 import PyTorchSimFrontend.extension_codecache as extension_codecache
 
 from . import mlir_common
@@ -715,6 +716,29 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                     return 1
         return 0
 
+    def convert_index(self, expr):
+        if len(expr.free_symbols) != 1:
+            raise NotImplementedError("Not supporting this view operation...!")
+
+        if expr.is_symbol:
+            return expr
+
+        expr_str = str(expr)
+        if isinstance(expr, ModularIndexing):
+            replace_str = f"({expr.args[0]} floordiv {expr.args[1]}) mod {expr.args[2]}"
+            expr_str = re.sub(r"ModularIndexing\([^)]*\)", replace_str, expr_str)
+        elif "//" in expr_str:
+            expr_str = expr_str.replace("//", " floordiv ")
+        else:
+            raise NotImplementedError("What is this case?")
+
+        indices = [expr.args[0]]
+        args = ", ".join(map(str, indices))
+        map_var = self.map_cse.generate(self.global_vars, f"affine_map<({args}) -> ({expr_str})>")
+        args = ", ".join([f"%{i}" for i in indices])
+        index = self.cse.generate(self.loads, f"affine.apply #{map_var}({args})")
+        return index
+
     def parse_indices(self, expr) -> common.CSEVariable:
         # Constant case
         if expr.is_number:
@@ -724,27 +748,19 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if len(expr.args) == 0:
             return expr
 
+        indices = []
+        for arg in expr.args:
+            if arg.is_Mul and arg.args[0].is_number:
+                new_arg = sympy.Symbol(str(self.convert_index(arg.args[1])))
+                expr = expr.replace(arg.args[1], new_arg)
+            else:
+                new_arg = sympy.Symbol(str(self.convert_index(arg)))
+                expr = expr.replace(arg, new_arg)
+            indices.append(str(new_arg))
+        indices.sort()
+
         # Extract index var
         expr_str = str(expr)
-        pattern = r'index\d+'
-        indices = OrderedDict()
-        for index in re.findall(pattern, expr_str):
-            indices[index] = None
-        indices = list(indices.keys())
-
-        # Extract // pattern
-        if "//" in expr_str:
-            expr_str = expr_str.replace("//", " floordiv ")
-
-        # Extract modular pattern
-        pattern = r"ModularIndexing\((.*?)\)"
-        matches = re.search(pattern, expr_str)
-        if matches:
-            mod_args = matches.group(1)
-            args_list = mod_args.split(", ")
-            replace_str = f"({args_list[0]} floordiv {args_list[1]}) mod {args_list[2]}"
-            expr_str = re.sub(r"ModularIndexing\([^)]*\)", replace_str, expr_str)
-
         args = ", ".join(map(str, indices))
         map_var = self.map_cse.generate(self.global_vars, f"affine_map<({args}) -> ({expr_str})>")
         args = ", ".join([f"%{i}" for i in indices])
@@ -1140,12 +1156,13 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         # Note: index could contain symbols that represent dynamic axies
         # Extract dimension of index(e.g, index0, index1)
         local_dims = [int(str(i)[5:]) for i in index.free_symbols if "index" in str(i)]
+        implicit_local_dims = list(index.args)
         total_dims =  [int(str(i)[5:]) for i in self.itervars]
         local_tile_desc = mlir_common.MLIRMultiDimTile([1], self.vector_lane)
         local_dims.sort() # Assume that smaller index is placed in the outer loop
 
         # Reduction can have two type of tile size
-        if broadcast and (total_dims != local_dims or total_dims[:self.reduction_depth] == local_dims):
+        if broadcast and (total_dims != local_dims or (self.reduction_depth!=len(total_dims) and total_dims[:self.reduction_depth] == local_dims)):
             # We have to create custom apply map to provide dram stride
             # ex) (d0, d1, ... dn, dn+1, dn+2, dk) -> (s0*d0 + s1*d1 + ... dn*0+ dn+1*0 + ... dk*0 + const)
             fake_dim = self.get_const_cse(0)
@@ -1201,6 +1218,19 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
         else:
             raise NotImplementedError("Currently not implemented... ;)")
+
+        if len(implicit_local_dims)!=0 and len(local_dims) != len(implicit_local_dims):
+            tile_size = local_tile_desc.get_tile_size()
+            new_tile_size = []
+            new_vlane_split_axis = local_tile_desc.vlane_split_axis
+            implicit_dim_size = list(kg_tile_desc.implicit_dim_size.values())
+            for i, target_dim_size in enumerate(implicit_dim_size):
+                new_tile_size += [1]*(len(target_dim_size)-1) + tile_size[i:i+1]
+                if local_tile_desc.vlane_split_axis >= i:
+                    new_vlane_split_axis += len(target_dim_size)-1
+            # Update
+            local_tile_desc.set_tile_size(new_tile_size)
+            local_tile_desc.vlane_split_axis = new_vlane_split_axis
 
         return local_tile_desc, index_var
 
