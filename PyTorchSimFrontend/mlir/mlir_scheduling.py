@@ -129,11 +129,18 @@ class MLIRScheduling(BaseScheduling):
     def codegen_src_code(self, kernel, render, template_node, epilogue_nodes):
         with kernel:
             for node in [template_node, *epilogue_nodes]:
-                    node.mark_run()
+                node.mark_run()
             partial_code = render()
+            if epilogue_nodes:
+                _, (group, reduction_group) = max(
+                    epilogue_nodes, key=lambda x: int(x.is_reduction())
+                ).group
+                vars, reduction_vars = kernel.set_ranges(group, reduction_group)
+                tile_desc = kernel.compute_tile_size(epilogue_nodes, vars, reduction_vars)
+                kernel.kernel_group.set_tile_info(tile_desc)
+                kernel.adjust_tile_size()
             for node in epilogue_nodes:
-                ranges = node.get_ranges()
-                node.codegen(kernel.set_ranges(ranges[0], ranges[1]))
+                node.codegen((vars, reduction_vars))
         with V.set_kernel_handler(kernel):
             src_code = (
                 partial_code

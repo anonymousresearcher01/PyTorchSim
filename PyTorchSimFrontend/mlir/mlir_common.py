@@ -373,14 +373,7 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
        # generate the code to call this
         wrapper.generate_kernel_call(kernel_name, call_args, cuda=False)
 
-    def codegen_nodes(self, nodes, kernel_name):
-        _, (group, reduction_group) = max(
-            nodes, key=lambda x: int(x.is_reduction())
-        ).group
-
-        # Set node range info
-        vars, reduction_vars = self.set_ranges(group, reduction_group)
-
+    def compute_tile_size(self, nodes, vars, reduction_vars):
         # Handle implict dims. Input operand could have larger dimension space.
         implicit_ranges = False
         target_operand : MemoryDep = None
@@ -467,6 +460,16 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         tile_desc.vlane_split_axis = len(vars) - 1 # Set split_axis as a last normal loop not reduction loop
         tile_desc.vlane_stride = vlane_stride
         tile_desc.implicit_dim_size = implicit_dim_size
+        return tile_desc
+
+    def codegen_nodes(self, nodes, kernel_name):
+        _, (group, reduction_group) = max(
+            nodes, key=lambda x: int(x.is_reduction())
+        ).group
+
+        # Set node range info
+        vars, reduction_vars = self.set_ranges(group, reduction_group)
+        tile_desc = self.compute_tile_size(nodes, vars, reduction_vars)
         self.kernel_group.set_tile_info(tile_desc)
 
         _, _, _, self.buffer_types = self.kernel_group.args.mlir_argdefs()
