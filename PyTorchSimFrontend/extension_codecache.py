@@ -49,7 +49,7 @@ def mlir_compile_command(filename, vectorlane_size, tile_size, vlen=256):
         f"""
             {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-opt \
             -test-loop-padding \
-            -dma-fine-grained='systolic-array-size={vectorlane_size} tile-size={tile_size[0]},{tile_size[1]},{tile_size[2]}' \
+            -dma-fine-grained='systolic-array-size={vectorlane_size}' \
             -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen={vlen}' \
             -test-memref-to-gemmini="vectorlane={vectorlane_size}" \
             -lower-affine \
@@ -82,7 +82,7 @@ def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_si
         f"""
             {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-opt \
             -test-loop-padding='timing_mode=1' \
-            -dma-fine-grained='systolic-array-size={vectorlane_size} tile-size={tile_size[0]},{tile_size[1]},{tile_size[2]}' \
+            -dma-fine-grained='systolic-array-size={vectorlane_size}' \
             -test-tile-operation-graph='vectorlane={vectorlane_size}' \
             -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen={vlen}' \
             -test-memref-to-gemmini="vectorlane={vectorlane_size} timing=1" \
