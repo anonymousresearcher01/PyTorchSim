@@ -75,16 +75,16 @@ void Core::dma_cycle() {
 
     /* Set tag table of async dma load */
     if (instruction->is_dma_read() && instruction->is_async_dma()) {
-      std::ostringstream oss;
-      auto key = std::make_pair(instruction->get_addr_name(), instruction->get_tag_idx_list());
+      auto key = std::make_pair(instruction->get_addr_name(), instruction->get_tag_id());
       assert(!_tma.get_tag_finish(instruction->subgraph_id, key));
       _tma.set_tag_finish(instruction->subgraph_id, key);
-      for (const auto& idx : instruction->get_tag_idx_list())
-        oss << idx << ", ";
-      spdlog::trace("[Core {}][{}] {} ASYNC FINISHED, Used sram: {}, Release sram: {}, subgraph_id: {} addr_name: {} tag_idx_list: {}",
+      spdlog::trace("[Core {}][{}] {} ASYNC FINISHED, Used sram: {}, Release sram: {}, subgraph_id: {} addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}",
                     _id, _core_cycle, opcode_to_string(instruction->get_opcode()),
                     _used_sram_size, instruction->get_free_sram_size(),
-                    instruction->subgraph_id, instruction->get_addr_name(), oss.str());
+                    instruction->subgraph_id, instruction->get_addr_name(),
+                    instruction->get_tag_id(),
+                    fmt::format("[{}]", fmt::join(instruction->get_tag_idx_list(), ", ")),
+                    fmt::format("[{}]", fmt::join(instruction->get_tag_stride_list(), ", ")));
       for (auto & wait_inst : _tma.get_tag_waiter(instruction->subgraph_id, key)) {
         finish_instruction(wait_inst);
       }
@@ -105,17 +105,17 @@ void Core::dma_cycle() {
       } else if (finished_inst->is_dma_read() && finished_inst->is_async_dma()) {
         /* Register tag table for async dma load */
         _tma.register_tag(finished_inst->subgraph_id,
-                          std::make_pair(finished_inst->get_addr_name(), finished_inst->get_tag_idx_list()));
+                          std::make_pair(finished_inst->get_addr_name(), finished_inst->get_tag_id()));
         finish_instruction(finished_inst);
       } else if(!finished_inst->is_dma_read()) {
         spdlog::error("[Core {}][{}] TMA instruction in not valid", _id, _core_cycle);
         exit(EXIT_FAILURE);
       } else if (finished_inst->get_opcode() == Opcode::BAR) {
-        std::ostringstream oss;
-        for (const auto& idx : finished_inst->get_tag_idx_list())
-          oss << idx << ", ";
-        spdlog::trace("[Core {}][{}] {} FINISHED, addr_name: {} tag_list: {}", _id, _core_cycle,
-                      opcode_to_string(finished_inst->get_opcode()), finished_inst->get_addr_name(), oss.str());
+        spdlog::trace("[Core {}][{}] {} FINISHED, addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}", _id, _core_cycle,
+                      opcode_to_string(finished_inst->get_opcode()), finished_inst->get_addr_name(),
+                      finished_inst->get_tag_id(),
+                      fmt::format("[{}]", fmt::join(finished_inst->get_tag_idx_list(), ", ")),
+                      fmt::format("[{}]", fmt::join(finished_inst->get_tag_stride_list(), ", ")));
       }
       /*Pass to waiting queue */
       _dma_waiting_queue.push_back(std::move(finished_inst));
@@ -170,16 +170,34 @@ void Core::cycle() {
       switch (inst->get_opcode()) {
         case Opcode::MOVIN:
           {
-            std::ostringstream oss;
-            for (const auto& idx : inst->get_tag_idx_list())
-              oss << idx << ", ";
-            spdlog::trace("[Core {}][{}] {} ISSUED, free_sram_size: {} addr_name: {} tag_idx_list: {}", _id, _core_cycle,
-                          opcode_to_string(inst->get_opcode()), inst->get_free_sram_size(),
-                          inst->get_addr_name(), oss.str());
-            _ld_inst_queue.push(inst);
-            issued = true;
+            /* Check another MOVIN with same tag is issued */
+            auto key = std::make_pair(inst->get_addr_name(), inst->get_tag_id());
+            if (inst->is_async_dma() && _tma.tag_key_exist(inst->subgraph_id, key)) {
+              bool finished = _tma.get_tag_finish(inst->subgraph_id, key);
+              if (finished)
+                finish_instruction(inst);
+              else
+                _tma.register_tag_waiter(inst->subgraph_id, key, inst);
+              spdlog::trace("[Core {}][{}] {} SKIPPED, free_sram_size: {} addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}", _id, _core_cycle,
+                            opcode_to_string(inst->get_opcode()), inst->get_free_sram_size(),
+                            inst->get_addr_name(),
+                            inst->get_tag_id(),
+                            fmt::format("[{}]", fmt::join(inst->get_tag_idx_list(), ", ")),
+                            fmt::format("[{}]", fmt::join(inst->get_tag_stride_list(), ", ")));
+              issued = true;
+              break;
+            } else {
+              spdlog::trace("[Core {}][{}] {} ISSUED, free_sram_size: {} addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}", _id, _core_cycle,
+                            opcode_to_string(inst->get_opcode()), inst->get_free_sram_size(),
+                            inst->get_addr_name(),
+                            inst->get_tag_id(),
+                            fmt::format("[{}]", fmt::join(inst->get_tag_idx_list(), ", ")),
+                            fmt::format("[{}]", fmt::join(inst->get_tag_stride_list(), ", ")));
+              _ld_inst_queue.push(inst);
+              issued = true;
+              break;
+            }
           }
-          break;
         case Opcode::MOVOUT:
           spdlog::trace("[Core {}][{}] {} ISSUED, free_sram_size: {}", _id, _core_cycle,
                         opcode_to_string(inst->get_opcode()), inst->get_free_sram_size());
@@ -205,8 +223,7 @@ void Core::cycle() {
           break;
         case Opcode::BAR:
           {
-            std::ostringstream oss;
-            auto key = std::make_pair(inst->get_addr_name(), inst->get_tag_idx_list());
+            auto key = std::make_pair(inst->get_addr_name(), inst->get_tag_id());
             bool finished = _tma.get_tag_finish(inst->subgraph_id, key);
             if (finished) {
               finish_instruction(inst);
@@ -262,12 +279,12 @@ void Core::finish_instruction(std::shared_ptr<Instruction>& inst) {
       _id, _core_cycle, opcode_to_string(inst->get_opcode()), inst->get_compute_type(),
       _used_sram_size, inst->get_free_sram_size());
   } else if (inst->get_opcode() != Opcode::BAR && inst->is_async_dma()){
-    std::ostringstream oss;
-    for (const auto& idx : inst->get_tag_idx_list())
-      oss << idx << ", ";
-    spdlog::trace("[Core {}][{}] {} ASYNC REGISTERED, Used sram: {}, Release sram: {} subgraph_id: {} addr_name: {} tag_idx_list: {}",
+    spdlog::trace("[Core {}][{}] {} ASYNC REGISTERED, Used sram: {}, Release sram: {} subgraph_id: {} addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}",
       _id, _core_cycle, opcode_to_string(inst->get_opcode()), _used_sram_size,
-      inst->get_free_sram_size(), inst->subgraph_id, inst->get_addr_name(), oss.str());
+      inst->get_free_sram_size(), inst->subgraph_id, inst->get_addr_name(),
+      inst->get_tag_id(),
+      fmt::format("[{}]", fmt::join(inst->get_tag_idx_list(), ", ")),
+      fmt::format("[{}]", fmt::join(inst->get_tag_stride_list(), ", ")));
   } else if ((inst->get_opcode() == Opcode::MOVIN || inst->get_opcode() == Opcode::MOVOUT) && !inst->is_async_dma()) {
     spdlog::trace("[Core {}][{}] {} FINISHED, free_sram_size: {} addr_name: {}", _id, _core_cycle,
       opcode_to_string(inst->get_opcode()), inst->get_free_sram_size(),

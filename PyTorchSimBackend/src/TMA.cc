@@ -11,8 +11,8 @@ TMA::TMA(uint32_t id, uint32_t dram_req_size) {
 void TMA::issue_tile(std::shared_ptr<Instruction> inst) {
   _current_inst = std::move(inst);
   std::vector<size_t>& tile_size = _current_inst->get_tile_size();
-  if (tile_size.size() != 2) {
-    spdlog::error("[TMA {}] issued tile is not [y,x] format..", _id);
+  if (tile_size.size() <= 0 || tile_size.size() > get_max_dim()) {
+    spdlog::error("[TMA {}] issued tile is not supported format..", _id);
     exit(EXIT_FAILURE);
   }
   _finished = false;

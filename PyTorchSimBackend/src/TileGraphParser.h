@@ -116,6 +116,7 @@ class TileMemoryNode : public TileNode {
   std::vector<size_t> get_tile_size() { return _tile_size; }
   std::vector<int>& get_stride_list () { return _stride_list; }
   std::vector<std::string>& get_tag_idx_list() { return _tag_idx_list; }
+  std::vector<int>& get_tag_stride_list() { return _tag_stride_list; }
   std::vector<std::string>& get_loop_idx_list() { return _loop_idx_list; }
   bool is_async_node() { return _is_async; }
   void print_node() override;
@@ -127,6 +128,7 @@ class TileMemoryNode : public TileNode {
   bool _is_async;
   std::string _base_addr_name;
   std::vector<std::string> _tag_idx_list;
+  std::vector<int> _tag_stride_list;
   std::vector<std::string> _loop_idx_list;
 };
 
@@ -135,10 +137,12 @@ class TileMemoryWaitNode : public TileNode {
   TileMemoryWaitNode(onnx::NodeProto& node);
   std::string get_base_addr_name() { return _base_addr_name; }
   std::vector<std::string>& get_tag_idx_list() { return _tag_idx_list; }
+  std::vector<int>& get_tag_stride_list() { return _tag_stride_list; }
   void print_node() override;
 
  private:
   std::vector<std::string> _tag_idx_list;
+  std::vector<int> _tag_stride_list;
   std::string _base_addr_name;
 };
 

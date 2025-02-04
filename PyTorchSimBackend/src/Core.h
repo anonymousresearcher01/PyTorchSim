@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <vector>
+#include <fmt/core.h>
 
 #include "Dram.h"
 #include "Tile.h"
