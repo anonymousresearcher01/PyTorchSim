@@ -60,3 +60,4 @@ if __name__ == "__main__":
     test_softmax(device, size=(256, 128))
     test_softmax(device, size=(256, 128), dim=0)
     test_softmax(device, size=(1, 16))
+    test_softmax(device, size=(5, 8))

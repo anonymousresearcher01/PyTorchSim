@@ -753,10 +753,11 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             if arg.is_Mul and arg.args[0].is_number:
                 new_arg = sympy.Symbol(str(self.convert_index(arg.args[1])))
                 expr = expr.replace(arg.args[1], new_arg)
-            else:
+                indices.append(str(new_arg))
+            elif not arg.is_number:
                 new_arg = sympy.Symbol(str(self.convert_index(arg)))
                 expr = expr.replace(arg, new_arg)
-            indices.append(str(new_arg))
+                indices.append(str(new_arg))
         indices.sort()
 
         # Extract index var
@@ -1219,7 +1220,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         else:
             raise NotImplementedError("Currently not implemented... ;)")
 
-        if len(implicit_local_dims)!=0 and len(local_dims) != len(implicit_local_dims):
+        if len(implicit_local_dims)!=0 and len(local_dims) != len(implicit_local_dims) and self.is_modular_indexing(index):
             tile_size = local_tile_desc.get_tile_size()
             new_tile_size = []
             new_vlane_split_axis = local_tile_desc.vlane_split_axis

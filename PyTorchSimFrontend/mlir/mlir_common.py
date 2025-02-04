@@ -373,6 +373,9 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
        # generate the code to call this
         wrapper.generate_kernel_call(kernel_name, call_args, cuda=False)
 
+    def is_modular_indexing(self, expr):
+        return "ModularIndexing" in str(expr)
+
     def compute_tile_size(self, nodes, vars, reduction_vars):
         # Handle implict dims. Input operand could have larger dimension space.
         implicit_ranges = False

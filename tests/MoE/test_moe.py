@@ -341,7 +341,7 @@ class MoE(nn.Module):
         expert_inputs = dispatcher.dispatch(x)
         gates = dispatcher.expert_to_gates()
         expert_outputs = [self.experts[i](expert_inputs[i]) for i in range(self.num_experts)]
-        y = dispatcher.combine(expert_outputs, multiply_by_gates=False)
+        y = dispatcher.combine(expert_outputs, multiply_by_gates=True)
         return y, loss
 
     @torch.compiler.disable(recursive=True)
@@ -514,7 +514,7 @@ def train_moe(device):
     # model.eval()
     model_device = model.to(device=device)
     opt_model = torch.compile(model_device, dynamic=False)
-    opt_w = torch.compile()(weight_update, dynamic=False)
+    # opt_w = torch.compile()(weight_update, dynamic=False)
     y_hat, aux_loss = opt_model(x1)
     print("MoE Custom Device Done!")
 
