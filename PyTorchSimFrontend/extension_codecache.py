@@ -83,8 +83,8 @@ def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_si
             {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-opt \
             -test-loop-padding='timing_mode=1' \
             -dma-fine-grained='systolic-array-size={vectorlane_size}' \
-            -test-tile-operation-graph='vectorlane={vectorlane_size}' \
             -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen={vlen}' \
+            -test-tile-operation-graph='vectorlane={vectorlane_size}' \
             -test-memref-to-gemmini="vectorlane={vectorlane_size} timing=1" \
             -lower-affine \
             -finalize-memref-to-llvm \

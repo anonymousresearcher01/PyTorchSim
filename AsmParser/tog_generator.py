@@ -31,7 +31,7 @@ class tog_generator:
     LoopNodeKind = 2
     DMANodeKind = 3
     DMAWaitNodeKind = 4
-    def __init__(self, origins=None) -> None:
+    def __init__(self, origins="Unknown") -> None:
         self.module_name = "tile_operation_graph"
         self.module = None
         self.raw_graph = {}
@@ -89,6 +89,7 @@ class tog_generator:
             tile_info["tile_size"] = dump_data["tile_size"]
             tile_info["element_size"] = dump_data["element_size"]
             tile_info["tag_idx_list"] = dump_data["tag_idx_list"]
+            tile_info["tag_stride_list"] = dump_data["tag_stride_list"]
             tile_info["loop_idx_list"] = dump_data["loop_idx_list"]
             tile_info["is_async"] = dump_data["is_async"]
             is_write = dump_data["is_write"]
@@ -99,6 +100,7 @@ class tog_generator:
         elif node_type == self.DMAWaitNodeKind:
             tile_info = {}
             tile_info["tag_idx_list"] = dump_data["tag_idx_list"]
+            tile_info["tag_stride_list"] = dump_data["tag_stride_list"]
             tile_info["base_addr"] = dump_data["base_address"]
             new_node = memory_wait_node(tile_info, node_id=node_id)
         else:
@@ -214,4 +216,4 @@ class tog_generator:
 if __name__ == "__main__":
     t = tog_generator()
     t.load_file("/workspace/llvm-project/build/tile_operation_graph.py")
-    t.parse_graph()
+    t.generate_tile_graph("./tile_graph.onnx", cycle_list=[1,1,1,1,1], offset=0, vector_lane=128)

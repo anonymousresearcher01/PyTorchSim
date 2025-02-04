@@ -70,6 +70,7 @@ class memory_node(node):
         self.torchsim_tile_size = tile_info["tile_size"]
         self.torchsim_element_size = tile_info["element_size"]
         self.torchsim_tag_idx_list = tile_info["tag_idx_list"]
+        self.torchsim_tag_stride_list = tile_info["tag_stride_list"]
         self.torchsim_loop_idx_list = tile_info["loop_idx_list"]
         self.torchsim_is_async = tile_info["is_async"]
 
@@ -83,6 +84,7 @@ class memory_wait_node(node):
     def __init__(self, tile_info, inst_list=list(), node_id=0):
         super().__init__(node_id)
         self.torchsim_tag_idx_list = tile_info["tag_idx_list"]
+        self.torchsim_tag_stride_list = tile_info["tag_stride_list"]
         self.torchsim_base_addr = tile_info["base_addr"]
 
 class compute_node(node):
