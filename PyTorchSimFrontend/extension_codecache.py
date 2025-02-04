@@ -44,7 +44,7 @@ def llvm_compile_command(input, output):
         """,
     ).strip()]
 
-def mlir_compile_command(filename, vectorlane_size, tile_size, vlen=256):
+def mlir_compile_command(filename, vectorlane_size, vlen=256):
     return [re.sub(r"[ \n]+", " ",
         f"""
             {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-opt \
@@ -77,7 +77,7 @@ def mlir_compile_command(filename, vectorlane_size, tile_size, vlen=256):
         """,
     ).strip()]
 
-def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_size, tile_size, vlen=256):
+def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_size, vlen=256):
     return [re.sub(r"[ \n]+", " ",
         f"""
             {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-opt \
@@ -125,14 +125,14 @@ class MLIRCodeCache:
              validation_binary_name="validation_bin",
              cycle_wrapper_name="cycle_wrapper",
              cycle_binary_name="cycle_bin",
-             arg_attributes=[], vectorlane_size=16, tile_size=[],
+             arg_attributes=[], vectorlane_size=16,
              spad_info=None, origins=None, **kwargs):
         write_path = get_write_path(source_code)
         key, input_path = write(source_code, "mlir", specified_dir=write_path)
         new_input_path = os.path.splitext(input_path)[0]
         raw_tog_path = new_input_path + "_tog.py"
         sample_mlir_path = new_input_path + "_sample"
-        gem5_cmds = mlir_gem5_compile_command(new_input_path, sample_mlir_path, raw_tog_path, vectorlane_size, tile_size)
+        gem5_cmds = mlir_gem5_compile_command(new_input_path, sample_mlir_path, raw_tog_path, vectorlane_size)
 
         from filelock import FileLock
         lock_dir = get_lock_dir()
@@ -144,7 +144,7 @@ class MLIRCodeCache:
             link_option = ""
         # Generate LLVM kernel calller and binary for validation
         if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE:
-            cmds = mlir_compile_command(new_input_path, vectorlane_size, tile_size, vlen=256)
+            cmds = mlir_compile_command(new_input_path, vectorlane_size, vlen=256)
             opt_cmd = shlex.split(cmds[0])
             translate_cmd = shlex.split(cmds[1])
             llc_cmd = shlex.split(cmds[2])

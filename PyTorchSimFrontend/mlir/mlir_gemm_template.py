@@ -107,7 +107,6 @@ class MLIRGemmTemplate(MLIRTemplate):
         else:
             TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K)
             template = GEMM_TEMPLATE
-        kernel.tile_size = [TILE_M, TILE_N, TILE_K]
         kernel.loop_size =[M, N, K]
 
         W_transposed = self.is_transposed(W)

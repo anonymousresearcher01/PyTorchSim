@@ -177,7 +177,6 @@ class MLIRConvTemplate(MLIRTemplate):
         N = self.gemm_weight_shape[0]
         K = self.gemm_weight_shape[1]
         TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K)
-        kernel.tile_size = [TILE_M, TILE_N, TILE_K]
         kernel.loop_size = [M, N, K]
 
         W_transposed = self.is_transposed(W)
