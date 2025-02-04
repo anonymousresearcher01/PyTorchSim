@@ -662,6 +662,7 @@ TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
       /* insert tiles to subgraph */
       for (const auto& sub_tile: sub_tiles){
         subgraph->add_tile(sub_tile);
+        sub_tile->set_owner(subgraph);
       }
     }
     /* insert subgraph to graph */

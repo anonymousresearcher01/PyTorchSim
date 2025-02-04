@@ -17,8 +17,8 @@ class Tile {
   };
 
   Tile(Status status);
-  TileSubGraph* get_owner() { return _onwer_graph; }
-  void set_ownwer(TileSubGraph* graph) { _onwer_graph = graph; }
+  std::shared_ptr<TileSubGraph> get_owner() { return _onwer_graph; }
+  void set_owner(std::shared_ptr<TileSubGraph> graph) { _onwer_graph = graph; }
   Status get_status() { return _status; }
   void set_status(Status status) { _status=status; }
   size_t get_ready_counter() { return _ready_counter; }
@@ -42,7 +42,7 @@ class Tile {
   bool all_insts_finshed() { return _nr_insts == _nr_finished_insts; }
   
  protected:
-  TileSubGraph* _onwer_graph;
+  std::shared_ptr<TileSubGraph> _onwer_graph;
   Status _status = Status::EMPTY;
   size_t _required_sram_size=0;
   size_t _ready_counter=0;

@@ -157,6 +157,7 @@ int main(int argc, char** argv) {
     /* Get onnx_path, attribute from user input, request_time */
     interactive_mode(simulator);
   }
+  delete simulator;
 
   /* Simulation time measurement */
   auto end = std::chrono::high_resolution_clock::now();
