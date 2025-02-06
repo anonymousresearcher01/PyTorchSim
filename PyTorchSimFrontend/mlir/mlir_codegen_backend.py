@@ -1044,7 +1044,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         spike_write_path = os.path.join(write_path, "global_var.h")
         gem5_write_path = os.path.join(write_path, "gem5_global_var.h")
         if not os.path.exists(spike_write_path):
-            write_atomic(spike_write_path, self.header.getvalue())
+            spad_end_symbol = f"int spad_end[0] __attribute__ ((section(\".spad\"), aligned({self.spad_info['spad_size']*self.vector_lane})));"
+            write_atomic(spike_write_path, self.header.getvalue() + spad_end_symbol)
         if not os.path.exists(gem5_write_path):
             write_atomic(gem5_write_path, self.gem5_header.getvalue())
         return src_code
