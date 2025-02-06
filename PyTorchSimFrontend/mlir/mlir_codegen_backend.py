@@ -323,25 +323,19 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def pow(operand1, operand2, *args, var_info=None, **kwargs):
-        op_type1 = var_info[operand1]
-        op_type2 = var_info[operand2]
+        tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
+        # Type check & auto cast
+        if ret_type[0] != "f":
+            operand1, ret_type = ops.to_dtype(operand1, "f32", var_info=var_info)
+            var_info[operand1] = ret_type
 
         # Type check & auto cast
-        if op_type1[1][0] != "f":
-            operand1, dtype = ops.to_dtype(operand1, "f32", var_info=var_info)
-            var_info[operand1] = dtype
+        if ret_type[0] != "f":
+            operand2, ret_type = ops.to_dtype(operand2, "f32", var_info=var_info)
+            var_info[operand2] = ret_type
 
-        # Type check & auto cast
-        if op_type2[1][0] != "f":
-            operand2, dtype = ops.to_dtype(operand2, "f32", var_info=var_info)
-            var_info[operand2] = dtype
-
-        op_type1 = var_info[operand1]
-        tile_size = op_type1[0]
-        dtype = op_type1[1]
-
-        shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
-        return f"math.pow{dtype[0]} %{operand1}, %{operand2} : {shape}", []
+        shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
+        return f"math.pow{ret_type[0]} %{operand1}, %{operand2} : {shape}", [tile_size, ret_type]
 
     @staticmethod
     def log(operand, *args, var_info=None, **kwargs):

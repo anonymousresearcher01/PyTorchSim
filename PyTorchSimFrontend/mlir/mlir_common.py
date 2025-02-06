@@ -7,7 +7,7 @@ from torch._inductor.codegen import common
 from torch._inductor.codegen import cpp
 from torch._inductor.virtualized import V
 from torch._inductor.ir import MultiOutputLayout
-from torch._inductor.dependencies import MemoryDep
+from torch._inductor.dependencies import MemoryDep, StarDep, WeakDep
 from torch.utils._sympy.functions import ModularIndexing
 import sympy
 import contextlib
@@ -383,6 +383,8 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         implicit_dim_size = defaultdict(list)
         for read_operand in nodes[0].read_writes.reads:
             read_operand : MemoryDep
+            if isinstance(read_operand, StarDep) or isinstance(read_operand, WeakDep): # FIXME: WeakDep & StarDep are not supported (MoE case)
+                continue
             read_index = read_operand.index
             for arg in read_index.args:
                 if "ModularIndexing" in str(arg) or "//" in str(arg):
@@ -444,7 +446,7 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         else:
             raise NotImplementedError("dummy tile size fail!")
 
-        vlane_stride = 2
+        vlane_stride = 8 # TODO: VCIX widening is not implemented
         # Adjust tile size to avoid too much paddings
         for i in range(1, len(tile_size)+1):
             target_range = self.ranges[-i]
