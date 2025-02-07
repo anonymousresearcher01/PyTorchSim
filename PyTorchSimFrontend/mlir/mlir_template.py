@@ -290,6 +290,11 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             self.render_hooks,
         )
 
+    def get_spad_size_per_lane(self, tile_m, tile_n):
+        size = tile_m * ((tile_n + self.vector_lane - 1) // self.vector_lane)
+        size = 2 if size == 1 else size # vector load/store
+        return size
+
     def adjust_tile_size(self):
         # Fixed tile size for template kernel
         self.kernel_group.tile_desc.set_tile_size((self.render_options['TILE_M'], self.render_options['TILE_N']))

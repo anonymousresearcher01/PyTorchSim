@@ -67,7 +67,7 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
   %tag1 = memref.alloc() : memref<1xi32>
   %tag2 = memref.alloc() : memref<1xi32>
   %tag3 = memref.alloc() : memref<1xi32>
-  %v0 = arith.constant dense<0.0> : vector<{{ TILE_N }}xf32>
+  %v0 = arith.constant dense<0.0> : vector<{{ kernel.get_spad_size_per_lane(TILE_M, TILE_N) }}xf32>
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -85,7 +85,7 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
           memref.dma_start %Bias[%tile_n], %Y_buffer[%c0, %c0], %c_mvin, %tag0[%c0], %c0, %vstride
               : memref<{{ O_C }}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ TILE_M }}, {{ TILE_N }}], async=1, sram_stride=[1, {{ TILE_M }}]}
           {%- else %}
-          affine.vector_store %v0, %Y_buffer[%c0, %c0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_N }}xf32>
+          affine.vector_store %v0, %Y_buffer[%c0, %c0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ kernel.get_spad_size_per_lane(TILE_M, TILE_N) }}xf32>
           {%- endif %}
           affine.for %k_h = 0 to {{ K_H }} {
             affine.for %k_w = 0 to {{ K_W }} {
@@ -97,10 +97,10 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
                 %index2 = affine.apply #map2(%index_k_hw, %tile_k, %tile_n) // weight index
                 // Load input matrix
                 memref.dma_start %X[%index1], %X_buffer[%c0, %c0], %c_mvin, %tag1[%c0], %input_axis, %vstride
-                    : memref<{{ BATCH * I_C * (I_H + 2 * PADDING_H) * (I_W + 2 * PADDING_W) }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32> { subtile_size=[{{ kernel.vector_lane }}, {{ TILE_K }}], async=1, sram_stride=[1, {{ TILE_M }}]}
+                    : memref<{{ BATCH * I_C * (I_H + 2 * PADDING_H) * (I_W + 2 * PADDING_W) }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32> { subtile_size=[{{ SUB_TILE_M }}, {{ TILE_K }}], async=1, sram_stride=[1, {{ TILE_M }}]}
                 // Load kernel matrix
                 memref.dma_start %W[%index2], %W_buffer[%c0, %c0], %c_mvin, %tag2[%c0], %weight_axis, %vstride
-                    : memref<{{ O_C * I_C * K_H * K_W }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ TILE_K }}, {{ kernel.vector_lane }}], async=1, sram_stride=[1, 1]}
+                    : memref<{{ O_C * I_C * K_H * K_W }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ TILE_K }}, {{ SUB_TILE_N }}], async=1, sram_stride=[1, {{ TILE_K }}]}
                 // matmul
                 linalg.matmul ins(%X_buffer, %W_buffer : memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>)
                       outs(%Y_buffer : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>)
@@ -218,11 +218,12 @@ class MLIRConvTemplate(MLIRTemplate):
         O_W = Y.layout.size[3] if template_buffer_node is None else template_buffer_node.layout.size[3]
 
         # FIXME: fixed tile size
-        TILE_M = kernel.vector_lane
-        TILE_N = kernel.vector_lane
-        TILE_K = kernel.vector_lane
+        TILE_M = kernel.vector_lane if kernel.vector_lane < BATCH else BATCH
+        TILE_N = kernel.vector_lane if kernel.vector_lane < O_C else O_C
+        TILE_K = kernel.vector_lane if kernel.vector_lane < I_C else I_C
+        SUB_TILE_M = TILE_M if TILE_M < kernel.vector_lane else kernel.vector_lane
+        SUB_TILE_N = TILE_N if TILE_N < kernel.vector_lane else kernel.vector_lane
 
-        kernel.tile_size = [TILE_M, TILE_N, TILE_K]
         kernel.loop_size = [K_H, K_W, O_H, O_W, BATCH, O_C, I_C]
 
         # FIXME: transposed inputs not supported
@@ -245,6 +246,8 @@ class MLIRConvTemplate(MLIRTemplate):
             TILE_M=TILE_M,
             TILE_N=TILE_N,
             TILE_K=TILE_K,
+            SUB_TILE_M=SUB_TILE_M,
+            SUB_TILE_N=SUB_TILE_N,
             PADDING_H=self.padding[0],
             PADDING_W=self.padding[1],
             STRIDE_H=self.stride[0],
@@ -257,9 +260,9 @@ class MLIRConvTemplate(MLIRTemplate):
         )
         code = self._template_from_string(CONV_TEMPLATE).render(**kernel.render_options)
 
-        self.header = f"float X_spad[{TILE_M * TILE_K // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
-        self.header += f"float W_spad[{TILE_K * TILE_N // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
-        self.header += f"float Y_spad[{TILE_M * TILE_N // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
+        self.header = f"float X_spad[{kernel.get_spad_size_per_lane(TILE_M, TILE_K)}] __attribute__ ((section(\".spad\")));\n"
+        self.header += f"float W_spad[{kernel.get_spad_size_per_lane(TILE_K, TILE_N)}] __attribute__ ((section(\".spad\")));\n"
+        self.header += f"float Y_spad[{kernel.get_spad_size_per_lane(TILE_M, TILE_N)}] __attribute__ ((section(\".spad\")));\n"
         self.gem5_header = f"float X_spad[{TILE_M * TILE_K}] __attribute__ ((section(\".spad\")));\n"
         self.gem5_header += f"float W_spad[{TILE_K * TILE_N}] __attribute__ ((section(\".spad\")));\n"
         self.gem5_header += f"float Y_spad[{TILE_M * TILE_N}] __attribute__ ((section(\".spad\")));\n"

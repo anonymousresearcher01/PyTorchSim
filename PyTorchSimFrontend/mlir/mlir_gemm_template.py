@@ -32,7 +32,7 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
   %tag0 = memref.alloc() : memref<1xi32>
   %tag1 = memref.alloc() : memref<1xi32>
   %tag2 = memref.alloc() : memref<1xi32>{% if not Bias %}
-  %v0 = arith.constant dense<0.0> : vector<{{ TILE_M * TILE_N // kernel.vector_lane }}xf32>{% endif %}
+  %v0 = arith.constant dense<0.0> : vector<{{ kernel.get_spad_size_per_lane(TILE_M, TILE_N) }}xf32>{% endif %}
   %c0 = arith.constant 0 : index
   {{- kernel.def_local_vars() }}
 
@@ -48,7 +48,7 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
         {%- if Bias_rank == 2 -%}  {{ M * N }} {%- else -%} {{ N }} {%- endif -%}
         xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32>  { subtile_size=[{{ SUB_TILE_M }}, {{ SUB_TILE_N }}], async=1, sram_stride=[1, {{ TILE_M }}] }
       {%- else %}
-      affine.vector_store %v0, %Y_buffer[0, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ TILE_M * TILE_N // kernel.vector_lane }}xf32>
+      affine.vector_store %v0, %Y_buffer[0, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ kernel.get_spad_size_per_lane(TILE_M, TILE_N) }}xf32>
       {%- endif %}
       affine.for %t_k = 0 to {{ K }} step {{ TILE_K }} {
         %index0 = affine.apply #map0(%t_m, %t_k)
@@ -143,9 +143,9 @@ class MLIRGemmTemplate(MLIRTemplate):
         )
         code = self._template_from_string(template).render(**kernel.render_options)
 
-        self.header = f"float X_spad[{TILE_M * ((TILE_K + kernel.vector_lane - 1) // kernel.vector_lane)}] __attribute__ ((section(\".spad\")));\n"
-        self.header += f"float W_spad[{TILE_K * ((TILE_N + kernel.vector_lane - 1) // kernel.vector_lane)}] __attribute__ ((section(\".spad\")));\n"
-        self.header += f"float Y_spad[{TILE_M * ((TILE_N + kernel.vector_lane - 1) // kernel.vector_lane)}] __attribute__ ((section(\".spad\")));\n"
+        self.header = f"float X_spad[{kernel.get_spad_size_per_lane(TILE_M, TILE_K)}] __attribute__ ((section(\".spad\")));\n"
+        self.header += f"float W_spad[{kernel.get_spad_size_per_lane(TILE_K, TILE_N)}] __attribute__ ((section(\".spad\")));\n"
+        self.header += f"float Y_spad[{kernel.get_spad_size_per_lane(TILE_M, TILE_N)}] __attribute__ ((section(\".spad\")));\n"
         self.gem5_header = f"float X_spad[{TILE_M * TILE_K}] __attribute__ ((section(\".spad\")));\n"
         self.gem5_header += f"float W_spad[{TILE_K * TILE_N}] __attribute__ ((section(\".spad\")));\n"
         self.gem5_header += f"float Y_spad[{TILE_M * TILE_N}] __attribute__ ((section(\".spad\")));\n"
