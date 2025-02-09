@@ -23,16 +23,7 @@ Simulator::Simulator(SimulationConfig config)
   char* onnxim_path_env = std::getenv("TORCHSIM_DIR");
   std::string onnxim_path = onnxim_path_env != NULL?
     std::string(onnxim_path_env) + "/PyTorchSimBackend" : std::string("./");
-  if (config.dram_type == DramType::SIMPLE) {
-    _dram = std::make_unique<SimpleDram>(config);
-  } else if (config.dram_type == DramType::RAMULATOR1) {
-    std::string ramulator_config = fs::path(onnxim_path)
-                                       .append("configs")
-                                       .append(config.dram_config_path)
-                                       .string();
-    config.dram_config_path = ramulator_config;
-    _dram = std::make_unique<DramRamulator>(config);
-  } else if (config.dram_type == DramType::RAMULATOR2) {
+  if (config.dram_type == DramType::RAMULATOR2) {
     std::string ramulator_config = fs::path(onnxim_path)
                                        .append("configs")
                                        .append(config.dram_config_path)
@@ -108,8 +99,8 @@ void Simulator::icnt_cycle() {
     // PUHS core to ICNT. memory request
       int port_id = core_id * _noc_node_per_core + noc_id;
       if (_cores[core_id]->has_memory_request()) {
-        MemoryAccess *front = _cores[core_id]->top_memory_request();
-        front->core_id = core_id;
+        mem_fetch *front = _cores[core_id]->top_memory_request();
+        front->set_core_id(core_id);
         if (!_icnt->is_full(port_id, front)) {
           _icnt->push(port_id , get_dest_node(front), front);
           _cores[core_id]->pop_memory_request();
@@ -238,11 +229,21 @@ void Simulator::set_cycle_mask() {
   }
 }
 
-uint32_t Simulator::get_dest_node(MemoryAccess *access) {
-  if (access->request) {
+uint32_t Simulator::get_dest_node(mem_fetch *access) {
+  switch (access->get_type())
+  {
+  case mf_type::READ_REQUEST:
+  case mf_type::WRITE_REQUEST:
     return _config.num_cores * _noc_node_per_core + _dram->get_channel_id(access);
-  } else {
-    return access->core_id * _noc_node_per_core + (_dram->get_channel_id(access) % _noc_node_per_core);
+    break;
+  case mf_type::READ_REPLY:
+  case mf_type::WRITE_ACK:
+    return access->get_core_id() * _noc_node_per_core + (_dram->get_channel_id(access) % _noc_node_per_core);
+    break;
+  default:
+    spdlog::error("Unexpected memfetc type...");
+    return -1;
+    break;
   }
 }
 

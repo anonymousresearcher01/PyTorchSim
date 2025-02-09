@@ -8,20 +8,7 @@
 #include "Instruction.h"
 #include "SimulationConfig.h"
 #include "Tile.h"
-
-typedef struct {
-  uint32_t id;
-  addr_type dram_address;
-  uint64_t size;
-  bool write;
-  bool request;
-  uint32_t core_id;
-  uint32_t numa_id=0;
-  Instruction* owner_instruction;
-  cycle_type start_cycle;
-  cycle_type dram_enter_cycle;
-  cycle_type dram_finish_cycle;
-} MemoryAccess;
+#include "Memfetch.h"
 
 struct VectorCompare {
     bool operator()(const std::vector<int>& a, const std::vector<int>& b) const {
@@ -96,7 +83,7 @@ class TMA {
   }
 
   std::shared_ptr<Instruction>& get_current_inst() { return _current_inst; }
-  std::vector<MemoryAccess*> get_memory_access();
+  std::vector<mem_fetch*> get_memory_access();
   uint32_t generate_mem_access_id();
   const uint32_t get_max_dim() { return _max_dim; }
 

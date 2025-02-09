@@ -12,4 +12,3 @@ file(GLOB_RECURSE SRC_FILES
 
 # build
 add_executable(${LIB_NAME} ${SRC_FILES})
-add_library(${LIB_NAME}_lib ${SRC_FILES})

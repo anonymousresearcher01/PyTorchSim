@@ -38,7 +38,7 @@ class Simulator {
   void icnt_cycle();
   bool running();
   void set_cycle_mask();
-  uint32_t get_dest_node(MemoryAccess *access);
+  uint32_t get_dest_node(mem_fetch *access);
   SimulationConfig _config;
   uint32_t _n_cores;
   uint32_t _noc_node_per_core;

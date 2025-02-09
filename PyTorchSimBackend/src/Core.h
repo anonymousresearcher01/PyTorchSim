@@ -23,8 +23,8 @@ class Core {
   void dma_cycle();
   bool has_memory_request();
   void pop_memory_request();
-  MemoryAccess* top_memory_request() { return _request_queue.front(); }
-  void push_memory_response(MemoryAccess* response);
+  mem_fetch* top_memory_request() { return _request_queue.front(); }
+  void push_memory_response(mem_fetch* response);
   void print_stats();
   void print_current_stats();
   void finish_instruction(std::shared_ptr<Instruction>& inst);
@@ -69,7 +69,7 @@ class Core {
 
   std::vector<std::shared_ptr<Instruction>> _dma_waiting_queue;
   /* Interconnect queue */
-  std::queue<MemoryAccess*> _request_queue;
-  std::queue<MemoryAccess*> _response_queue;
+  std::queue<mem_fetch*> _request_queue;
+  std::queue<mem_fetch*> _response_queue;
   uint32_t _waiting_write_reqs;
 };

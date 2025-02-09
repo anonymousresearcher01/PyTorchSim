@@ -18,23 +18,18 @@ void TMA::issue_tile(std::shared_ptr<Instruction> inst) {
   _finished = false;
 }
 
-std::vector<MemoryAccess*> TMA::get_memory_access() {
+std::vector<mem_fetch*> TMA::get_memory_access() {
   std::set<addr_type> addr_set = _current_inst->get_dram_address(_dram_req_size);
-  std::vector<MemoryAccess *> access_vec;
+  std::vector<mem_fetch *> access_vec;
   Tile* owner = (Tile*)_current_inst->get_owner();
   std::shared_ptr<TileSubGraph> owner_subgraph = owner->get_owner();
   spdlog::trace("[NUMA Trace] Subgraph id: {} , Numa id: {}, Arg: {} is_write: {}",
     owner_subgraph->get_core_id(), _current_inst->get_numa_id(), _current_inst->get_addr_name(), _current_inst->is_dma_write());
   for (auto addr: addr_set) {
-    MemoryAccess* access = new MemoryAccess({
-      .id = generate_mem_access_id(),
-      .dram_address = addr,
-      .size = _dram_req_size,
-      .write = _current_inst->is_dma_write(),
-      .request = true,
-      .numa_id = _current_inst->get_numa_id(),
-      .owner_instruction = _current_inst.get()
-    });
+    mem_access_type acc_type = _current_inst->is_dma_write() ? mem_access_type::GLOBAL_ACC_W : mem_access_type::GLOBAL_ACC_R;
+    mf_type type = _current_inst->is_dma_write() ? mf_type::WRITE_REQUEST : mf_type::READ_REQUEST;
+    mem_fetch* access = new mem_fetch(addr, acc_type, type, _dram_req_size, generate_mem_access_id(),
+      _current_inst->get_numa_id(), static_cast<void*>(_current_inst.get()));
     _current_inst->inc_waiting_request();
     access_vec.push_back(access);
   }

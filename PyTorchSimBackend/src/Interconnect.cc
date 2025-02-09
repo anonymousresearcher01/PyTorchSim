@@ -40,7 +40,7 @@ void SimpleInterconnect::cycle() {
   _cycles++;
 }
 
-void SimpleInterconnect::push(uint32_t src, uint32_t dest, MemoryAccess* request) {
+void SimpleInterconnect::push(uint32_t src, uint32_t dest, mem_fetch* request) {
   SimpleInterconnect::Entity entity;
   if(_in_buffers[src].empty())
     entity.finish_cycle =  _cycles + _latency;
@@ -51,7 +51,7 @@ void SimpleInterconnect::push(uint32_t src, uint32_t dest, MemoryAccess* request
   _in_buffers[src].push(entity);
 }
 
-bool SimpleInterconnect::is_full(uint32_t nid, MemoryAccess* request) {
+bool SimpleInterconnect::is_full(uint32_t nid, mem_fetch* request) {
   //TODO: limit buffersize
   return false;
 }
@@ -60,7 +60,7 @@ bool SimpleInterconnect::is_empty(uint32_t nid) {
   return _out_buffers[nid].empty();
 }
 
-MemoryAccess* SimpleInterconnect::top(uint32_t nid) {
+mem_fetch* SimpleInterconnect::top(uint32_t nid) {
   assert(!is_empty(nid));
   return _out_buffers[nid].front();
 }
@@ -93,13 +93,13 @@ void Booksim2Interconnect::cycle() {
   _booksim->run();
 }
 
-void Booksim2Interconnect::push(uint32_t src, uint32_t dest, MemoryAccess* request) {
+void Booksim2Interconnect::push(uint32_t src, uint32_t dest, mem_fetch* request) {
   booksim2::Interconnect::Type type = get_booksim_type(request);
   uint32_t size = get_packet_size(request);
   _booksim->push(request, 0, 0, size, type, src, dest);
 }
 
-bool Booksim2Interconnect::is_full(uint32_t nid, MemoryAccess* request) {
+bool Booksim2Interconnect::is_full(uint32_t nid, mem_fetch* request) {
   uint32_t size = get_packet_size(request);
   return _booksim->is_full(nid, 0, size);
 }
@@ -108,9 +108,9 @@ bool Booksim2Interconnect::is_empty(uint32_t nid) {
   return _booksim->is_empty(nid, 0);
 }
 
-MemoryAccess* Booksim2Interconnect::top(uint32_t nid) {
+mem_fetch* Booksim2Interconnect::top(uint32_t nid) {
   assert(!is_empty(nid));
-  return (MemoryAccess*) _booksim->top(nid, 0);
+  return (mem_fetch*) _booksim->top(nid, 0);
 }
 
 void Booksim2Interconnect::pop(uint32_t nid) {
@@ -122,44 +122,44 @@ void Booksim2Interconnect::print_stats() {
   _booksim->print_stats();
 }
 
-booksim2::Interconnect::Type Booksim2Interconnect::get_booksim_type(MemoryAccess* access) {
+booksim2::Interconnect::Type Booksim2Interconnect::get_booksim_type(mem_fetch* access) {
   booksim2::Interconnect::Type type;
-  if(access->write && access->request) {
-    /* Write request */
-    type = booksim2::Interconnect::Type::WRITE;
-  }
-  else if(access->write && !access->request) {
-    /* Write response */
-    type = booksim2::Interconnect::Type::WRITE_REPLY;
-  }
-  else if(!access->write && access->request){
-    /* Read request */
+  switch (access->get_type())
+  {
+  case mf_type::READ_REQUEST:
     type = booksim2::Interconnect::Type::READ;
-  } 
-  else if(!access->write && !access->request) {
-    /* Read reply */
+    break;
+  case mf_type::READ_REPLY:
     type = booksim2::Interconnect::Type::READ_REPLY;
+    break;
+  case mf_type::WRITE_REQUEST:
+    type = booksim2::Interconnect::Type::WRITE;
+    break;
+  case mf_type::WRITE_ACK:
+    type = booksim2::Interconnect::Type::WRITE_REPLY;
+    break;
+  default:
+    spdlog::error("[Interconenct] Unexpected memory type...");
+    break;
   }
   return type;
 }
 
-uint32_t Booksim2Interconnect::get_packet_size(MemoryAccess* access) {
+uint32_t Booksim2Interconnect::get_packet_size(mem_fetch* access) {
   uint32_t size;
-  if(access->write && access->request) {
-    /* Write request */
-    size = access->size;
-  }
-  else if(access->write && !access->request) {
-    /* Write response */
+  switch (access->get_type())
+  {
+  case mf_type::READ_REQUEST:
+  case mf_type::WRITE_ACK:
     size = _ctrl_size;
-  }
-  else if(!access->write && access->request){
-    /* Read request */
-    size = _ctrl_size;
-  } 
-  else if(!access->write && !access->request) {
-    /* Read reply */
-    size = access->size;
+    break;
+  case mf_type::READ_REPLY:
+  case mf_type::WRITE_REQUEST:
+    size = access->get_data_size();
+    break;
+  default:
+    spdlog::error("[Interconenct] Unexpected memory type...");
+    break;
   }
   return size;
 }

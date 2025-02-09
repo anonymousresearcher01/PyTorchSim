@@ -12,10 +12,10 @@ class Interconnect {
   virtual ~Interconnect() = default;
   virtual bool running() = 0;
   virtual void cycle() = 0;
-  virtual void push(uint32_t src, uint32_t dest, MemoryAccess* request) = 0;
-  virtual bool is_full(uint32_t src, MemoryAccess* request) = 0;
+  virtual void push(uint32_t src, uint32_t dest, mem_fetch* request) = 0;
+  virtual bool is_full(uint32_t src, mem_fetch* request) = 0;
   virtual bool is_empty(uint32_t nid) = 0;
-  virtual MemoryAccess* top(uint32_t nid) = 0;
+  virtual mem_fetch* top(uint32_t nid) = 0;
   virtual void pop(uint32_t nid) = 0;
   virtual void print_stats() = 0;
 
@@ -32,10 +32,10 @@ class SimpleInterconnect : public Interconnect {
   virtual bool running() override;
   virtual void cycle() override;
   virtual void push(uint32_t src, uint32_t dest,
-                    MemoryAccess* request) override;
-  virtual bool is_full(uint32_t src, MemoryAccess* request) override;
+                    mem_fetch* request) override;
+  virtual bool is_full(uint32_t src, mem_fetch* request) override;
   virtual bool is_empty(uint32_t nid) override;
-  virtual MemoryAccess* top(uint32_t nid) override;
+  virtual mem_fetch* top(uint32_t nid) override;
   virtual void pop(uint32_t nid) override;
   virtual void print_stats() override {}
 
@@ -48,11 +48,11 @@ class SimpleInterconnect : public Interconnect {
   struct Entity {
     cycle_type finish_cycle;
     uint32_t dest;
-    MemoryAccess* access;
+    mem_fetch* access;
   };
 
   std::vector<std::queue<Entity>> _in_buffers;
-  std::vector<std::queue<MemoryAccess*>> _out_buffers;
+  std::vector<std::queue<mem_fetch*>> _out_buffers;
   std::vector<bool> _busy_node;
 };
 
@@ -62,10 +62,10 @@ class Booksim2Interconnect : public Interconnect {
   virtual bool running() override;
   virtual void cycle() override;
   virtual void push(uint32_t src, uint32_t dest,
-                    MemoryAccess* request) override;
-  virtual bool is_full(uint32_t src, MemoryAccess* request) override;
+                    mem_fetch* request) override;
+  virtual bool is_full(uint32_t src, mem_fetch* request) override;
   virtual bool is_empty(uint32_t nid) override;
-  virtual MemoryAccess* top(uint32_t nid) override;
+  virtual mem_fetch* top(uint32_t nid) override;
   virtual void pop(uint32_t nid) override;
   virtual void print_stats() override;
 
@@ -74,7 +74,7 @@ class Booksim2Interconnect : public Interconnect {
   std::string _config_path;
   std::unique_ptr<booksim2::Interconnect> _booksim;
 
-  booksim2::Interconnect::Type get_booksim_type(MemoryAccess* access);
-  uint32_t get_packet_size(MemoryAccess* access);
+  booksim2::Interconnect::Type get_booksim_type(mem_fetch* access);
+  uint32_t get_packet_size(mem_fetch* access);
 };
 #endif

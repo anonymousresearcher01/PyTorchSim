@@ -136,11 +136,10 @@ void Core::dma_cycle() {
       return;
     }
   }
-  /* Generate MemoryAccess */
-  std::vector<MemoryAccess*> access_vec = _tma.get_memory_access();
+  /* Generate memfetch */
+  std::vector<mem_fetch*> access_vec = _tma.get_memory_access();
   for (auto access : access_vec) {
-    access->core_id = _id;
-    access->start_cycle = _core_cycle;
+    access->set_start_cycle(_core_cycle);
     _request_queue.push(access);
   }
 
@@ -311,8 +310,8 @@ void Core::pop_memory_request() {
   _request_queue.pop();
 }
 
-void Core::push_memory_response(MemoryAccess *response) {
-  Instruction * owner_inst = response->owner_instruction;
+void Core::push_memory_response(mem_fetch* response) {
+  Instruction * owner_inst = static_cast<Instruction*>(response->get_custom_data());
 
   assert(owner_inst);
   assert(owner_inst->get_waiting_request());
