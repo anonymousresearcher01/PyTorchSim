@@ -118,16 +118,18 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
     def gemm_combination_mapping(self, M, N, K):
         spad_size = self.spad_info["spad_size"] * self.vector_lane
         max_spad_size = spad_size // 2 # double buffer
-        M_padded = ((M + self.vector_lane - 1) // self.vector_lane) * self.vector_lane
-        N_padded = ((N + self.vector_lane - 1) // self.vector_lane) * self.vector_lane
-        K_padded = ((K + self.vector_lane - 1) // self.vector_lane) * self.vector_lane
-        M = max(M, 2)
+        m_pad_factor = self.vector_lane if M > self.vector_lane else 8
+        n_pad_factor = self.vector_lane if N > self.vector_lane else 8
+        k_pad_factor = self.vector_lane if K > self.vector_lane else 8
+        M_padded = ((M + m_pad_factor - 1) // m_pad_factor) * m_pad_factor
+        N_padded = ((N + n_pad_factor - 1) // n_pad_factor) * n_pad_factor
+        K_padded = ((K + k_pad_factor - 1) // k_pad_factor) * k_pad_factor
 
         max_used_spad_size = 0
         mapping = (self.vector_lane, self.vector_lane, self.vector_lane)
-        tile_M_range = range(self.vector_lane, M_padded + 1, self.vector_lane) if M > self.vector_lane else [M]
-        tile_N_range = range(self.vector_lane, N_padded + 1, self.vector_lane) if N > self.vector_lane else [N]
-        tile_K_range = range(self.vector_lane, K_padded + 1, self.vector_lane) if K > self.vector_lane else [K]
+        tile_M_range = range(self.vector_lane, M_padded + 1, self.vector_lane) if M > self.vector_lane else [M_padded]
+        tile_N_range = range(self.vector_lane, N_padded + 1, self.vector_lane) if N > self.vector_lane else [N_padded]
+        tile_K_range = range(self.vector_lane, K_padded + 1, self.vector_lane) if K > self.vector_lane else [K_padded]
         for tile_M in tile_M_range:
             for tile_N in tile_N_range:
                 for tile_K in tile_K_range:
