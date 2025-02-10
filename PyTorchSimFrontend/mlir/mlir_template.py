@@ -146,6 +146,42 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         mapping = (M_padded // Outer_M, N_padded // Outer_N, K_padded // Outer_K)
         return mapping
 
+    def conv_combination_mapping(self, M, N, K, K_H, K_W, O_H, O_W, stride, dilation):
+        spad_size = self.spad_info["spad_size"] * self.vector_lane
+        max_spad_size = spad_size // 2 # double buffer
+        m_pad_factor = self.vector_lane if M > self.vector_lane else 8
+        n_pad_factor = self.vector_lane if N > self.vector_lane else 8
+        k_pad_factor = self.vector_lane if K > self.vector_lane else 8
+        M_padded = ((M + m_pad_factor - 1) // m_pad_factor) * m_pad_factor
+        N_padded = ((N + n_pad_factor - 1) // n_pad_factor) * n_pad_factor
+        K_padded = ((K + k_pad_factor - 1) // k_pad_factor) * k_pad_factor
+
+        max_used_spad_size = 0
+        mapping = (self.vector_lane, self.vector_lane, self.vector_lane)
+        tile_M_range = range(self.vector_lane, M_padded + 1, self.vector_lane) if M > self.vector_lane else [M_padded]
+        tile_N_range = range(self.vector_lane, N_padded + 1, self.vector_lane) if N > self.vector_lane else [N_padded]
+        tile_K_range = range(self.vector_lane, K_padded + 1, self.vector_lane) if K > self.vector_lane else [K_padded]
+        for o_h in range(1, O_H + 1):
+            for o_w in range(1, O_W + 1):
+                i_h = 1 + (o_h - 1) * stride[0] + (K_H - 1) * dilation[0]
+                i_w = 1 + (o_h - 1) * stride[1] + (K_W - 1) * dilation[1]
+                for tile_M in tile_M_range:
+                    for tile_N in tile_N_range:
+                        for tile_K in tile_K_range:
+                            weight_size = K_W * K_H * tile_K * tile_N
+                            input_size = i_w * i_h * tile_M * tile_K
+                            output_size = o_w * o_h * tile_M * tile_N
+                            used_spad_size = (weight_size + input_size + output_size) * self.precision
+                            if used_spad_size < max_spad_size and max_used_spad_size < used_spad_size:
+                                max_used_spad_size = used_spad_size
+                                mapping = (K_H, K_W, o_h, o_w, tile_M, tile_N, tile_K)
+
+        Outer_M = math.ceil(M_padded / mapping[4])
+        Outer_N = math.ceil(N_padded / mapping[5])
+        Outer_K = math.ceil(K_padded / mapping[6])
+        mapping = (mapping[0], mapping[1], mapping[2], mapping[3], M_padded // Outer_M, N_padded // Outer_N, K_padded // Outer_K)
+        return mapping
+
     def meta_kernel(self):
         wrapper = V.graph.wrapper_code
         arg_attributes = self.kernel_arg_attributes

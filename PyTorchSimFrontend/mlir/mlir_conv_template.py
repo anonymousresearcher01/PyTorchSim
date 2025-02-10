@@ -42,7 +42,7 @@ CONV_TEMPLATE = r"""
 
 #map0 = affine_map<(d0, d1, d2, d3) -> (d0 * {{ O_W * BATCH * O_C }} + d1 * {{ BATCH * O_C }} + d2 * {{ O_C }} + d3)> // output (O_H, O_W, BATCH, O_C)
 #map1 = affine_map<(d0, d1, d2, d3) -> (d0 * {{ (I_W + 2 * PADDING_W) * BATCH * I_C }} + d1 * {{ BATCH * I_C }} + d2 * {{ I_C }} + d3)> // input (I_H, I_W, BATCH, I_C)
-#map2 = affine_map<(d0, d1, d2, d3) -> (d0 * {{ K_W * I_C * O_C }} + d1 * {{ I_C * O_C }} + d2 * {{ O_C }} + d3)> // weight (K_H, K_W, I_C, O_C) 
+#map2 = affine_map<(d0, d1, d2, d3) -> (d0 * {{ K_W * I_C * O_C }} + d1 * {{ I_C * O_C }} + d2 * {{ O_C }} + d3)> // weight (K_H, K_W, I_C, O_C)
 #map_I_H = affine_map<(d0, d1) -> (d0 * {{ STRIDE_H }} + d1)>
 #map_I_W = affine_map<(d0, d1) -> (d0 * {{ STRIDE_W }} + d1)>
 #offset_w_map = affine_map<(d0, d1) -> (d0 * {{ kernel.get_spad_size_per_lane(TILE_K_W * TILE_K, TILE_N) }} + d1 * {{ kernel.get_spad_size_per_lane(TILE_K, TILE_N) }})>
@@ -61,7 +61,7 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
   %vstride = arith.constant 1 : index
   %input_axis = arith.constant 3 : index
   %weight_axis = arith.constant 2 : index
-  %input_buffer = memref.get_global @X_spad : memref<{{ TILE_I_H }}x{{ TILE_I_W }}x{{ TILE_M }}x{{ TILE_K }}xf32, 1> // FIXME: change the size
+  %input_buffer = memref.get_global @X_spad : memref<{{ TILE_I_H }}x{{ TILE_I_W }}x{{ TILE_M }}x{{ TILE_K }}xf32, 1>
   %weight_buffer = memref.get_global @W_spad : memref<{{ TILE_K_H }}x{{ TILE_K_W }}x{{ TILE_K }}x{{ TILE_N }}xf32, 1>
   %output_buffer = memref.get_global @Y_spad : memref<{{ TILE_O_H }}x{{ TILE_O_W }}x{{ TILE_M }}x{{ TILE_N }}xf32, 1>
   %tag = memref.alloc() : memref<1xi32>
@@ -84,8 +84,8 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
           %index0 = affine.apply #map0(%o_h, %o_w, %tile_m, %tile_n)
           // Initialize output
           {%- if BIAS %}
-          memref.dma_start %Bias[%tile_n], %Y_buffer[%c0, %c0], %c_mvin, %tag0[%c0], %c0, %vstride
-              : memref<{{ O_C }}xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ SUB_TILE_M }}, {{ SUB_TILE_N }}], async=1, sram_stride=[1, {{ TILE_M }}]}
+          memref.dma_start %Bias[%tile_n], %output_buffer[%c0, %c0, %c0, %c0], %c_mvin, %tag0[%c0], %c0, %vstride
+              : memref<{{ O_C }}xf32>, memref<{{ TILE_O_H }}x{{ TILE_O_W }}x{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ TILE_O_H }}, {{ TILE_O_W }}, {{ SUB_TILE_M }}, {{ SUB_TILE_N }}], async=1, sram_stride=[{{ TILE_O_W * TILE_M * TILE_N }}, {{ TILE_M * TILE_N }}, 1, {{ TILE_M }}]}
           {%- else %}
           affine.vector_store %v0, %output_buffer[%c0, %c0, %c0, %c0] : memref<{{ TILE_O_H }}x{{ TILE_O_W }}x{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ kernel.get_spad_size_per_lane(TILE_O_H * TILE_O_W * TILE_M, TILE_N) }}xf32>
           {%- endif %}
@@ -116,10 +116,10 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
                         %Y_buffer = memref.reinterpret_cast %output_buffer to offset: [%offset_y], sizes: [{{ TILE_M }}, {{ TILE_N }}], strides: [{{ TILE_N }}, 1] : memref<{{ TILE_O_H }}x{{ TILE_O_W }}x{{ TILE_M }}x{{ TILE_N }}xf32, 1> to memref<{{ TILE_M }}x{{ TILE_N }}xf32, strided<[{{ TILE_N }}, 1], offset: ?>, 1>
                         linalg.matmul ins(%X_buffer, %W_buffer : memref<{{ TILE_M }}x{{ TILE_K }}xf32, strided<[{{ TILE_K }}, 1], offset: ?>, 1>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, strided<[{{ TILE_N }}, 1], offset: ?>, 1>)
                               outs(%Y_buffer : memref<{{ TILE_M }}x{{ TILE_N }}xf32, strided<[{{ TILE_N }}, 1], offset: ?>, 1>)
-                      }
-                    }
-                  }
-                }
+                      } { inner_loop=true }
+                    } { inner_loop=true }
+                  } { inner_loop=true }
+                } { inner_loop=true }
               } { accumulation_loop=true }
             } { accumulation_loop=true }
           } { accumulation_loop=true }
@@ -222,10 +222,9 @@ class MLIRConvTemplate(MLIRTemplate):
         O_H = Y.layout.size[2] if template_buffer_node is None else template_buffer_node.layout.size[2]
         O_W = Y.layout.size[3] if template_buffer_node is None else template_buffer_node.layout.size[3]
 
-        TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(BATCH, O_C, I_C)
-        SUB_TILE_M = TILE_M #if TILE_M < kernel.vector_lane else kernel.vector_lane
-        SUB_TILE_N = TILE_N #if TILE_N < kernel.vector_lane else kernel.vector_lane
-        TILE_K_H, TILE_K_W, TILE_O_H, TILE_O_W = K_H, K_W, O_H, O_W
+        TILE_K_H, TILE_K_W, TILE_O_H, TILE_O_W, TILE_M, TILE_N, TILE_K = kernel.conv_combination_mapping(BATCH, O_C, I_C, K_H, K_W, O_H, O_W, self.stride, self.dilation)
+        SUB_TILE_M = TILE_M if TILE_M < kernel.vector_lane else kernel.vector_lane
+        SUB_TILE_N = TILE_N if TILE_N < kernel.vector_lane else kernel.vector_lane
         TILE_I_H = 1 + (TILE_O_H - 1) * self.stride[0] + (TILE_K_H - 1) * self.dilation[0]
         TILE_I_W = 1 + (TILE_O_W - 1) * self.stride[1] + (TILE_K_W - 1) * self.dilation[1]
 
