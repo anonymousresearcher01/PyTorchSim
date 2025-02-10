@@ -78,13 +78,13 @@ SimulationConfig initialize_config(json config) {
       std::string core_partition = "core_" + std::to_string(i);
       uint32_t partition_id = uint32_t(config["partition"][core_partition]);
       parsed_config.partiton_map[i] = partition_id;
-      spdlog::info("CPU {}: Partition {}", i, partition_id);
+      spdlog::info("[Config/Core] CPU {}: Partition {}", i, partition_id);
     }
   } else {
     /* Default: all partition 0 */
     for (int i=0; i<parsed_config.num_cores; i++) {
       parsed_config.partiton_map[i] = 0;
-      spdlog::info("CPU {}: Partition {}", i, 0);
+      spdlog::info("[Config/Core] CPU {}: Partition {}", i, 0);
     }
   }
   return parsed_config;

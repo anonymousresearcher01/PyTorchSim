@@ -2,7 +2,6 @@
 
 SimpleInterconnect::SimpleInterconnect(SimulationConfig config)
   :  _latency(config.icnt_latency) {
-  spdlog::info("Initialize SimpleInterconnect");
   _cycles = 0;
   _config = config;
   _n_nodes = config.num_cores + config.dram_channels;

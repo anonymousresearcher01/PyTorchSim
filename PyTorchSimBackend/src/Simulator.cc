@@ -3,11 +3,9 @@
 Simulator::Simulator(SimulationConfig config)
     : _config(config), _core_cycles(0) {
   // Create dram object
-  spdlog::info("Simulator Configuration:");
   for (int i=0; i<config.num_cores;i++)
-    spdlog::info("[Config] Core {}: {} MHz, Spad size: {} KB",
+    spdlog::info("[Config/Core] Core {}: {} MHz, Spad size: {} KB",
       i, config.core_freq , config.sram_size);
-  spdlog::info("[Config] DRAM Bandwidth {} GB/s", config.max_dram_bandwidth());
   _core_period = 1000000 / (config.core_freq);
   _icnt_period = 1000000 / (config.icnt_freq);
   _dram_period = 1000000 / (config.dram_freq);
@@ -28,7 +26,7 @@ Simulator::Simulator(SimulationConfig config)
                                        .append("configs")
                                        .append(config.dram_config_path)
                                        .string();
-    spdlog::info("Ramulator2 config: {}", ramulator_config);
+    spdlog::info("[Config/DRAM] Ramulator2 config: {}", ramulator_config);
     config.dram_config_path = ramulator_config;
     _dram = std::make_unique<DramRamulator2>(config, &_core_cycles);
   } else {
@@ -38,8 +36,10 @@ Simulator::Simulator(SimulationConfig config)
 
   // Create interconnect object
   if (config.icnt_type == IcntType::SIMPLE) {
+    spdlog::info("[Config/Interconnect] SimpleInerconnect selected");
     _icnt = std::make_unique<SimpleInterconnect>(config);
   } else if (config.icnt_type == IcntType::BOOKSIM2) {
+    spdlog::info("[Config/Interconnect] BookSim2 selected");
     _icnt = std::make_unique<Booksim2Interconnect>(config);
   } else {
     spdlog::error("[Configuration] {} Invalid interconnect type...!");

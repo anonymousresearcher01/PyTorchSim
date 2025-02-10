@@ -573,7 +573,7 @@ TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
     for (auto it = address_info.begin(); it != address_info.end(); ++it) {
       uint64_t value = it.value();
       _arg_to_address[it.key()] = value;
-      spdlog::info("[TOGParser] Address Attribute key: {} address: 0x{:x}", it.key(), value);
+      spdlog::info("[TOGParser/Attribute] Address Attribute key: {} address: 0x{:x}", it.key(), value);
     }
   }
   if (_attribute_json.contains("address_numa_stride")) {
@@ -583,7 +583,7 @@ TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
       for (auto value : value_list) {
         _arg_numa_stride[it.key()].push_back(value);
       }
-      spdlog::info("[TOGParser] Address numa info key: {} numa stride : {}", it.key(), fmt::join(_arg_numa_stride[it.key()], ", "));
+      spdlog::info("[TOGParser/Attribute] Address numa info key: {} numa stride : {}", it.key(), fmt::join(_arg_numa_stride[it.key()], ", "));
     }
   }
 
