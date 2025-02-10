@@ -101,6 +101,7 @@ class tog_generator:
             tile_info = {}
             tile_info["tag_idx_list"] = dump_data["tag_idx_list"]
             tile_info["tag_stride_list"] = dump_data["tag_stride_list"]
+            tile_info["tag_divider_list"] = dump_data["tag_divider_list"]
             tile_info["base_addr"] = dump_data["base_address"]
             new_node = memory_wait_node(tile_info, node_id=node_id)
         else:

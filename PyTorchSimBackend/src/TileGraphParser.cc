@@ -217,6 +217,9 @@ TileMemoryWaitNode::TileMemoryWaitNode(onnx::NodeProto& node) : TileNode(node) {
     } else if (attribute.name() == "torchsim_tag_stride_list") {
       for (int i = 0; i < attribute.ints_size(); i++)
         _tag_stride_list.push_back(attribute.ints(i));
+    } else if (attribute.name() == "torchsim_tag_divider_list") {
+      for (int i = 0; i < attribute.ints_size(); i++)
+        _tag_divider_list.push_back(attribute.ints(i));
     } else if (attribute.name() == "torchsim_base_addr") {
       _base_addr_name = attribute.s();
     }
@@ -397,11 +400,13 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       std::vector<int> iter_list;
       std::vector<int> tag_list;
       std::vector<int>& tag_stride_list = wait_node->get_tag_stride_list();
+      std::vector<int>& tag_divider_list = wait_node->get_tag_divider_list();
       std::vector<int> new_tag_stride_list;
       std::vector<int> accum_tag_list;
       auto& wait_tag_list = wait_node->get_tag_idx_list();
 
-      for (auto loop_idx: wait_tag_list) {
+      for (int i=0; i<wait_tag_list.size();i++) {
+        std::string loop_idx = wait_tag_list.at(i);
         if (iter.find(loop_idx) == iter.end()) {
           tag_list.push_back(0);
           continue;
@@ -411,7 +416,7 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
           auto iter_value = getLoopIndexValue(iter, loop_idx);
           accum_tag_list.push_back(iter_value);
         } else {
-          auto iter_value = getLoopIndexValue(iter, loop_idx);
+          auto iter_value = getLoopIndexValue(iter, loop_idx) / tag_divider_list.at(i);
           tag_list.push_back(iter_value);
         }
       }

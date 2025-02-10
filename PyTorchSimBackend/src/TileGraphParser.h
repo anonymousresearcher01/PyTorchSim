@@ -138,11 +138,13 @@ class TileMemoryWaitNode : public TileNode {
   std::string get_base_addr_name() { return _base_addr_name; }
   std::vector<std::string>& get_tag_idx_list() { return _tag_idx_list; }
   std::vector<int>& get_tag_stride_list() { return _tag_stride_list; }
+  std::vector<int>& get_tag_divider_list() { return _tag_divider_list; }
   void print_node() override;
 
  private:
   std::vector<std::string> _tag_idx_list;
   std::vector<int> _tag_stride_list;
+  std::vector<int> _tag_divider_list;
   std::string _base_addr_name;
 };
 
