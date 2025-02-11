@@ -78,7 +78,7 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
   %stride_w = arith.constant {{ STRIDE_W }} : index
 
   affine.for %o_h = 0 to {{ O_H }} step {{ TILE_O_H }} {
-    affine.for %o_w = 0 to {{ O_W }} step {{ TILE_O_W }}{
+    affine.for %o_w = 0 to {{ O_W }} step {{ TILE_O_W }} {
       affine.for %tile_m = 0 to {{ BATCH }} step {{ TILE_M }} {
         affine.for %tile_n = 0 to {{ O_C }} step {{ TILE_N }} {
           %index0 = affine.apply #map0(%o_h, %o_w, %tile_m, %tile_n)
@@ -98,10 +98,10 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
                 %index2 = affine.apply #map2(%k_h, %k_w, %tile_k, %tile_n) // weight index
                 // Load input matrix
                 memref.dma_start %X[%index1], %input_buffer[%c0, %c0, %c0, %c0], %c_mvin, %tag1[%c0], %input_axis, %vstride
-                    : memref<{{ BATCH * I_C * (I_H + 2 * PADDING_H) * (I_W + 2 * PADDING_W) }}xf32>, memref<{{ TILE_I_H }}x{{ TILE_I_W }}x{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32> { subtile_size=[{{ TILE_I_H }}, {{ TILE_I_W }}, {{ SUB_TILE_M }}, {{ TILE_K }}], async=1, sram_stride=[{{ TILE_I_W * TILE_M * TILE_K }}, {{ TILE_M * TILE_K }}, 1, {{ TILE_M }}]}
+                    : memref<{{ BATCH * I_C * (I_H + 2 * PADDING_H) * (I_W + 2 * PADDING_W) }}xf32>, memref<{{ TILE_I_H }}x{{ TILE_I_W }}x{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32> { subtile_size=[{{ SUB_TILE_I_H }}, {{ SUB_TILE_I_W }}, {{ SUB_TILE_M }}, {{ TILE_K }}], async=1, sram_stride=[{{ TILE_I_W * TILE_M * TILE_K }}, {{ TILE_M * TILE_K }}, 1, {{ TILE_M }}]}
                 // Load kernel matrix
                 memref.dma_start %W[%index2], %weight_buffer[%c0, %c0, %c0, %c0], %c_mvin, %tag2[%c0], %input_axis, %vstride
-                    : memref<{{ O_C * I_C * K_H * K_W }}xf32>, memref<{{ TILE_K_H }}x{{ TILE_K_W }}x{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ TILE_K_H }}, {{ TILE_K_W }}, {{ TILE_K }}, {{ SUB_TILE_N }}], async=1, sram_stride=[{{ TILE_K_W * TILE_K * TILE_N }}, {{ TILE_K * TILE_N }}, 1, {{ TILE_K }}]}
+                    : memref<{{ O_C * I_C * K_H * K_W }}xf32>, memref<{{ TILE_K_H }}x{{ TILE_K_W }}x{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ SUB_TILE_K_H }}, {{ SUB_TILE_K_W }}, {{ TILE_K }}, {{ SUB_TILE_N }}], async=1, sram_stride=[{{ TILE_K_W * TILE_K * TILE_N }}, {{ TILE_K * TILE_N }}, 1, {{ TILE_K }}]}
                 affine.for %tile_o_h = 0 to {{ TILE_O_H }} {
                   affine.for %tile_o_w = 0 to {{ TILE_O_W }} {
                     affine.for %tile_k_h = 0 to {{ TILE_K_H }} {
@@ -227,6 +227,7 @@ class MLIRConvTemplate(MLIRTemplate):
         SUB_TILE_N = TILE_N if TILE_N < kernel.vector_lane else kernel.vector_lane
         TILE_I_H = 1 + (TILE_O_H - 1) * self.stride[0] + (TILE_K_H - 1) * self.dilation[0]
         TILE_I_W = 1 + (TILE_O_W - 1) * self.stride[1] + (TILE_K_W - 1) * self.dilation[1]
+        SUB_TILE_I_H, SUB_TILE_I_W, SUB_TILE_K_H, SUB_TILE_K_W = 1, 1, 1, 1
 
         kernel.loop_size = [K_H, K_W, O_H, O_W, BATCH, O_C, I_C]
 
@@ -258,6 +259,10 @@ class MLIRConvTemplate(MLIRTemplate):
             TILE_K_W=TILE_K_W,
             SUB_TILE_M=SUB_TILE_M,
             SUB_TILE_N=SUB_TILE_N,
+            SUB_TILE_I_H=SUB_TILE_I_H,
+            SUB_TILE_I_W=SUB_TILE_I_W,
+            SUB_TILE_K_H=SUB_TILE_K_H,
+            SUB_TILE_K_W=SUB_TILE_K_W,
             PADDING_H=self.padding[0],
             PADDING_W=self.padding[1],
             STRIDE_H=self.stride[0],
