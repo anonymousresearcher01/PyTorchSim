@@ -102,14 +102,14 @@ func.func @{{ KERNEL_NAME }}({{ KERNEL_DEF }}) {
                 // Load kernel matrix
                 memref.dma_start %W[%index2], %weight_buffer[%c0, %c0, %c0, %c0], %c_mvin, %tag2[%c0], %input_axis, %vstride
                     : memref<{{ O_C * I_C * K_H * K_W }}xf32>, memref<{{ TILE_K_H }}x{{ TILE_K_W }}x{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ SUB_TILE_K_H }}, {{ SUB_TILE_K_W }}, {{ TILE_K }}, {{ SUB_TILE_N }}], async=1, sram_stride=[{{ TILE_K_W * TILE_K * TILE_N }}, {{ TILE_K * TILE_N }}, 1, {{ TILE_K }}]}
-                affine.for %tile_o_h = 0 to {{ TILE_O_H }} {
-                  affine.for %tile_o_w = 0 to {{ TILE_O_W }} {
-                    affine.for %tile_k_h = 0 to {{ TILE_K_H }} {
-                      affine.for %tile_k_w = 0 to {{ TILE_K_W }} {
+                affine.for %tile_k_h = 0 to {{ TILE_K_H }} { // loop order should be fixed for timing simulation. Do not change this order.
+                  affine.for %tile_k_w = 0 to {{ TILE_K_W }} {
+                    affine.for %tile_o_h = 0 to {{ TILE_O_H }} {
+                      affine.for %tile_o_w = 0 to {{ TILE_O_W }} {
                         %tile_i_h = affine.apply #map_I_H(%tile_o_h, %tile_k_h)
                         %tile_i_w = affine.apply #map_I_W(%tile_o_w, %tile_k_w)
-                        %offset_w = affine.apply #offset_w_map(%tile_k_h, %tile_k_w)
                         %offset_x = affine.apply #offset_x_map(%tile_i_h, %tile_i_w)
+                        %offset_w = affine.apply #offset_w_map(%tile_k_h, %tile_k_w)
                         %offset_y = affine.apply #offset_y_map(%tile_o_h, %tile_o_w)
                         %X_buffer = memref.reinterpret_cast %input_buffer to offset: [%offset_x], sizes: [{{ TILE_M }}, {{ TILE_K }}], strides: [{{ TILE_K }}, 1] : memref<{{ TILE_I_H }}x{{ TILE_I_W }}x{{ TILE_M }}x{{ TILE_K }}xf32, 1> to memref<{{ TILE_M }}x{{ TILE_K }}xf32, strided<[{{ TILE_K }}, 1], offset: ?>, 1>
                         %W_buffer = memref.reinterpret_cast %weight_buffer to offset: [%offset_w], sizes: [{{ TILE_K }}, {{ TILE_N }}], strides: [{{ TILE_N }}, 1] : memref<{{ TILE_K_H }}x{{ TILE_K_W }}x{{ TILE_K }}x{{ TILE_N }}xf32, 1> to memref<{{ TILE_K }}x{{ TILE_N }}xf32, strided<[{{ TILE_N }}, 1], offset: ?>, 1>
@@ -239,13 +239,13 @@ class MLIRConvTemplate(MLIRTemplate):
             KERNEL_NAME=self.name,
             KERNEL_DEF=self.def_kernel(),
             kernel=kernel,
-            BATCH=X.layout.size[0],
-            I_C=X.layout.size[1],
+            BATCH=BATCH,
+            I_C=I_C,
             I_H=X.layout.size[2],
             I_W=X.layout.size[3],
-            O_C=W.layout.size[0],
-            K_H=W.layout.size[2],
-            K_W=W.layout.size[3],
+            O_C=O_C,
+            K_H=K_H,
+            K_W=K_W,
             O_H=O_H,
             O_W=O_W,
             TILE_M=TILE_M,
