@@ -150,6 +150,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         spad_size_per_lane = self.spad_info["spad_size"]
         spad_size = spad_size_per_lane * self.vector_lane
         max_spad_size = spad_size // 2 # double buffer
+        max_spad_per_lane = spad_size_per_lane // 2 # double buffer
 
         max_used_spad_size = 0
         M, N, K = self.gemm_combination_mapping(M, N, K)
@@ -168,10 +169,40 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
                         input_size_per_lane = self.get_spad_size_per_lane(i_w * i_h * M, K)
                         output_size_per_lane = self.get_spad_size_per_lane(o_w * o_h * M, N)
                         used_spad_size_per_lane = (weight_size_per_lane + input_size_per_lane + output_size_per_lane) * self.precision
-                        if used_spad_size < max_spad_size and max_used_spad_size < used_spad_size and used_spad_size_per_lane < spad_size_per_lane and max_k_h_w <= k_h * k_w:
+                        if used_spad_size < max_spad_size and max_used_spad_size < used_spad_size and used_spad_size_per_lane < max_spad_per_lane and max_k_h_w <= k_h * k_w:
                             max_used_spad_size = used_spad_size
                             max_k_h_w = k_h * k_w
                             mapping = (k_h, k_w, o_h, o_w, M, N, K)
+        if max_used_spad_size == 0:
+            raise RuntimeError("Cannot find a valid mapping")
+        return mapping
+
+    def conv_multi_tile_mapping(self, M, N, K, K_H, K_W, O_H, O_W, stride, dilation):
+        spad_size_per_lane = self.spad_info["spad_size"]
+        spad_size = spad_size_per_lane * self.vector_lane
+        max_spad_size = spad_size // 2
+        max_spad_per_lane = spad_size_per_lane // 2
+
+        max_used_spad_size = 0
+        M, N, K = self.gemm_combination_mapping(M, N, K * K_W)
+        max_k_h_w = K_W
+        for o_h in sympy.divisors(O_H):
+            for o_w in sympy.divisors(O_W):
+                for k_h in sympy.divisors(K_H):
+                    i_h = 1 + (o_h - 1) * stride[0] + (k_h - 1) * dilation[0]
+                    i_w = 1 + (o_w - 1) * stride[1] + (K_W - 1) * dilation[1]
+                    weight_size = 1 * k_h * K * N
+                    input_size = i_w * i_h * M * K
+                    output_size = o_w * o_h * M * N
+                    used_spad_size = (weight_size + input_size + output_size) * self.precision
+                    weight_size_per_lane = self.get_spad_size_per_lane(1 * k_h * K, N)
+                    input_size_per_lane = self.get_spad_size_per_lane(i_w * i_h * M, K)
+                    output_size_per_lane = self.get_spad_size_per_lane(o_w * o_h * M, N)
+                    used_spad_size_per_lane = (weight_size_per_lane + input_size_per_lane + output_size_per_lane) * self.precision
+                    if used_spad_size < max_spad_size and max_used_spad_size < used_spad_size and used_spad_size_per_lane < max_spad_per_lane and max_k_h_w <= k_h:
+                        max_used_spad_size = used_spad_size
+                        max_k_h_w = k_h
+                        mapping = (k_h, K_W, o_h, o_w, M, N, K)
         if max_used_spad_size == 0:
             raise RuntimeError("Cannot find a valid mapping")
         return mapping
