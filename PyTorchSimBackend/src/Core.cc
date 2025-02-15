@@ -380,6 +380,8 @@ bool Core::can_issue_compute(std::shared_ptr<Instruction>& inst) {
 
 void Core::print_stats() {
   std::vector<float> sa_utilization;
+  update_stats();
+  spdlog::info("===== Instructions count =====");
   for (int i=0; i < static_cast<size_t>(Opcode::COUNT); i++) {
     if (i == static_cast<size_t>(Opcode::COMP))
       spdlog::info("Core [{}] : {} inst count {} (GEMM: {}, Vector: {})", _id, opcode_to_string(static_cast<Opcode>(i)), _stat_tot_sa_inst.at(i), _stat_gemm_inst, _stat_tot_sa_inst.at(i) - _stat_gemm_inst);
@@ -387,21 +389,16 @@ void Core::print_stats() {
       spdlog::info("Core [{}] : {} inst count {}", _id, opcode_to_string(static_cast<Opcode>(i)), _stat_tot_sa_inst.at(i));
   }
   spdlog::trace("Core [{}] : SKipped MOVIN inst count {}", _id, _stat_skip_dma);
+  spdlog::info("========= Core stat =========");
   for (int i=0; i<_num_systolic_array_per_core; i++)
     sa_utilization.push_back(static_cast<float>(_stat_tot_sa_compute_cycle.at(i) * 100) / _core_cycle);
-  spdlog::info(
-      "Core [{}] : Vector active cycle {}", _id, _stat_tot_vu_compute_cycle);
   for (int i=0; i<_num_systolic_array_per_core; i++)
-    spdlog::info("Core [{}] : Systolic array[{}] active cycle {}", _id, i, _stat_tot_sa_compute_cycle.at(i));
+    spdlog::info("Core [{}] : Systolic array [{}] Utilization(%) {:.2f}, active cycle {}, idle cycle {}", _id, i, sa_utilization.at(i),
+      _stat_tot_sa_compute_cycle.at(i), _stat_tot_sa_compute_idle_cycle.at(i));
   spdlog::info("Core [{}] : TMA active cycle {} TMA idle cycle {}", _id, _stat_tot_tma_cycle, _stat_tot_tma_idle_cycle);
-  spdlog::info("Core [{}] : Vector unit idle cycle {}", _id, _stat_vu_compute_idle_cycle);
-  for (int i=0; i<_num_systolic_array_per_core; i++)
-    spdlog::info("Core [{}] : Systolic Array[{}] idle cycle [{}]", _id, i, _stat_tot_sa_compute_cycle.at(i));
-  spdlog::info("Core [{}] : Vector Unit Utilization(%) {:.2f}", _id, static_cast<float>(_stat_tot_vu_compute_cycle * 100) / _core_cycle);
-  for (int i=0; i<_num_systolic_array_per_core; i++)
-    spdlog::info("Core [{}] : Systolic Array[{}] Utilization(%) {:.2f}", _id, i, sa_utilization.at(i));
+  spdlog::info("Core [{}] : Vector Unit Utilization(%) {:.2f}, active cycle {}, idle_cycle {}", _id,
+    static_cast<float>(_stat_tot_vu_compute_cycle * 100) / _core_cycle, _stat_tot_vu_compute_cycle, _stat_tot_vu_compute_idle_cycle);
   spdlog::info("Core [{}] : Total cycle {}", _id, _core_cycle);
-  update_stats();
 }
 
 void Core::print_current_stats() {
@@ -411,17 +408,17 @@ void Core::print_current_stats() {
   auto level = spdlog::level::info;
   if(_id != 0)
     level = spdlog::level::debug;
-  spdlog::log(level, "Core [{}] : Vector active cycle {}", _id, _stat_vu_compute_cycle);
+
+  spdlog::info("========= Core stat =========");
   for (int i=0; i<_num_systolic_array_per_core; i++)
-    spdlog::log(level, "Core [{}] : Systolic array[{}] active cycle {}", _id, i, _stat_sa_compute_cycle.at(i));
-  spdlog::log(level, "Core [{}] : TMA active cycle {} TMA idle cycle {}", _id, _stat_tma_cycle, _stat_tma_idle_cycle);
-  spdlog::log(level, "Core [{}] : Vector unit idle cycle {}", _id, _stat_vu_compute_idle_cycle);
+    sa_utilization.push_back(static_cast<float>(_stat_sa_compute_cycle.at(i) * 100) / _core_cycle);
   for (int i=0; i<_num_systolic_array_per_core; i++)
-    spdlog::log(level, "Core [{}] : Systolic Array[{}] idle cycle {}", _id, i, _stat_sa_compute_idle_cycle.at(i));
-  spdlog::log(level, "Core [{}] : Vector Unit Utilization(%) {:.2f}", _id, static_cast<float>(_stat_vu_compute_cycle * 100) / _config.core_print_interval);
-  for (int i=0; i<_num_systolic_array_per_core; i++)
-    spdlog::log(level, "Core [{}] : Systolic Array[{}] Utilization(%) {:.2f}", _id, i, sa_utilization.at(i));
-  spdlog::log(level, "Core [{}] : Total cycle {}", _id, _core_cycle);
+    spdlog::info("Core [{}] : Systolic array [{}] Utilization(%) {:.2f}, active cycle {}, idle cycle {}", _id, i, sa_utilization.at(i),
+      _stat_sa_compute_cycle.at(i), _stat_sa_compute_idle_cycle.at(i));
+  spdlog::info("Core [{}] : TMA active cycle {} TMA idle cycle {}", _id, _stat_tma_cycle, _stat_tma_idle_cycle);
+  spdlog::info("Core [{}] : Vector Unit Utilization(%) {:.2f}, active cycle {}, idle_cycle {}", _id,
+    static_cast<float>(_stat_vu_compute_cycle * 100) / _core_cycle, _stat_vu_compute_cycle, _stat_vu_compute_idle_cycle);
+  spdlog::info("Core [{}] : Total cycle {}", _id, _core_cycle);
   update_stats();
 }
 
