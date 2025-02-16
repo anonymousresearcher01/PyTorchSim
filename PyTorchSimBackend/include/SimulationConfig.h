@@ -5,7 +5,7 @@
 
 using json = nlohmann::json;
 
-enum class CoreType { OS_MESH, STONNE };
+enum class CoreType { WS_MESH, STONNE };
 
 enum class DramType { SIMPLE, RAMULATOR1, RAMULATOR2 };
 
@@ -15,7 +15,7 @@ enum class L2CacheType { NOCACHE, READONLY };
 
 struct SimulationConfig {
   /* Core config */
-  CoreType core_type = CoreType::OS_MESH;
+  CoreType core_type = CoreType::WS_MESH;
   std::string stonne_config_path;
   uint32_t num_cores;
   uint32_t core_freq;

@@ -19,8 +19,8 @@ SimulationConfig initialize_config(json config) {
 
   /* Core configs */
   if (config.contains("core_type")) {
-    if ((std::string)config["core_type"] == "os_mesh")
-      parsed_config.core_type = CoreType::OS_MESH;
+    if ((std::string)config["core_type"] == "ws_mesh")
+      parsed_config.core_type = CoreType::WS_MESH;
     else if ((std::string)config["core_type"] == "stonne"){
       parsed_config.core_type = CoreType::STONNE;
       if (config.contains("stonne_config_path"))
@@ -31,7 +31,7 @@ SimulationConfig initialize_config(json config) {
       throw std::runtime_error(fmt::format("Not implemented dram type {} ",
                                           (std::string)config["core_type"]));
   } else {
-    parsed_config.core_type = CoreType::OS_MESH;
+    parsed_config.core_type = CoreType::WS_MESH;
   }
   parsed_config.num_cores = config["num_cores"];
   parsed_config.core_freq = config["core_freq"];

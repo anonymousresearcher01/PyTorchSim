@@ -50,7 +50,7 @@ Simulator::Simulator(SimulationConfig config)
   // Create core objects
   _cores.resize(_n_cores);
   for (int core_index = 0; core_index < _n_cores; core_index++) {
-    if (config.core_type == CoreType::OS_MESH) {
+    if (config.core_type == CoreType::WS_MESH) {
       _cores.at(core_index) = std::make_unique<Core>(core_index, _config);
     } else if (config.core_type == CoreType::STONNE) {
       _cores.at(core_index) = std::make_unique<SparseCore>(core_index, _config);
