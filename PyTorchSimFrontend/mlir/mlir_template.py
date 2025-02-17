@@ -17,7 +17,7 @@ from torch._inductor.virtualized import V
 from torch._inductor.utils import IndentedBuffer
 
 from PyTorchSimFrontend.mlir.mlir_autotune import MLIRBenchmarkRequest
-from PyTorchSimFrontend.mlir.mlir_common import BaseMLIRHardwareInfo, MLIRTile
+from PyTorchSimFrontend.mlir.mlir_common import BaseMLIRHardwareInfo
 from PyTorchSimFrontend.mlir.mlir_codegen_backend import MLIRKernel
 
 from . import mlir_common

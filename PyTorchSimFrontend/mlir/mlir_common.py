@@ -242,52 +242,6 @@ class MLIRMultiDimTile():
     def div_round_up(size, round_val):
         return (size + round_val - 1) // round_val
 
-class MLIRTile():
-    TILE_ROW_WISE = 0
-    TILE_COL_WISE = 1
-    TILE_PER_LANE_ROW_WISE = 2
-    TILE_PER_LANE_COL_WISE = 3
-    def __init__(self, n_row, n_col, vector_lane, used_vector_lane=None) -> None:
-        self.n_row = n_row
-        self.n_col = n_col
-        self.vector_lane = vector_lane
-        if used_vector_lane is None:
-            self.used_vector_lane = self.vector_lane
-        else:
-            self.used_vector_lane = used_vector_lane
-        self.tile_per_lane_layout = self.TILE_PER_LANE_ROW_WISE # How a given tile per lane is stored
-        self.tile_layout = self.TILE_ROW_WISE # How a given tile is stored per lane
-        self.vector_lane_axis = (self.n_col//self.used_vector_lane) > 0 #(0: Col major, 1: Row major)
-
-    def get_tile_size(self):
-        return self.n_row * self.n_col
-
-    def get_rows_per_lane(self):
-        if self.n_row % self.used_vector_lane != 0 and self.n_row > 1:
-            print(f"[Warning] n_row({self.n_row}) % vector_lane({self.used_vector_lane}) != 0")
-        return self.div_round_up(self.n_row, self.used_vector_lane)
-
-    def get_cols_per_lane(self):
-        if self.n_col % self.used_vector_lane != 0 and self.n_col > 1:
-            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.used_vector_lane}) != 0")
-        return self.div_round_up(self.n_col, self.used_vector_lane)
-
-    def get_tile_size_per_lane(self):
-        if self.get_tile_size() % self.used_vector_lane != 0:
-            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.used_vector_lane}) != 0")
-        return self.div_round_up(self.get_tile_size(), self.used_vector_lane)
-
-    def get_vlane_stride(self):
-        if self.tile_layout == self.TILE_ROW_WISE:
-            vlane_stride = self.get_tile_size_per_lane()
-        else:
-            vlane_stride = self.get_cols_per_lane()
-        return vlane_stride
-
-    @staticmethod
-    def div_round_up(size, round_val):
-        return (size + round_val - 1) // round_val
-
 class MLIRWrapperKenrelGroup(cpp.KernelGroup):
     def __init__(self):
         super().__init__()
