@@ -16,40 +16,6 @@ class MLIRExternKernelChoice(ExternKernelChoice):
 
 custom_lib = torch.library.Library("extension_op", "DEF")
 
-def _sparse_mm(a, b, out):
-    print("PYTHON CUSTOM OP EXAMPLE")
-    out.copy_(a + b)
-
-# def generate_outer_product_matrix(a, outer, inner, name):
-#     a_cpu = a.cpu()
-#     value_pointer = os.path.join(extension_config.CONFIG_TORCHSIM_DIR,
-#         'PyTorchSimBackend/extern/stonneCore/tests/outerproduct/outerproduct_gemm_mem.ini')
-#     row_pointer = os.path.join(extension_config.CONFIG_TORCHSIM_DIR,
-#         f'PyTorchSimBackend/extern/stonneCore/tests/outerproduct/outerproduct_gemm_rowpointer{name}.in')
-#     col_pointer = os.path.join(extension_config.CONFIG_TORCHSIM_DIR,
-#         f'PyTorchSimBackend/extern/stonneCore/tests/outerproduct/outerproduct_gemm_colpointer{name}.in')
-
-#     with open(value_pointer, "a") as fd, open(row_pointer, "w") as rp, open(col_pointer, "w") as cp:
-#     #generating matrix
-#         n_nonzeros=0
-#         for o in range(outer):  # col major
-#             rp.write(str(n_nonzeros)+","); # writing the index
-#             for i in range(inner):
-#                 value = a_cpu[i, o]
-#                 if value:
-#                     if((i==(inner-1)) and (o==(outer-1))):
-#                         cp.write(str(i))
-#                     else:
-#                         cp.write(str(i)+","); #writing the row index
-#                     ba = bytearray(struct.pack(">f", value))  # generating list of bytes
-#                     my_int = int.from_bytes(ba, "big")
-#                     fd.write(str(my_int))
-#                     fd.write(",")
-#                     n_nonzeros+=1
-#         rp.write(str(n_nonzeros))
-#         next_address_matrix=n_nonzeros*4
-#     return next_address_matrix
-
 def generate_outer_product_matrix(a, b, M, K, N):
     # Generating matrix A
     data_width = 4
@@ -109,6 +75,7 @@ def generate_outer_product_matrix(a, b, M, K, N):
         rpB.write(str(n_nonzeros))
         fd.write(str(0)) # Adding a final 0 to the memory which will never be used. This is just to avoid having a last comma.
         address_matrix_c=address_matrix_b+(n_nonzeros*data_width)
+    return 0, address_matrix_b, address_matrix_c
 
 def flexagon_frontend(a, b, out):
     print("FLEXAGON FRONTEND")
@@ -147,7 +114,7 @@ def flexagon_frontend(a, b, out):
     else:
         print(f"File does not exist: {value_path}")
 
-    generate_outer_product_matrix(a, b, M, K, N)
+    dram_a_address, dram_b_address, dram_c_address = generate_outer_product_matrix(a, b, M, K, N)
 
     graph = {
         0: {
@@ -191,9 +158,9 @@ def flexagon_frontend(a, b, out):
             "stonne_mem_matrix_c_file_name": os.path.join(extension_config.CONFIG_TORCHSIM_DIR, 'PyTorchSimBackend/extern/stonneCore/tests/outerproduct/result.out'),
 
             # Memory Addresses
-            "stonne_matrix_a_dram_address": 0,
-            "stonne_matrix_b_dram_address": 12444,
-            "stonne_matrix_c_dram_address": 24608,
+            "stonne_matrix_a_dram_address": dram_a_address,
+            "stonne_matrix_b_dram_address": dram_b_address,
+            "stonne_matrix_c_dram_address": dram_c_address,
 
             # CSR & Bitmap Initialization
             "stonne_rowpointer_matrix_a_init": os.path.join(extension_config.CONFIG_TORCHSIM_DIR, 'PyTorchSimBackend/extern/stonneCore/tests/outerproduct/outerproduct_gemm_rowpointerA.in'),
