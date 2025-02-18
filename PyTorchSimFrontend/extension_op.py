@@ -188,7 +188,7 @@ def flexagon_frontend(a, b, out):
     backsim = BackendSimulator(backend_path, stonne_config_path)
     result_path = backsim.simulation(onnx_path)
     result = BackendSimulator.get_result_from_file(result_path)
-    out.copy_(a + b)
+    out.copy_(torch.matmul(a.cpu(), b.cpu()))
 
 custom_lib.define("_sparse_mm(Tensor a, Tensor b, Tensor out) -> Tensor")
 custom_lib.impl("_sparse_mm", flexagon_frontend, "PrivateUse1")
