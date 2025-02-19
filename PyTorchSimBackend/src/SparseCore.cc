@@ -10,6 +10,8 @@ SparseCore::SparseCore(uint32_t id, SimulationConfig config) : Core(id, config) 
   unsigned int dn_width = stonneConfig.m_SDMemoryCfg.port_width;
   unsigned int rn_bw = stonneConfig.m_SDMemoryCfg.n_write_ports;
   unsigned int rn_width = stonneConfig.m_SDMemoryCfg.port_width;
+  r_port_nr = dn_bw;
+  w_port_nr = rn_bw;
 
   double compute_throughput = static_cast<double>(num_ms) * core_freq / 1e3; // FLOPs/sec
   double dn_bandwidth = static_cast<double>(dn_bw) * dn_width * core_freq * 1e6 / 8.0 / 1e9; // GB/s
@@ -84,7 +86,8 @@ void SparseCore::cycle() {
   }
 
   // Send Memory Response
-  if (!_response_queue.empty()) {
+  nr_request = 0;
+  while (!_response_queue.empty()) {
     mem_fetch* resp_wrapper = _response_queue.front();
     std::vector<SimpleMem::Request*>* resps = static_cast<std::vector<SimpleMem::Request*>*>(resp_wrapper->get_custom_data());
 
@@ -101,6 +104,8 @@ void SparseCore::cycle() {
       delete resp_wrapper;
       _response_queue.pop();
     }
+    if (nr_request++ > r_port_nr);
+      break;
   }
 
   if (stonneCore->isFinished() && _tiles.size()) {
