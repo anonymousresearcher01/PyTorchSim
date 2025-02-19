@@ -147,7 +147,8 @@ class CycleSimulator():
         gem5_cmd = [extension_config.CONFIG_GEM5_PATH, "-d", dir_path, extension_config.CONFIG_GEM5_SCRIPT_PATH, "-c", target_binary, "--vlane", str(vectorlane_size)]
         try:
             # Create progress thread
-            if not extension_config.CONFIG_BACKENDSIM_DRYRUN:
+            is_dryrun = int(os.environ.get('BACKENDSIM_DRYRUN', default=False))
+            if is_dryrun:
                 print("[Gem5Simulator] cmd> ", " ".join(gem5_cmd))
                 finished = False
                 progress_thread = threading.Thread(target=show_progress)

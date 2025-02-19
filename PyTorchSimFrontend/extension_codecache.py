@@ -328,7 +328,7 @@ class CustomAsyncCompile(AsyncCompile):
         def dryrun_simulator(*args, **kwargs):
             key = future.result()
 
-        is_dryrun = extension_config.CONFIG_BACKENDSIM_DRYRUN
+        is_dryrun = int(os.environ.get('BACKENDSIM_DRYRUN', default=False))
         target_simulator = dryrun_simulator if is_dryrun else dummy_simulator
         target_simulator.arg_attributes = arg_attributes
         target_simulator.future = future

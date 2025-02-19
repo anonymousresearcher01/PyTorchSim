@@ -658,6 +658,7 @@ class MLIRConvTemplate(MLIRTemplate):
         return code
 
     def outer_func_render(self, kernel_name, input_args):
+        eager_mode = int(os.environ.get('BACKENDSIM_EAGER_MODE', default=False))
         options = dict(
             KERNEL_NAME=kernel_name,
             FUNC_NAME=self.function_name,
@@ -670,7 +671,7 @@ class MLIRConvTemplate(MLIRTemplate):
             MULTI_TILE=self.is_multi_tile(self.input_shape[1]),
             SINGLE_BATCH=self.is_single_batch(self.input_shape[0]),
             VALIDATION_MODE=extension_config.CONFIG_TORCHSIM_VALIDATION_MODE,
-            BACKENDSIM_EAGER_MODE=extension_config.CONFIG_BACKENDSIM_EAGER_MODE,
+            BACKENDSIM_EAGER_MODE=eager_mode,
             HASH_VALUE=self.hash_value
         )
         code = self._template_from_string(WRAPPER_TEMPLATE).render(**options)
