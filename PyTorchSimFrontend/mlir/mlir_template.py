@@ -121,29 +121,29 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         m_pad_factor = self.vector_lane if M > self.vector_lane else 8
         n_pad_factor = self.vector_lane if N > self.vector_lane else 8
         k_pad_factor = self.vector_lane if K > self.vector_lane else 1
+        K = max(K, 8)
         M_padded = ((M + m_pad_factor - 1) // m_pad_factor) * m_pad_factor
         N_padded = ((N + n_pad_factor - 1) // n_pad_factor) * n_pad_factor
         K_padded = ((K + k_pad_factor - 1) // k_pad_factor) * k_pad_factor
+        indexI, indexJ, indexK = (M_padded // self.vector_lane, N_padded // self.vector_lane, K_padded // self.vector_lane)
 
         max_used_spad_size = 0
         mapping = (self.vector_lane, self.vector_lane, self.vector_lane)
-        tile_M_range = range(self.vector_lane, M_padded + 1, self.vector_lane) if M > self.vector_lane else [M_padded]
-        tile_N_range = range(self.vector_lane, N_padded + 1, self.vector_lane) if N > self.vector_lane else [N_padded]
-        tile_K_range = range(self.vector_lane, K_padded + 1, self.vector_lane) if K > self.vector_lane else [K_padded]
-        for tile_M in tile_M_range:
-            for tile_N in tile_N_range:
-                for tile_K in tile_K_range:
+        tile_M_range = sympy.divisors(indexI) if M > self.vector_lane else [1]
+        tile_N_range = sympy.divisors(indexJ) if N > self.vector_lane else [1]
+        tile_K_range = sympy.divisors(indexK) if K > self.vector_lane else [1]
+        maximize_i_j = 1 # reuse weight
+        for k in tile_K_range:
+            tile_K = k * self.vector_lane if K > self.vector_lane else K_padded
+            for j in tile_N_range:
+                tile_N = j * self.vector_lane if N > self.vector_lane else N_padded
+                for i in tile_M_range:
+                    tile_M = i * self.vector_lane if M > self.vector_lane else M_padded
                     used_spad_size = (tile_M * tile_K + tile_K * tile_N + tile_M * tile_N) * self.precision
-                    if used_spad_size < max_spad_size and max_used_spad_size < used_spad_size:
+                    if used_spad_size < max_spad_size and max_used_spad_size < used_spad_size and maximize_i_j <= tile_M * tile_N:
                         max_used_spad_size = used_spad_size
+                        maximize_i_j = tile_M * tile_N
                         mapping = (tile_M, tile_N, tile_K)
-
-        Outer_M = math.ceil(M_padded / mapping[0])
-        Outer_N = math.ceil(N_padded / mapping[1])
-        Outer_K = math.ceil(K_padded / mapping[2])
-
-        # split mapping equally to avoid unnecessary padding
-        mapping = (M_padded // Outer_M, N_padded // Outer_N, K_padded // Outer_K)
         return mapping
 
     def conv_combination_mapping(self, M, N, K, K_H, K_W, O_H, O_W, stride, dilation):
