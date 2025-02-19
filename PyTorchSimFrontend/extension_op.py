@@ -5,6 +5,7 @@ import struct
 import torch
 import numpy as np
 from torch._inductor.select_algorithm import ExternKernelChoice
+from torch._inductor.codecache import get_hash
 from AsmParser.tog_generator import tog_generator
 from torch._inductor.codecache import write
 from PyTorchSimFrontend.extension_codecache import get_write_path
@@ -176,6 +177,7 @@ def flexagon_frontend(a, b, out):
         }
     }
     source_code = "graph = " + str(graph)
+    torch.ops.extension_op._sparse_mm.future = get_hash(source_code)
 
     write_path = get_write_path(source_code)
     key, raw_tog_path = write(source_code, "py", specified_dir=write_path)
@@ -187,6 +189,11 @@ def flexagon_frontend(a, b, out):
         offset=0,
         vector_lane=0
     )
+
+    is_dryrun = int(os.environ.get('BACKENDSIM_DRYRUN', default=False))
+    if is_dryrun:
+        return
+
     onnx_path = os.path.join(write_path, "tile_graph.onnx")
     #attribute_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
     backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
