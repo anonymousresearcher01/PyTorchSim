@@ -467,7 +467,9 @@ def {{ FUNC_NAME }}({{ INPUT }}, {{ WEIGHT }}{% if BIAS %}, {{ BIAS }} {% endif 
     t_{{ OUT }} = {{ OUT }}.permute(2, 3, 0, 1).contiguous() # (BATCH, O_C, O_H, O_W) -> (O_H, O_W, BATCH, O_C)
     {% endif -%}
     {{ KERNEL_NAME }}(t_{{ INPUT }}, t_{{ WEIGHT }}{% if BIAS %}, {{ BIAS }} {% endif %}, t_{{ OUT }})
-
+    {% if BACKENDSIM_EAGER_MODE %}
+    yield ({{KERNEL_NAME}}, (t_{{ INPUT }}, t_{{ WEIGHT }}{% if BIAS %}, {{ BIAS }} {% endif %}, t_{{ OUT }}))
+    {% endif %}
     # Transpose back
     {%- if SINGLE_BATCH %}
     {{ OUT }}.copy_(t_{{ OUT }}.permute(0, 3, 1, 2).contiguous()) # (BATCH, O_H, O_W, O_C) -> (BATCH, O_C, O_H, O_W)

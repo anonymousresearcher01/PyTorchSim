@@ -148,7 +148,7 @@ class CycleSimulator():
         try:
             # Create progress thread
             is_dryrun = int(os.environ.get('BACKENDSIM_DRYRUN', default=False))
-            if is_dryrun:
+            if not is_dryrun:
                 print("[Gem5Simulator] cmd> ", " ".join(gem5_cmd))
                 finished = False
                 progress_thread = threading.Thread(target=show_progress)
