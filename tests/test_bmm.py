@@ -50,3 +50,5 @@ if __name__ == "__main__":
     test_BMM(device, 2, 128, 256, 256)
     test_BMM(device, 2, 256, 256, 128)
     test_BMM(device, 4, 256, 256, 256)
+    test_BMM(device, 12, 512, 512, 64)
+    test_BMM(device, 16, 512, 512, 64)
