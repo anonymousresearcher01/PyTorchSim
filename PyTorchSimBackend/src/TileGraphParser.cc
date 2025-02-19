@@ -712,6 +712,9 @@ TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
   }
 
   _tile_graph = std::make_unique<TileGraph>(TileGraph(onnx_path, graph_name));
+  if (std::stoi(this->getMetaByName("stonneGraph")))
+    _tile_graph->StonneGraph=true;
+
   /* Generate subgraph */
   if (_loop_nodes.empty()) {
     spdlog::warn("[TileGraphParser] Null Kernel \"{}\"", onnx_path);

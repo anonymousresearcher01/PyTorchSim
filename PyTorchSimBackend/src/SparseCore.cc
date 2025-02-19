@@ -103,7 +103,7 @@ void SparseCore::cycle() {
     }
   }
 
-  if (stonneCore->isFinished()) {
+  if (stonneCore->isFinished() && _tiles.size()) {
     stonneCore->finish();
     std::shared_ptr<Tile> target_tile = _tiles.front();
     target_tile->set_status(Tile::Status::FINISH);
@@ -130,4 +130,13 @@ void SparseCore::print_stats() {
 
 void SparseCore::print_current_stats() {
   print_stats();
+}
+
+std::shared_ptr<Tile> SparseCore::pop_finished_tile() {
+  std::shared_ptr<Tile> result = std::make_unique<Tile>(Tile(Tile::Status::EMPTY));
+  if (_finished_tiles.size() > 0) {
+    result = std::move(_finished_tiles.front());
+    _finished_tiles.pop();
+  }
+  return result;
 }

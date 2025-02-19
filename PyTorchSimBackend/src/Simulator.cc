@@ -80,7 +80,7 @@ void Simulator::core_cycle() {
 
     // Issue new tile to core
     for (int i=0; i<_max_slot; i++, _slot_id=(_slot_id + 1) % _max_slot) {
-      const std::shared_ptr<Tile> tile = get_partition_scheduler(core_id)->peek_tile(core_id, _slot_id);
+      const std::shared_ptr<Tile> tile = get_partition_scheduler(core_id)->peek_tile(core_id, _slot_id, _config.core_type[core_id]);
       if (tile->get_status() != Tile::Status::EMPTY && _cores[core_id]->can_issue(tile))  {
         if (tile->get_status() == Tile::Status::INITIALIZED) {
           _cores[core_id]->issue(std::move(get_partition_scheduler(core_id)->get_tile(core_id, _slot_id)));

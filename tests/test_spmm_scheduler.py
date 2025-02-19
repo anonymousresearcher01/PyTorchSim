@@ -13,7 +13,7 @@ target_model1 = model1(16, 16, 16).eval()
 
 # Init scheduler
 scheduler = Scheduler(num_request_queue=2, engine_select=Scheduler.FIFO_ENGINE,
-                      backend_config="/workspace/PyTorchSim/PyTorchSimBackend/configs/stonne_c1_simple_noc_tpuv3.json")
+                      backend_config="/workspace/PyTorchSim/PyTorchSimBackend/configs/heterogeneous_c1_simple_noc.json")
 # Register compiled model
 
 opt_model1 = torch.compile(target_model1.to(device=scheduler.execution_engine.module.custom_device()))
@@ -24,10 +24,12 @@ model_input1 = torch.randn(16, 16)
 
 # Init request
 new_request1 = Request("mlp", [model_input1], [], request_queue_idx=0)
+new_request2 = Request("mlp", [model_input1], [], request_queue_idx=0)
 
 
 # Add request to scheduler
 scheduler.add_request(new_request1, request_time=0)
+scheduler.add_request(new_request2, request_time=100)
 
 # Run scheduler
 while not scheduler.is_finished():

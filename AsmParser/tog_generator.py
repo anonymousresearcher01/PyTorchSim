@@ -198,7 +198,7 @@ class tog_generator:
             connect_nodes(prev_node, end_node)
             prev_node = end_node
 
-    def generate_tile_graph(self, name="tile_graph", cycle_list=list, offset=int, vector_lane=int):
+    def generate_tile_graph(self, name="tile_graph", cycle_list=list, offset=int, vector_lane=int, stonneGraph=False):
         node_list = list(self.node_dict.values())[1:]
         if len(node_list):
             node_list[0].set_parent([])
@@ -215,7 +215,7 @@ class tog_generator:
 
         origin_info = "_".join(map(str, self.origins))
         onnx_node_list = [node.to_onnx() for node in node_list] # Exclude root node
-        dump_onnx_graph(name, onnx_node_list, vector_lane, origin_info)
+        dump_onnx_graph(name, onnx_node_list, vector_lane, origin_info, stonneGraph=stonneGraph)
 
 if __name__ == "__main__":
     t = tog_generator()

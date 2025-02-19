@@ -19,7 +19,7 @@ public:
   void push_memory_response(mem_fetch* response) override;
   void print_stats() override;
   void print_current_stats() override;
-
+  std::shared_ptr<Tile> pop_finished_tile() override;
   uint32_t r_port_nr = 1;
   uint32_t w_port_nr = 1;
 private:

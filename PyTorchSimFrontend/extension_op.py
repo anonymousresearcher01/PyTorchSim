@@ -14,7 +14,10 @@ from Simulator.simulator import BackendSimulator, TORCH_TO_NUMPY
 
 class MLIRExternKernelChoice(ExternKernelChoice):
     def call_name(self):
-        return f"yield from flexagon_frontend"
+        is_dryrun = int(os.environ.get('BACKENDSIM_DRYRUN', default=False))
+        if is_dryrun:
+            return f"yield from flexagon_frontend"
+        return f"torch.ops.extension_op.{self.name}"
 
 custom_lib = torch.library.Library("extension_op", "DEF")
 
@@ -176,7 +179,6 @@ def flexagon_frontend(a, b, out):
         }
     }
     source_code = "graph = " + str(graph)
-    torch.ops.extension_op._sparse_mm.future = get_hash(source_code)
 
     write_path = get_write_path(source_code)
     key, raw_tog_path = write(source_code, "py", specified_dir=write_path)
@@ -186,7 +188,8 @@ def flexagon_frontend(a, b, out):
         os.path.join(write_path, "tile_graph.onnx"),
         cycle_list=[0],
         offset=0,
-        vector_lane=0
+        vector_lane=0,
+        stonneGraph=True
     )
 
     onnx_path = os.path.join(write_path, "tile_graph.onnx")

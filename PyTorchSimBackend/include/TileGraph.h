@@ -63,6 +63,7 @@ class TileGraph {
   std::string get_name() { return _name; }
   void set_arrival_time(cycle_type arrival_time) { _arrival_time = arrival_time; }
   cycle_type get_arrival_time() { return _arrival_time; }
+  bool StonneGraph = false;
 
   class Iterator {
    public:
