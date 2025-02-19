@@ -187,7 +187,8 @@ def flexagon_frontend(a, b, out):
     tile_graph_generator.generate_tile_graph(
         os.path.join(write_path, "tile_graph.onnx"),
         cycle_list=[0],
-        offset=0,
+        x_offset=0,
+        w_offset=0,
         vector_lane=0,
         stonneGraph=True
     )
