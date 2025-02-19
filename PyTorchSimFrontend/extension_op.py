@@ -194,9 +194,10 @@ def flexagon_frontend(a, b, out):
     )
 
     onnx_path = os.path.join(write_path, "tile_graph.onnx")
+    attribute_path = os.path.join(write_path, "attributes")
     is_dryrun = int(os.environ.get('BACKENDSIM_DRYRUN', default=False))
     if is_dryrun:
-        yield (onnx_path, "")
+        yield (onnx_path, attribute_path)
         return
 
     #attribute_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
