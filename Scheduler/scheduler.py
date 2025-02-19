@@ -1,7 +1,6 @@
 from typing import List
 import os
-import sys
-import json
+import numpy as np
 import torch
 from pathlib import Path
 import importlib.util
@@ -22,6 +21,19 @@ def import_module_from_path(module_name, path):
     spec.loader.exec_module(module)
 
     return module
+
+def poisson_request_generator(lambda_requests, max_msec_time=None):
+    current_time = 0.0 # msec
+
+    yield 0
+    while max_msec_time is None or current_time < max_msec_time:
+        inter_arrival_time = np.random.exponential(scale=1000 / lambda_requests)
+        current_time += inter_arrival_time
+
+        if max_msec_time is not None and current_time > max_msec_time:
+            break
+
+        yield current_time
 
 class Request:
     """ Each request has model name, it's own id, and requested time. """
@@ -335,11 +347,12 @@ class RRExecutionEngine(ExecutionEngine):
         return self.SELECT_NOTHING
 
 class Scheduler:
+
     FIFO_ENGINE = 0
     RR_ENGINE = 1
-    def __init__(self, num_request_queue=1, engine_select=FIFO_ENGINE, backend_config=extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG) -> None:
+    def __init__(self, num_request_queue=1, max_batch=1, engine_select=FIFO_ENGINE, backend_config=extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG) -> None:
         self.current_time = 0
-        self.max_batch = 1
+        self.max_batch = max_batch
         self.num_request_queue = num_request_queue
         self.request_queue : List[List[Request]] = []
         for i in range(self.num_request_queue):
@@ -448,8 +461,8 @@ class Scheduler:
 
         # Need to forward the time until next_arrival_time
         if self.execution_engine.is_idle():
-            reason = self.backend_simulator.until(next_time)
-            self.current_time = self.backend_simulator.cycle()
+            reason = self.backend_simulator.until(self.msec_to_cycle(next_time))
+            self.current_time = self.cycle_to_msec(self.backend_simulator.cycle())
         else:
             self.run(next_time)
         return
@@ -458,7 +471,7 @@ class Scheduler:
         def execute_cycle():
             for i in range(self.execution_engine.num_partion):
                 if self.execution_engine.partition_state[i] == ExecutionEngine.PARTITION_IDLE:
-                    ret = self.execution_engine.launch_kernel(self.current_time, i)
+                    ret = self.execution_engine.launch_kernel(self.msec_to_cycle(self.current_time), i)
 
             self.check_finish_request()
             # Check if the stop condition is met
@@ -466,8 +479,8 @@ class Scheduler:
                 return -1
 
             # Schedule jobs and update the current time
-            result = self.backend_simulator.until(until_time)
-            self.current_time = self.backend_simulator.cycle()
+            result = self.backend_simulator.until(self.msec_to_cycle(until_time))
+            self.current_time = self.cycle_to_msec(self.backend_simulator.cycle())
 
             if result != -1:
                 # Kernel is finished. So set idle state
@@ -504,5 +517,9 @@ class Scheduler:
         return cycle / (freq  / 1000)
 
     def msec_to_cycle(self, msec):
+        # We treat -1 as special time
+        if (msec == -1):
+            return msec
+
         freq = self.backend_simulator.get_core_freq()
-        return msec * (freq / 1000)
+        return int(msec * (freq / 1000))
