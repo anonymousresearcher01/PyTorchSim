@@ -22,8 +22,12 @@ public:
   std::shared_ptr<Tile> pop_finished_tile() override;
   uint32_t r_port_nr = 1;
   uint32_t w_port_nr = 1;
+  uint32_t nr_cores = 1;
 private:
-  SST_STONNE::sstStonne *stonneCore;
+  uint32_t rr_idx = 0;
+  std::vector<bool> coreBusy;
+  std::vector<SST_STONNE::sstStonne*> stonneCores;
+  std::vector<std::vector<std::shared_ptr<Tile>>> percore_tiles;
   /* Interconnect queue */
   std::queue<mem_fetch*> _request_queue;
   std::queue<mem_fetch*> _response_queue;

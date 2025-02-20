@@ -43,6 +43,10 @@ SimulationConfig initialize_config(json config) {
   parsed_config.sram_size = config["sram_size"];
   if (config.contains("num_systolic_array_per_core"))
     parsed_config.num_systolic_array_per_core = config["num_systolic_array_per_core"];
+  if (config.contains("num_stonne_per_core"))
+    parsed_config.num_stonne_per_core = config["num_stonne_per_core"];
+   if (config.contains("num_stonne_port"))
+    parsed_config.num_stonne_port = config["num_stonne_port"];
   parsed_config.core_print_interval = get_config_value<uint32_t>(config, "core_print_interval");
 
   /* Stonne config */ 

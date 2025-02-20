@@ -1,74 +1,122 @@
 #include "SparseCore.h"
 
 SparseCore::SparseCore(uint32_t id, SimulationConfig config) : Core(id, config) {
-  stonneCore = new SST_STONNE::sstStonne(config.stonne_config_path);
-  stonneCore->init(1);
-  Config stonneConfig = stonneCore->getStonneConfig();
+  /* Init stonne cores*/
+  nr_cores = config.num_stonne_per_core;
+  coreBusy.resize(nr_cores);
+  percore_tiles.resize(nr_cores);
+  for (int i=0; i<nr_cores; i++) {
+    SST_STONNE::sstStonne* core = new SST_STONNE::sstStonne(config.stonne_config_path);
+    core->init(1);
+    stonneCores.push_back(core);
+    coreBusy.at(i) = false;
+    percore_tiles.at(i) = std::vector<std::shared_ptr<Tile>>();
+  }
+
+  Config stonneConfig = stonneCores.at(0)->getStonneConfig();
   unsigned int core_freq = config.core_freq; // MHz;
   unsigned int num_ms = stonneConfig.m_MSNetworkCfg.ms_size;
-  unsigned int dn_bw = stonneConfig.m_SDMemoryCfg.n_read_ports;
-  unsigned int dn_width = stonneConfig.m_SDMemoryCfg.port_width;
-  unsigned int rn_bw = stonneConfig.m_SDMemoryCfg.n_write_ports;
-  unsigned int rn_width = stonneConfig.m_SDMemoryCfg.port_width;
-  r_port_nr = dn_bw;
-  w_port_nr = rn_bw;
+  r_port_nr = config.num_stonne_port;
+  w_port_nr = config.num_stonne_port;
 
   double compute_throughput = static_cast<double>(num_ms) * core_freq / 1e3; // FLOPs/sec
-  double dn_bandwidth = static_cast<double>(dn_bw) * dn_width * core_freq * 1e6 / 8.0 / 1e9; // GB/s
-  double rn_bandwidth = static_cast<double>(rn_bw) * rn_width * core_freq * 1e6 / 8.0 / 1e9; // GB/s
-
-  spdlog::info("[Config/StonneCore {}] Compute Throughput: {:.2f} GFLOPs/sec", id, compute_throughput);
-  spdlog::info("[Config/StonneCore {}] Distribution Network Bandwidth: {:.2f} GB/s ({} ports x {} bits)",
-             id, dn_bandwidth, r_port_nr, dn_width);
-  spdlog::info("[Config/StonneCore {}] Reduction Network Bandwidth: {:.2f} GB/s ({} ports x {} bits)",
-             id, rn_bandwidth, w_port_nr, rn_width);
+  double dn_bandwidth = static_cast<double>(r_port_nr) * config.dram_req_size * core_freq * 1e6 / 8.0 / 1e9; // GB/s
+  double rn_bandwidth = static_cast<double>(w_port_nr) * config.dram_req_size * core_freq * 1e6 / 8.0 / 1e9; // GB/s
+  for (int i=0; i<nr_cores; i++) {
+    spdlog::info("[Config/StonneCore {}][{}] Compute Throughput: {:.2f} GFLOPs/sec", id, i, compute_throughput);
+    spdlog::info("[Config/StonneCore {}][{}] Distribution Network Bandwidth: {:.2f} GB/s",
+                id, i, dn_bandwidth, r_port_nr);
+    spdlog::info("[Config/StonneCore {}][{}] Reduction Network Bandwidth: {:.2f} GB/s",
+                id, i, rn_bandwidth, w_port_nr);
+  }
 };
 
-SparseCore::~SparseCore() { delete stonneCore; }
+SparseCore::~SparseCore() {
+  for (auto& core : stonneCores){
+    delete core;
+  }
+}
 
 bool SparseCore::running() {
-  return !_request_queue.empty() || !_response_queue.empty() || _tiles.size();
+  bool is_running = !_request_queue.empty() || !_response_queue.empty();
+  for (auto& tile_vec : percore_tiles)
+    is_running |= tile_vec.size();
+  return is_running;
 }
 
 void SparseCore::issue(std::shared_ptr<Tile> tile) {
+  int32_t selected_core_idx = -1;
+  for (int i=0; i<nr_cores; i++) {
+    int32_t core_idx = rr_idx % nr_cores;
+    if (!coreBusy.at(i)) {
+      selected_core_idx = core_idx;
+      rr_idx = (selected_core_idx + 1) % nr_cores;
+      break;
+    }
+  }
+  if (selected_core_idx == -1) {
+    spdlog::error("[StonneCore {}] Faield to issue tile", _id);
+    exit(1);
+  }
+  spdlog::info("[StonneCore {}][{}] issued new tile", _id, selected_core_idx);
   SST_STONNE::StonneOpDesc *opDesc = static_cast<SST_STONNE::StonneOpDesc*>(tile->get_custom_data());
-  stonneCore->setup(*opDesc);
-  stonneCore->init(1);
-  _tiles.push_back(tile);
+  stonneCores.at(selected_core_idx)->setup(*opDesc);
+  stonneCores.at(selected_core_idx)->init(1);
+  percore_tiles.at(selected_core_idx).push_back(tile);
+  coreBusy.at(selected_core_idx) = true;
 };
 
 bool SparseCore::can_issue(const std::shared_ptr<Tile>& op) {
-  return !running() && op->is_stonne_tile();
+  bool idle_exist = false;
+  for (bool flag : coreBusy) {
+    idle_exist |= !flag;
+  }
+  return idle_exist && op->is_stonne_tile();
 }
 
 void SparseCore::cycle() {
   _core_cycle++;
-  stonneCore->cycle();
+  uint32_t stonne_core_id = 0;
+  for (auto& stonneCore : stonneCores) {
+    stonneCore->cycle();
 
-  /* Send Memory Request */
-  while (SimpleMem::Request* req = stonneCore->popRequest()) {
-    uint64_t target_addr =  (req->getAddress() / _config.dram_req_size) * _config.dram_req_size;
-    mem_access_type acc_type;
-    mf_type type;
+    /* Send Memory Request */
+    while (SimpleMem::Request* req = stonneCore->popRequest()) {
+      uint64_t target_addr =  (req->getAddress() / _config.dram_req_size) * _config.dram_req_size;
+      mem_access_type acc_type;
+      mf_type type;
 
-    switch(req->getcmd()) {
-      case SimpleMem::Request::Read:
-        acc_type = mem_access_type::GLOBAL_ACC_R;
-        type = mf_type::READ_REQUEST;
-        break;
-      case SimpleMem::Request::Write:
-        acc_type = mem_access_type::GLOBAL_ACC_W;
-        type = mf_type::WRITE_REQUEST;
-        break;
-      default:
-        spdlog::error("[SparseCore] Invalid request type from core");
-        return;
+      switch(req->getcmd()) {
+        case SimpleMem::Request::Read:
+          acc_type = mem_access_type::GLOBAL_ACC_R;
+          type = mf_type::READ_REQUEST;
+          break;
+        case SimpleMem::Request::Write:
+          acc_type = mem_access_type::GLOBAL_ACC_W;
+          type = mf_type::WRITE_REQUEST;
+          break;
+        default:
+          spdlog::error("[SparseCore] Invalid request type from core");
+          return;
+      }
+      req->request_time = _core_cycle;
+      req->stonneId = stonne_core_id;
+      std::tuple<uint64_t, mem_access_type, mf_type> key = std::make_tuple(target_addr, acc_type, type);
+      if (request_merge_table.find(key) == request_merge_table.end())
+        request_merge_table[key] = new std::vector<SimpleMem::Request*> ();
+      request_merge_table[key]->push_back(req);
     }
-    req->request_time = _core_cycle;
-    std::tuple<uint64_t, mem_access_type, mf_type> key = std::make_tuple(target_addr, acc_type, type);
-    if (request_merge_table.find(key) == request_merge_table.end())
-      request_merge_table[key] = new std::vector<SimpleMem::Request*> ();
-    request_merge_table[key]->push_back(req);
+
+    if (coreBusy.at(stonne_core_id) && stonneCore->isFinished()) {
+      stonneCore->finish();
+
+      std::shared_ptr<Tile> target_tile = percore_tiles.at(stonne_core_id).front();
+      target_tile->set_status(Tile::Status::FINISH);
+      _finished_tiles.push(target_tile);
+      percore_tiles.at(stonne_core_id).erase(percore_tiles.at(stonne_core_id).begin());
+      coreBusy.at(stonne_core_id) = false;
+    }
+    stonne_core_id++;
   }
 
   int nr_request = 0;
@@ -82,8 +130,8 @@ void SparseCore::cycle() {
       _request_queue.push(req_wrapper);
       request_merge_table.erase(req_pair.first);
 
-      spdlog::debug("[SparseCore][{}] Address: {:#x}, Access Type: {}, Request Type: {}, DRAM Req Size: {}, nr_request: {}", \
-              _core_cycle, req_wrapper->get_addr(), int(req_wrapper->get_access_type()), int(req_wrapper->get_type()), _config.dram_req_size, nr_request);
+      spdlog::debug("[SparseCore][{}][{}] Address: {:#x}, Access Type: {}, Request Type: {}, DRAM Req Size: {}, nr_request: {}", \
+              _core_cycle, stonne_core_id, req_wrapper->get_addr(), int(req_wrapper->get_access_type()), int(req_wrapper->get_type()), _config.dram_req_size, nr_request);
       nr_request++;
       break;
     }
@@ -98,10 +146,10 @@ void SparseCore::cycle() {
     SimpleMem::Request* resp = resps->front();
 
     spdlog::debug("[SparseCore][{}] Round Trip Cycle: {}, Address: {:#x}, Access Type: {}, Request Type: {}, DRAM Req Size: {}, nr_request: {}", \
-             _core_cycle, _core_cycle - resp->request_time, resp->getAddress(), int(resp_wrapper->get_access_type()), int(resp_wrapper->get_type()), _config.dram_req_size, nr_request);
+            _core_cycle, _core_cycle - resp->request_time, resp->getAddress(), int(resp_wrapper->get_access_type()), int(resp_wrapper->get_type()), _config.dram_req_size, nr_request);
 
     resp->setReply();
-    stonneCore->pushResponse(resp);
+    stonneCores.at(resp->stonneId)->pushResponse(resp);
     resps->erase(resps->begin());
     if (resps->empty()) {
       delete resps;
@@ -112,13 +160,7 @@ void SparseCore::cycle() {
       break;
   }
 
-  if (stonneCore->isFinished() && _tiles.size()) {
-    stonneCore->finish();
-    std::shared_ptr<Tile> target_tile = _tiles.front();
-    target_tile->set_status(Tile::Status::FINISH);
-    _finished_tiles.push(target_tile);
-    _tiles.erase(_tiles.begin());
-  }
+
 }
 
 bool SparseCore::has_memory_request() {
@@ -134,7 +176,8 @@ void SparseCore::push_memory_response(mem_fetch* response) {
 }
 
 void SparseCore::print_stats() {
-  stonneCore->printStats();
+  for (auto stonneCore : stonneCores)
+    stonneCore->printStats();
 }
 
 void SparseCore::print_current_stats() {
