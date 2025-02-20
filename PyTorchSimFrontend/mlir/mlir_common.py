@@ -254,15 +254,11 @@ class MLIRWrapperKenrelGroup(cpp.KernelGroup):
 class BaseMLIRHardwareInfo():
     def __init__(self):
         # Default HW setting
-        self.vector_lane = 128
-        self.spad_info = {
-            "spad_vaddr" : 0xD0000000,
-            "spad_paddr" : 0x2000000000,
-            "spad_size" : 128 << 10 # 128KB per Lane
-        }
-        self.precision = 4 # 32bit
-        self.num_cores = 1
-        self.vlen = 32 // self.precision # 256bits / 32bits = 8 [elements]
+        self.vector_lane = extension_config.CONFIG_VECTOR_LANE
+        self.spad_info = extension_config.CONFIG_SPAD_INFO
+        self.precision = extension_config.CONFIG_PRECISION
+        self.num_cores = extension_config.CONFIG_NUM_CORES
+        self.vlen = extension_config.CONFIG_VLEN
 
 class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
     newvar_prefix = "%"

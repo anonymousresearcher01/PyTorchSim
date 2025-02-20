@@ -2,7 +2,7 @@ import os
 import tempfile
 
 # Hardware info config
-CONFIG_VECTOR_LANE = 128
+CONFIG_VECTOR_LANE = int(os.environ.get("TORCHSIM_VECTOR_LANE", default=128))
 CONFIG_SPAD_INFO = {
   "spad_vaddr" : 0xD0000000,
   "spad_paddr" : 0xD0000000,
@@ -33,7 +33,7 @@ CONFIG_TORCHSIM_CUSTOM_PASS_PATH = os.environ.get('TORCHSIM_CUSTOM_PASS_PATH',
 
 # Backendsim config
 CONFIG_TORCHSIM_BACKEND_CONFIG = os.environ.get('TORCHSIM_CONFIG',
-                                        default=f'{CONFIG_TORCHSIM_DIR}/PyTorchSimBackend/configs/systolic_ws_128x128_c2_simple_noc_tpuv2.json')
+                                        default=f'{CONFIG_TORCHSIM_DIR}/PyTorchSimBackend/configs/systolic_ws_128x128_c1_simple_noc_tpuv2.json')
 CONFIG_BACKENDSIM_SPIKE_ONLY = int(os.environ.get("BACKENDSIM_SPIKE_ONLY", False))
 CONFIG_BACKENDSIM_EAGER_MODE = int(os.environ.get("BACKENDSIM_EAGER_MODE", default=False))
 CONFIG_BACKENDSIM_DRYRUN = int(os.environ.get('BACKENDSIM_DRYRUN', default=False))
