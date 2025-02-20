@@ -73,7 +73,7 @@ class DecoderBlock(torch.nn.Module):
         self.ffn2 = torch.nn.Linear(embed_dim*4, embed_dim)
 
     def forward(self, x):
-        result = self.multihead_attn(x, x, x)
+        result = self.multihead_attn(x, x, x).reshape(x.shape)
         result = self.layer_norm(result+x)
 
         ffn1_result = self.ffn1(result)
@@ -82,7 +82,7 @@ class DecoderBlock(torch.nn.Module):
         return self.layer_norm(ffn2_result + result)
 
 def test_DecoderBlock(device):
-    cpu_query = torch.randn(512, 768)
+    cpu_query = torch.randn(1, 512, 768)
     decoder_block = DecoderBlock(768, 12)
     cpu_res = decoder_block(cpu_query)
 
