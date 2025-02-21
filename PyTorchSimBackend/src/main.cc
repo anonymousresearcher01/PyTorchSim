@@ -89,7 +89,7 @@ void interactive_mode(Simulator* simulator) {
       cycle_type current_cycle = simulator->get_core_cycle();
       std::cerr << "Current cycle: " << current_cycle << std::endl;
     }else if (token == "quit") {
-      spdlog::info("Exiting BackendSim.");
+      std::cerr << "Quit" << std::endl;
       break;
     } else {
       spdlog::error("Error: unknown command {} Available commands are: launch, until, quit.", token);

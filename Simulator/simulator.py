@@ -250,7 +250,17 @@ class BackendSimulator():
     def stop(self):
         if self.process:
             self.process.terminate()
+            self.process.wait()
             self.process = None
+            print("[BackendSimulator] Simulator stopped.")
+
+    def wait(self):
+        if self.process:
+            print("[BackendSimulator] Waiting for simulation to complete...")
+            self.quit()
+            self.process.wait()
+            self.process = None
+            print("[BackendSimulator] Simulation completed.")
 
     def send_command(self, command):
         if self.process:
@@ -284,6 +294,11 @@ class BackendSimulator():
         command = f"until {until_cycle}"
         ret = self.send_command(command)
         return int(ret.split(" ")[-1])
+
+    def quit(self):
+        command = "quit"
+        ret = self.send_command(command)
+        return
 
     def create_attribute_file(self, attribute_path, inputs, **kwargs):
         address_info = {}

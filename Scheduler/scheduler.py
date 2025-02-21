@@ -516,7 +516,10 @@ class Scheduler:
         return result
 
     def is_finished(self):
-        return self.is_request_queue_empty() and self.execution_engine.is_idle()
+        if self.is_request_queue_empty() and self.execution_engine.is_idle():
+            self.backend_simulator.wait()
+            return True
+        return False
 
     def current_time(self):
         return self.cycle_to_msec(self.current_cycle)
