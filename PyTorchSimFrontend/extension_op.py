@@ -318,7 +318,9 @@ def flexagon_frontend2(a, b, out):
     in_file_bitmap_b = f"{dir_path}/{prefix}_bitmapSpMSpM_file_bitmapB_"+str(M)+"_"+str(N)+"_"+str(K)+".in"
     c_result = f'{dir_path}/{prefix}_result.out'
     dram_a_address, dram_b_address, dram_c_address = generate_inner_product_matrix(a, b, M, N, K, file_name, in_file_bitmap_a, in_file_bitmap_b)
-
+    dram_a_address = a.data_ptr()
+    dram_b_address = b.data_ptr()
+    dram_c_address = out.data_ptr()
     graph = {
         0: {
             "node_id": 0,

@@ -14,6 +14,7 @@ uint32_t Dram::get_channel_id(mem_fetch* access) {
 Dram::Dram(SimulationConfig config, cycle_type* core_cycle) {
   _core_cycles = core_cycle;
   _n_ch = config.dram_channels;
+  _n_bl = config.dram_nbl;
   _req_size = config.dram_req_size;
   _n_partitions = config.dram_num_partitions;
   _n_ch_per_partition = _n_ch / _n_partitions;
@@ -53,7 +54,7 @@ DramRamulator2::DramRamulator2(SimulationConfig config, cycle_type* core_cycle) 
   _mem.resize(_n_ch);
   for (int ch = 0; ch < _n_ch; ch++) {
     _mem[ch] = std::make_unique<Ramulator2>(
-      ch, _n_ch, config.dram_config_path, "Ramulator2", _config.dram_print_interval, 1);
+      ch, _n_ch, config.dram_config_path, "Ramulator2", _config.dram_print_interval, config.dram_nbl);
   }
   _tx_log2 = log2(_req_size);
   _tx_ch_log2 = log2(_n_ch_per_partition) + _tx_log2;

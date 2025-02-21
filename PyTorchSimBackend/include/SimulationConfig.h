@@ -32,6 +32,7 @@ struct SimulationConfig {
   uint32_t dram_channels;
   uint32_t dram_req_size;
   uint32_t dram_latency;
+  uint32_t dram_nbl = 1;
   uint32_t dram_print_interval;
   std::string dram_config_path;
 
@@ -64,6 +65,6 @@ struct SimulationConfig {
   }
 
   float max_dram_bandwidth() {
-    return dram_freq * dram_channels * dram_req_size / 1000; // GB/s
+    return dram_freq * dram_channels * dram_req_size / dram_nbl / 1000; // GB/s
   }
 };

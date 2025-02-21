@@ -32,6 +32,7 @@ class Dram {
   SimulationConfig _config;
   CacheConfig _m_cache_config;
   uint32_t _n_ch;
+  uint32_t _n_bl;
   uint32_t _n_partitions;
   uint32_t _n_ch_per_partition;
   uint32_t _req_size;
