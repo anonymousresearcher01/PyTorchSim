@@ -32,8 +32,8 @@ class Simulator {
   int get_partition_id(int core_id) { return _config.partiton_map[core_id]; }
   std::unique_ptr<Scheduler>& get_partition_scheduler(int core_id) { return _partition_scheduler.at(get_partition_id(core_id)); }
   void print_core_stat();
- private:
   void cycle();
+ private:
   void core_cycle();
   void dram_cycle();
   void icnt_cycle();

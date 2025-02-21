@@ -97,6 +97,7 @@ void interactive_mode(Simulator* simulator) {
     if (isDryRun)
       std::cout << "[" << simulator->get_core_cycle() << "] BackendSim> ";
   }
+  simulator->cycle();
   if (simulator->get_core_cycle()==0)
     simulator->until(0);
   simulator->print_core_stat();
