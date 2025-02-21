@@ -35,7 +35,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         # Init scheduler
         scheduler = Scheduler(num_request_queue=2, engine_select=Scheduler.FIFO_ENGINE,
-                            backend_config=f"{CONFIG_TORCHSIM_DIR}/PyTorchSimBackend/configs/heterogeneous_c2_simple_noc.json")
+                            backend_config=f"{CONFIG_TORCHSIM_DIR}/PyTorchSimBackend/configs/stonne_big_c1_simple_noc.json")
 
         target_model1 = model1(input_size, hidden_size, output_size, w1_sparsity, w2_sparsity, scheduler.execution_engine.module.custom_device()).eval()
         target_model2 = model2(768, 12).eval()
@@ -51,18 +51,13 @@ if __name__ == "__main__":
         model_input2 = torch.randn(1, 512, 768)
 
         # Init request
-        new_request1 = Request("mlp", [model_input1], [], request_queue_idx=1)
-        new_request2 = Request("bert", [model_input2], [], request_queue_idx=0)
+        new_request1 = Request("mlp", [model_input1], [], request_queue_idx=0)
+        #new_request2 = Request("mlp", [model_input2], [], request_queue_idx=0)
 
 
         # Add request to scheduler
         scheduler.add_request(new_request1, request_time=0)
-        scheduler.add_request(new_request1, request_time=0)
-        scheduler.add_request(new_request1, request_time=0)
-        scheduler.add_request(new_request1, request_time=0)
-        scheduler.add_request(new_request1, request_time=0)
-        scheduler.add_request(new_request1, request_time=0)
-        scheduler.add_request(new_request2, request_time=0)
+        #scheduler.add_request(new_request2, request_time=0)
 
         # Run scheduler
         while not scheduler.is_finished():

@@ -210,7 +210,7 @@ def flexagon_frontend(a, b, out):
             "children": [2],
             "loop_index": "loop_arg000",
             "loop_start": 0,
-            "loop_end": 1,
+            "loop_end": 4,  # FIXME. this is a trick that generate multiple tile.
             "loop_step": 1,
             "loop_type": "outer_loop"
         },
@@ -337,7 +337,7 @@ def flexagon_frontend2(a, b, out):
             "children": [2],
             "loop_index": "loop_arg000",
             "loop_start": 0,
-            "loop_end": 1,
+            "loop_end": 64,
             "loop_step": 1,
             "loop_type": "outer_loop"
         },

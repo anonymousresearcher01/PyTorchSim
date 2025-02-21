@@ -60,7 +60,7 @@ void SparseCore::issue(std::shared_ptr<Tile> tile) {
   }
   spdlog::info("[StonneCore {}][{}] issued new tile", _id, selected_core_idx);
   SST_STONNE::StonneOpDesc *opDesc = static_cast<SST_STONNE::StonneOpDesc*>(tile->get_custom_data());
-  stonneCores.at(selected_core_idx)->setup(*opDesc);
+  stonneCores.at(selected_core_idx)->setup(*opDesc, 0x1000000 * selected_core_idx); // FIXME. To avoid same address
   stonneCores.at(selected_core_idx)->init(1);
   percore_tiles.at(selected_core_idx).push_back(tile);
   coreBusy.at(selected_core_idx) = true;

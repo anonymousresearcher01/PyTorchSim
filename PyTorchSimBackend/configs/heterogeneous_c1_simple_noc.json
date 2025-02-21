@@ -1,7 +1,7 @@
 {
-  "core_type" : ["ws_mesh", "stonne"],
+  "core_type" : ["stonne", "ws_mesh"],
   "num_cores" : 2,
-  "stonne_config_path" : "/root/workspace/PyTorchSim/PyTorchSimBackend/extern/stonneCore/tests/sparseflex_op_128mses_128_bw.cfg",
+  "stonne_config_path" : "/workspace/PyTorchSim/PyTorchSimBackend/extern/stonneCore/tests/sparseflex_op_128mses_128_bw.cfg",
   "core_freq" : 940,
   "sram_size" : 65536,
   "core_print_interval" : 10000,
