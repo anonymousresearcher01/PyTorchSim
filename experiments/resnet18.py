@@ -7,8 +7,8 @@ import subprocess
 import datetime
 
 def run_resnet(device, batch):
-    from torchvision.models import resnet
-    model = resnet._resnet(resnet.BasicBlock, [1, 1, 0, 0], weights=None, progress=False).eval()
+    from torchvision.models import resnet18
+    model = resnet18().eval()
     model.to(device, memory_format=torch.channels_last)
     input = torch.randn(batch, 3, 224, 224).to(device=device)
     x1 = input.to(device=device, memory_format=torch.channels_last)
