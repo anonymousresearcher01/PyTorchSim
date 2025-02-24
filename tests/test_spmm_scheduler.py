@@ -16,6 +16,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_size", type=int, default=128, help="Output layer size")
     parser.add_argument("--w1_sparsity", type=float, default=0.5, help="Sparsity of first layer weights (0 to 1)")
     parser.add_argument("--w2_sparsity", type=float, default=0.5, help="Sparsity of second layer weights (0 to 1)")
+    parser.add_argument("--config", type=str)
     args = parser.parse_args()
 
     batch_size = args.batch_size
@@ -24,6 +25,7 @@ if __name__ == "__main__":
     output_size = args.output_size
     w1_sparsity = args.w1_sparsity
     w2_sparsity = args.w2_sparsity
+    config_path = f"{CONFIG_TORCHSIM_DIR}/PyTorchSimBackend/configs/{args.config}"
 
     print("batch_size: ", batch_size)
     print("input_size: ", input_size)
@@ -35,7 +37,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         # Init scheduler
         scheduler = Scheduler(num_request_queue=2, engine_select=Scheduler.FIFO_ENGINE,
-                            backend_config=f"{CONFIG_TORCHSIM_DIR}/PyTorchSimBackend/configs/stonne_big_c1_simple_noc.json")
+                            backend_config=config_path)
 
         target_model1 = model1(input_size, hidden_size, output_size, w1_sparsity, w2_sparsity, scheduler.execution_engine.module.custom_device()).eval()
         target_model2 = model2(768, 12).eval()
@@ -52,7 +54,7 @@ if __name__ == "__main__":
 
         # Init request
         new_request1 = Request("mlp", [model_input1], [], request_queue_idx=0)
-        #new_request2 = Request("mlp", [model_input2], [], request_queue_idx=0)
+        #new_request2 = Request("bert", [model_input2], [], request_queue_idx=1)
 
 
         # Add request to scheduler

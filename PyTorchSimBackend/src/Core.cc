@@ -263,12 +263,22 @@ void Core::cycle() {
               inst->finish_cycle = target_pipeline.back()->finish_cycle + inst->get_compute_cycle() - overlapped_cycle;
               inst->bubble_cycle = bubble_cycle;
             }
-            spdlog::trace("[Core {}][{}] {}-{} ISSUED, finsh at {}", _id, _core_cycle,
-                          opcode_to_string(inst->get_opcode()), inst->get_compute_type(), inst->finish_cycle);
-            target_pipeline.push(inst);
-            issued = true;
-            if (inst->get_compute_type()) {
-              _stat_gemm_inst++;
+            if (inst->get_compute_cycle() == 0) {
+              spdlog::trace("[Core {}][{}] {} SKIPPED", _id, _core_cycle,
+                            opcode_to_string(inst->get_opcode()));
+              inst->finish_instruction();
+              static_cast<Tile*>(inst->get_owner())->inc_finished_inst();
+              _stat_tot_sa_inst.at(static_cast<size_t>(inst->get_opcode()))++;
+              auto it = instructions.begin() + j; // Position 2 is the third element
+              instructions.erase(it);
+            } else {
+              spdlog::trace("[Core {}][{}] {}-{} ISSUED, finsh at {}", _id, _core_cycle,
+                            opcode_to_string(inst->get_opcode()), inst->get_compute_type(), inst->finish_cycle);
+              target_pipeline.push(inst);
+              issued = true;
+              if (inst->get_compute_type()) {
+                _stat_gemm_inst++;
+              }
             }
           }
           break;

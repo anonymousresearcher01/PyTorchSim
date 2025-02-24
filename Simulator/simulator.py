@@ -311,12 +311,12 @@ class BackendSimulator():
             address_info[f"arg{idx}"] = tensor.data_ptr()
         json_content["address_info"] = address_info
 
-        if "tile_size" in kwargs and len(kwargs['tile_size'])==3 and kwargs['tile_size'][0] != 1:
+        if extension_config.CONFIG_BLOCK_SPARSE and "loop_size" in kwargs and len(kwargs['loop_size'])==3 and kwargs['loop_size'][0] != 1:
             # GEMM
             import copy
             zero_skip = {}
             input, weight = inputs[:2]
-            M, N, K = kwargs['tile_size']
+            M, N, K = kwargs['loop_size']
 
             padded_input = copy.deepcopy(input.cpu())
             padded_weight = copy.deepcopy(weight.cpu())

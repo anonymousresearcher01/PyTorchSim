@@ -83,7 +83,6 @@ def test_mlp_inf(device, batch_size=64, input_size=64, hidden_size=32, output_si
     test_result("MLP Forward", y, cpu_y)
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser(description="Count zeros in tensors from command-line arguments.")
     parser.add_argument(
         "--sparsity",
@@ -102,4 +101,4 @@ if __name__ == "__main__":
     device = module.custom_device()
 
     #test_dec_inf(device, sparsity=args.sparsity, block=args.block)
-    test_mlp_inf(device, batch_size=64, input_size=784, hidden_size=512, output_size=256, sparsity=args.sparsity, block=args.block)
+    test_mlp_inf(device, batch_size=32, input_size=784, hidden_size=512, output_size=256, sparsity=args.sparsity, block=args.block)

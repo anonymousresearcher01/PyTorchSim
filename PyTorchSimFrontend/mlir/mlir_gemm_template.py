@@ -8,6 +8,7 @@ from torch._inductor.ir import IRNode
 from torch._inductor.ir import ReinterpretView
 from torch._inductor.codecache import write_atomic
 import PyTorchSimFrontend.extension_codecache as extension_codecache
+from PyTorchSimFrontend import extension_config
 
 GEMM_TEMPLATE = r"""
 {% if X_transposed %}#map0 = affine_map<(d0, d1) -> (d1 * {{ M }} + d0)>{% else %}#map0 = affine_map<(d0, d1) -> (d0 * {{ K }} + d1)>{% endif %}
@@ -86,7 +87,7 @@ class MLIRGemmTemplate(MLIRTemplate):
                 if node.layout.stride[-2] == node.data.layout.stride[-1] and node.layout.stride[-1] == node.data.layout.stride[-2]:
                     return True
                 else:
-                  raise NotImplementedError("If the stride is not equal to the original stride, it should have been transposed.")
+                    raise NotImplementedError("If the stride is not equal to the original stride, it should have been transposed.")
         return False
 
     def render(self,
@@ -110,6 +111,9 @@ class MLIRGemmTemplate(MLIRTemplate):
         else:
             TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K)
             template = GEMM_TEMPLATE
+        TILE_M = min(extension_config.CONFIG_FORCE_TILE_M, TILE_M)
+        TILE_N = min(extension_config.CONFIG_FORCE_TILE_N, TILE_M)
+        TILE_K = min(extension_config.CONFIG_FORCE_TILE_K, TILE_M)
         TOG_latency = M if TILE_M > M else TILE_M
         kernel.loop_size =[TOG_latency, TILE_N, TILE_K]
         SUB_TILE_M = TILE_M if TILE_M < kernel.vector_lane else kernel.vector_lane

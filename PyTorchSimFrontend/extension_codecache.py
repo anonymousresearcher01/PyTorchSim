@@ -302,6 +302,10 @@ class CustomAsyncCompile(AsyncCompile):
                                           tile_size=tile_size, spad_info=spad_info, origins=origins, **kwargs)
             return key
         future = self.submit(task)
+        if "loop_size" in kwargs:
+            loop_size = kwargs["loop_size"]
+        else:
+            loop_size = []
         def dummy_simulator(*args, **kwargs):
             # Wait for compilation
             key = future.result()
@@ -324,7 +328,8 @@ class CustomAsyncCompile(AsyncCompile):
             attribute_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
             backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
             backsim = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
-            attribute_path = backsim.create_attribute_file(attribute_path, args, tile_size=tile_size)
+            backsim.vectorlane_size = vectorlane_size
+            attribute_path = backsim.create_attribute_file(attribute_path, args, loop_size=loop_size)
             result_path = backsim.simulation(onnx_path, attribute_path)
             result = BackendSimulator.get_result_from_file(result_path)
             return result
