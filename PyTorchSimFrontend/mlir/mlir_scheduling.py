@@ -25,7 +25,7 @@ class MLIRScheduling(BaseScheduling):
         self._ready_to_flush = status
 
     def can_fuse_vertical(self, node1, node2):
-        return self.can_fuse_horizontal(node1, node2) and not node1.is_reduction()
+        return self.can_fuse_horizontal(node1, node2)
 
     def can_fuse_horizontal(self, node1, node2):
         _, (vars1, reduce1) = node1.group
@@ -35,36 +35,48 @@ class MLIRScheduling(BaseScheduling):
         if node1.is_reduction() or node2.is_reduction():
             return False
 
-        # Convolution is currently not supported
-        if not isinstance(node1, FusedSchedulerNode) and node1.node.origin_node is not None and hasattr(node1.node.origin_node.target, "_name") and node1.node.origin_node.target._name == 'aten::convolution':
+        # Can't fuse two template node
+        nr_template = 0
+        for node in node1.get_nodes() + node2.get_nodes():
+            if node.is_template():
+                nr_template += 1
+
+        if nr_template > 1:
             return False
 
-        if not isinstance(node2, FusedSchedulerNode) and node2.node.origin_node is not None and hasattr(node2.node.origin_node.target, "_name") and node2.node.origin_node.target._name == 'aten::convolution':
-            return False
-
-        if not isinstance(node1, FusedSchedulerNode) and not isinstance(node2, FusedSchedulerNode):
+        # Check template node fusion
+        if node1.is_template() or node2.is_template():
             # Different layout is not supported
-            if node1.node.layout.dtype != node2.node.layout.dtype:
+            if node1.get_nodes()[0].node.layout.dtype != node2.get_nodes()[0].node.layout.dtype:
                 return False
 
-            # Different size is not supported for non-template node
-            if  not node1.is_template() and (node1._sizes[0] != node2._sizes[0]):
+            # Convolution is currently not supported
+            if node1.is_template() and node1.get_nodes()[0].node.origin_node is not None and hasattr(node1.get_nodes()[0].node.origin_node.target, "_name") and node1.get_nodes()[0].node.origin_node.target._name == 'aten::convolution':
                 return False
 
+            if node2.is_template() and node2.get_nodes()[0].node.origin_node is not None and hasattr(node2.get_nodes()[0].node.origin_node.target, "_name") and node2.get_nodes()[0].node.origin_node.target._name == 'aten::convolution':
+                return False
+
+            v1_total = math.prod(vars1) if len(vars1) else 0
+            v2_total = math.prod(vars2) if len(vars2) else 0
+            if v1_total != v2_total:
+                return False
+
+            has_depedency = False
+            template_node = node1 if node1.is_template() else node2
+            act_node = node2 if node1.is_template() else node1
+            for write_buf in template_node.read_writes.writes:
+                has_depedency = has_depedency or (write_buf in act_node.read_writes.reads)
+            return has_depedency
+        return False
+        # TODO. Support elementwise fusion
+        # Check elementwise fusion
         if vars1 == vars2 and reduce1 == reduce2:
+            vertical_buf = (node1.read_writes.writes & node2.read_writes.reads) | (node2.read_writes.writes & node1.read_writes.reads)
+            for vbuf in vertical_buf:
+                # FIXME. Assume that all the users are fusioned.
+                V.graph.removed_buffers.add(vbuf.name)
             return True
-        if reduce1 == () and vars1 == vars2 + reduce2:
-            return True
-
-        #TODO: Temporary solution determining the fusion condition similar to CPP/OpenMP
-        v1_total = math.prod(vars1) if len(vars1) else 0
-        v2_total = math.prod(vars2) if len(vars2) else 0
-        r1_total = math.prod(reduce1) if len(reduce1) else 0
-        r2_total = math.prod(reduce2) if len(reduce2) else 0
-        if reduce1 == () \
-            and v1_total == (v2_total + r2_total):
-            return True
-
         return False
 
     def group_fn(self, sizes):

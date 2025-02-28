@@ -408,6 +408,14 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
                 tile_size[-i] = target_range
                 if remains:
                     tile_size[-i] += vlane_stride - remains
+        # Handle scalar case
+        if len(tile_size)==1 and tile_size[0] == 1:
+            vlane_stride = 1
+            tile_size[0] = 1
+        # Adjust tile size
+        used_vlane = min((tile_size[len(vars) - 1] + vlane_stride - 1) // vlane_stride, self.vector_lane)
+        padded_size = used_vlane * vlane_stride
+        tile_size[len(vars) - 1] = ((tile_size[len(vars) - 1] + padded_size - 1) // padded_size) * padded_size
 
         # Select tile info.
         # Note: Kernel Group have to share same tile desc for fusion
@@ -563,7 +571,11 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
                 store_cache = self.cse.store_cache
                 if name in store_cache:
                     return store_cache[name]
-                return self.load(name, index)
+                key = name+str(index)
+                if key not in self.cse.cache:
+                    result = self.load(name, index)
+                    self.cse.cache[key] = result
+                return self.cse.cache[key]
 
             @staticmethod
             def store(name, index, value, mode=None):
