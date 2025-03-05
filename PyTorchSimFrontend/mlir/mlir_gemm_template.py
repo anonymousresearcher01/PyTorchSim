@@ -115,8 +115,8 @@ class MLIRGemmTemplate(MLIRTemplate):
             TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K)
             template = GEMM_TEMPLATE
         TILE_M = min(extension_config.CONFIG_FORCE_TILE_M, TILE_M)
-        TILE_N = min(extension_config.CONFIG_FORCE_TILE_N, TILE_M)
-        TILE_K = min(extension_config.CONFIG_FORCE_TILE_K, TILE_M)
+        TILE_N = min(extension_config.CONFIG_FORCE_TILE_N, TILE_N)
+        TILE_K = min(extension_config.CONFIG_FORCE_TILE_K, TILE_K)
         TOG_latency = M if TILE_M > M else TILE_M
         kernel.loop_size =[TOG_latency, TILE_N, TILE_K]
         SUB_TILE_M = TILE_M if TILE_M < kernel.vector_lane else kernel.vector_lane

@@ -120,7 +120,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         max_spad_size = spad_size // 2 # double buffer
         m_pad_factor = self.vector_lane if M > self.vector_lane else 8
         n_pad_factor = self.vector_lane if N > self.vector_lane else 8
-        k_pad_factor = self.vector_lane if K > self.vector_lane else 1
+        k_pad_factor = self.vector_lane if K > self.vector_lane else 8
         K = max(K, 8)
         M_padded = ((M + m_pad_factor - 1) // m_pad_factor) * m_pad_factor
         N_padded = ((N + n_pad_factor - 1) // n_pad_factor) * n_pad_factor
