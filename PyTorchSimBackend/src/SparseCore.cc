@@ -11,6 +11,7 @@ SparseCore::SparseCore(uint32_t id, SimulationConfig config) : Core(id, config) 
   traceStoreTraffic.resize(nr_cores);
   percore_tiles.resize(nr_cores);
   stonneCores.resize(nr_cores);
+  traceMode.resize(nr_cores);
   for (int i=0; i<nr_cores; i++) {
     SST_STONNE::sstStonne* core = new SST_STONNE::sstStonne(config.stonne_config_path);
     stonneCores.at(i) = core;
@@ -66,16 +67,18 @@ void SparseCore::issue(std::shared_ptr<Tile> tile) {
     spdlog::error("[StonneCore {}] Faield to issue tile", _id);
     exit(1);
   }
-  //delete stonneCores.at(selected_core_idx);
-  //SST_STONNE::sstStonne* core = new SST_STONNE::sstStonne(_config.stonne_config_path);
-  //stonneCores.at(selected_core_idx) = core;
   stonneCores.at(selected_core_idx)->init(1);
   traceNodeList.at(selected_core_idx).clear();
 
   spdlog::info("[StonneCore {}][{}] issued new tile", _id, selected_core_idx);
   SST_STONNE::StonneOpDesc *opDesc = static_cast<SST_STONNE::StonneOpDesc*>(tile->get_custom_data());
-  stonneCores.at(selected_core_idx)->setup(*opDesc, 0x1000000 * selected_core_idx); // FIXME. To avoid same address
-  stonneCores.at(selected_core_idx)->init(1);
+  bool is_trace_mode = true;
+  if (opDesc) {
+    is_trace_mode = false;
+    stonneCores.at(selected_core_idx)->setup(*opDesc, 0x1000000 * selected_core_idx); // FIXME. To avoid same address
+    stonneCores.at(selected_core_idx)->init(1);
+  }
+  setTraceMode(selected_core_idx, is_trace_mode);
   percore_tiles.at(selected_core_idx).push_back(tile);
   coreBusy.at(selected_core_idx) = true;
 };
@@ -88,37 +91,43 @@ bool SparseCore::can_issue(const std::shared_ptr<Tile>& op) {
   return idle_exist && op->is_stonne_tile();
 }
 
-void SparseCore::cycle() {
-  _core_cycle++;
-  uint32_t stonne_core_id = 0;
-  for (auto& stonneCore : stonneCores) {
-    stonneCore->cycle();
-    int new_status = stonneCore->getMCFSMStats();
-    int compute_cycle = stonneCore->getMSStats().n_multiplications;
-    if (traceCoreStatus.at(stonne_core_id) != new_status) {
-      spdlog::info("Stonne Core [{}][{}] status transition {} -> {}, Load/Store: {}/{}, compute_cycle: {}",
-        _id, _core_cycle, traceCoreStatus.at(stonne_core_id), new_status,
-        traceLoadTraffic.at(stonne_core_id).size(), traceStoreTraffic.at(stonne_core_id).size(), (compute_cycle - traceCoreCycle.at(stonne_core_id))/num_ms);
-      if (traceLoadTraffic.at(stonne_core_id).size()) {
-        TraceNode load_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "load", TraceNode::StonneTraceLoad);
-        load_node.setAddress(traceLoadTraffic.at(stonne_core_id));
-        traceNodeList.at(stonne_core_id).push_back(load_node);
-      }
-      if ((compute_cycle - traceCoreCycle.at(stonne_core_id))/num_ms) {
-        TraceNode compute_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "compute", TraceNode::StonneTraceCompute, (compute_cycle - traceCoreCycle.at(stonne_core_id))/num_ms);
-        traceNodeList.at(stonne_core_id).push_back(compute_node);
-      }
-      if (traceStoreTraffic.at(stonne_core_id).size()) {
-        TraceNode store_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "store", TraceNode::StonneTraceStore);
-        store_node.setAddress(traceStoreTraffic.at(stonne_core_id));
-        traceNodeList.at(stonne_core_id).push_back(store_node);
-      }
-
-      traceCoreStatus.at(stonne_core_id) = new_status;
-      traceCoreCycle.at(stonne_core_id) = compute_cycle;
-      traceLoadTraffic.at(stonne_core_id).clear();
-      traceStoreTraffic.at(stonne_core_id).clear();
+void SparseCore::checkStatus(uint32_t subcore_id) {
+  auto& stonneCore = stonneCores.at(subcore_id);
+  int new_status = stonneCore->getMCFSMStats();
+  int compute_cycle = stonneCore->getMSStats().n_multiplications;
+  if (traceCoreStatus.at(subcore_id) != new_status) {
+    spdlog::trace("Stonne Core [{}][{}] status transition {} -> {}, Load/Store: {}/{}, compute_cycle: {}",
+      _id, _core_cycle, traceCoreStatus.at(subcore_id), new_status,
+      traceLoadTraffic.at(subcore_id).size(), traceStoreTraffic.at(subcore_id).size(), (compute_cycle - traceCoreCycle.at(subcore_id))/num_ms);
+    if (traceLoadTraffic.at(subcore_id).size()) {
+      TraceNode load_node = TraceNode(traceNodeList.at(subcore_id).size()+2, "load", TraceNode::StonneTraceLoad);
+      load_node.setAddress(traceLoadTraffic.at(subcore_id));
+      traceNodeList.at(subcore_id).push_back(load_node);
     }
+    if ((compute_cycle - traceCoreCycle.at(subcore_id))/num_ms) {
+      TraceNode compute_node = TraceNode(traceNodeList.at(subcore_id).size()+2, "compute", TraceNode::StonneTraceCompute, (compute_cycle - traceCoreCycle.at(subcore_id))/num_ms);
+      traceNodeList.at(subcore_id).push_back(compute_node);
+    }
+    if (traceStoreTraffic.at(subcore_id).size()) {
+      TraceNode store_node = TraceNode(traceNodeList.at(subcore_id).size()+2, "store", TraceNode::StonneTraceStore);
+      store_node.setAddress(traceStoreTraffic.at(subcore_id));
+      traceNodeList.at(subcore_id).push_back(store_node);
+    }
+
+    traceCoreStatus.at(subcore_id) = new_status;
+    traceCoreCycle.at(subcore_id) = compute_cycle;
+    traceLoadTraffic.at(subcore_id).clear();
+    traceStoreTraffic.at(subcore_id).clear();
+  }
+}
+
+void SparseCore::subCoreCycle(uint32_t subcore_id) {
+  if (!traceMode.at(subcore_id)) {
+    auto& stonneCore = stonneCores.at(subcore_id);
+    stonneCore->cycle();
+
+    /* Check FSM status transition */
+    checkStatus(subcore_id);
 
     /* Send Memory Request */
     while (SimpleMem::Request* req = stonneCore->popRequest()) {
@@ -130,53 +139,163 @@ void SparseCore::cycle() {
         case SimpleMem::Request::Read:
           acc_type = mem_access_type::GLOBAL_ACC_R;
           type = mf_type::READ_REQUEST;
-          traceLoadTraffic.at(stonne_core_id).insert(target_addr);
+          traceLoadTraffic.at(subcore_id).insert(target_addr);
           break;
         case SimpleMem::Request::Write:
           acc_type = mem_access_type::GLOBAL_ACC_W;
           type = mf_type::WRITE_REQUEST;
-          traceStoreTraffic.at(stonne_core_id).insert(target_addr);
+          traceStoreTraffic.at(subcore_id).insert(target_addr);
           break;
         default:
           spdlog::error("[SparseCore] Invalid request type from core");
           return;
       }
       req->request_time = _core_cycle;
-      req->stonneId = stonne_core_id;
+      req->stonneId = subcore_id;
       std::tuple<uint64_t, mem_access_type, mf_type> key = std::make_tuple(target_addr, acc_type, type);
-      if (request_merge_table.find(key) == request_merge_table.end())
-        request_merge_table[key] = new std::vector<SimpleMem::Request*> ();
-      request_merge_table[key]->push_back(req);
+      registerMemfetch(key, [this, req, acc_type, type]() {
+        spdlog::trace("[SparseCore][{}] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
+              _core_cycle, _core_cycle - req->request_time, req->getAddress(), int(req->getcmd()), _config.dram_req_size);
+        req->setReply();
+        stonneCores.at(req->stonneId)->pushResponse(req);
+      });
     }
 
-    if (coreBusy.at(stonne_core_id) && stonneCore->isFinished()) {
+    /* Finish stonne core */
+    if (coreBusy.at(subcore_id) && stonneCore->isFinished()) {
       stonneCore->finish();
-      std::shared_ptr<Tile> target_tile = percore_tiles.at(stonne_core_id).front();
+      std::shared_ptr<Tile> target_tile = percore_tiles.at(subcore_id).front();
       SST_STONNE::StonneOpDesc *opDesc = static_cast<SST_STONNE::StonneOpDesc*>(target_tile->get_custom_data());
       if (opDesc->trace_path != "")
-        dumpTrace(stonne_core_id, opDesc->trace_path);
+        dumpTrace(subcore_id, opDesc->trace_path);
 
       target_tile->set_status(Tile::Status::FINISH);
       _finished_tiles.push(target_tile);
-      percore_tiles.at(stonne_core_id).erase(percore_tiles.at(stonne_core_id).begin());
-      coreBusy.at(stonne_core_id) = false;
+      percore_tiles.at(subcore_id).erase(percore_tiles.at(subcore_id).begin());
+      coreBusy.at(subcore_id) = false;
     }
-    stonne_core_id++;
-  }
+  } else {
+    auto& instructions = percore_tiles.at(subcore_id).front()->get_instructions();
+    /* Finish stonne core */
+    if (coreBusy.at(subcore_id) && instructions.empty()) {
+      std::shared_ptr<Tile> target_tile = percore_tiles.at(subcore_id).front();
+      target_tile->set_status(Tile::Status::FINISH);
+      _finished_tiles.push(target_tile);
+      percore_tiles.at(subcore_id).erase(percore_tiles.at(subcore_id).begin());
+      coreBusy.at(subcore_id) = false;
+      return;
+    }
 
+    /* Check finished computation */
+    auto& target_pipeline = get_compute_pipeline(0);
+    if (!target_pipeline.empty() && target_pipeline.front()->finish_cycle <= _core_cycle) {
+      finish_instruction(target_pipeline.front());
+      target_pipeline.pop();
+    }
+
+    /* Check finished dma operation */
+    for (int i=0; i<_dma_waiting_queue.size(); i++){
+      std::shared_ptr<Instruction>& instruction = _dma_waiting_queue.at(i);
+      /* Pass not finished instruction */
+      if (instruction->get_waiting_request())
+        continue;
+
+      /* Finish DMA read instruction */
+      if (instruction->is_dma_read())
+        finish_instruction(instruction);
+
+      /* Erase the instruction in DMA waiting queue */
+      _dma_waiting_queue.erase(_dma_waiting_queue.begin() + i);
+      i--;
+    }
+
+    /* Peek instruction*/
+    auto& inst = instructions.front();
+    if (!inst->is_ready())
+      return;
+
+    bool issued = false;
+    switch (inst->get_opcode()) {
+      case Opcode::MOVIN:
+        {
+          auto acc_type = mem_access_type::GLOBAL_ACC_R;
+          auto type = mf_type::READ_REQUEST;
+          spdlog::info("[StonneCore {}][{}][{}] {} ISSUED", _id, subcore_id, _core_cycle,
+                        opcode_to_string(inst->get_opcode()));
+          for (auto addr : inst->get_trace_address()) {
+            inst->inc_waiting_request();
+            std::tuple<uint64_t, mem_access_type, mf_type> key = std::make_tuple(addr, acc_type, type);
+            uint64_t current_time = _core_cycle;
+            registerMemfetch(key, [this, inst, addr, current_time, type]() {
+              spdlog::trace("[SparseCore][{}] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
+                this->_core_cycle, this->_core_cycle - current_time, addr, int(type), _config.dram_req_size);
+              inst->dec_waiting_request();
+            });
+          }
+          issued = true;
+          _dma_waiting_queue.push_back(std::move(inst));
+        }
+        break;
+      case Opcode::MOVOUT:
+        {
+          auto acc_type = mem_access_type::GLOBAL_ACC_W;
+          auto type = mf_type::WRITE_REQUEST;
+          spdlog::info("[StonneCore {}][{}][{}] {} ISSUED", _id, subcore_id, _core_cycle,
+                        opcode_to_string(inst->get_opcode()));
+          for (auto addr : inst->get_trace_address()) {
+            inst->inc_waiting_request();
+            std::tuple<uint64_t, mem_access_type, mf_type> key = std::make_tuple(addr, acc_type, type);
+            uint64_t current_time = _core_cycle;
+            registerMemfetch(key, [this, inst, addr, current_time, type]() {
+              spdlog::trace("[SparseCore][{}] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
+                this->_core_cycle, this->_core_cycle - current_time, addr, int(type), _config.dram_req_size);
+              inst->dec_waiting_request();
+            });
+          }
+          issued = true;
+          finish_instruction(inst);
+          _dma_waiting_queue.push_back(std::move(inst));
+        }
+        break;
+      case Opcode::COMP:
+        {
+          auto& target_pipeline = get_compute_pipeline(0);
+          if (target_pipeline.empty())
+            inst->finish_cycle = _core_cycle + inst->get_compute_cycle();
+          else
+            inst->finish_cycle = target_pipeline.back()->finish_cycle + inst->get_compute_cycle();
+          spdlog::info("[Core {}][{}][{}] {} ISSUED, finsh at {}", _id, subcore_id, _core_cycle,
+                          opcode_to_string(inst->get_opcode()), inst->finish_cycle);
+          target_pipeline.push(inst);
+          issued = true;
+        }
+        break;
+      default:
+        spdlog::error("Undefined instruction opcode type");
+        exit(EXIT_FAILURE);
+    }
+
+    if (issued) {
+      instructions.erase(instructions.begin());
+    }
+  }
+}
+
+void SparseCore::cycle() {
+  _core_cycle++;
+  /* Handle core cycle*/
+  for (uint32_t subcore_id=0; subcore_id<stonneCores.size(); subcore_id++)
+    subCoreCycle(subcore_id);
+
+  /* Handle memory request/response */
   int nr_request = 0;
   while (!request_merge_table.empty() && nr_request <= r_port_nr) {
     for (auto& req_pair : request_merge_table) {
-      uint64_t address;
-      mem_access_type acc_type;
-      mf_type type;
-      std::tie(address, acc_type, type) = req_pair.first;
-      mem_fetch* req_wrapper = new mem_fetch(address, acc_type, type, _config.dram_req_size, -1, req_pair.second);
-      _request_queue.push(req_wrapper);
+      _request_queue.push(req_pair.second);
       request_merge_table.erase(req_pair.first);
 
       spdlog::debug("[SparseCore][{}][{}] Address: {:#x}, Access Type: {}, Request Type: {}, DRAM Req Size: {}, nr_request: {}", \
-              _core_cycle, stonne_core_id, req_wrapper->get_addr(), int(req_wrapper->get_access_type()), int(req_wrapper->get_type()), _config.dram_req_size, nr_request);
+              _core_cycle, _id, req_pair.second->get_addr(), int(req_pair.second->get_access_type()), int(req_pair.second->get_type()), _config.dram_req_size, nr_request);
       nr_request++;
       break;
     }
@@ -186,27 +305,22 @@ void SparseCore::cycle() {
   nr_request = 0;
   while (!_response_queue.empty()) {
     mem_fetch* resp_wrapper = _response_queue.front();
-    std::vector<SimpleMem::Request*>* resps = static_cast<std::vector<SimpleMem::Request*>*>(resp_wrapper->get_custom_data());
-
-    SimpleMem::Request* resp = resps->front();
-
-    spdlog::debug("[SparseCore][{}] Round Trip Cycle: {}, Address: {:#x}, Access Type: {}, Request Type: {}, DRAM Req Size: {}, nr_request: {}", \
-            _core_cycle, _core_cycle - resp->request_time, resp->getAddress(), int(resp_wrapper->get_access_type()), int(resp_wrapper->get_type()), _config.dram_req_size, nr_request);
-
-    resp->setReply();
-    stonneCores.at(resp->stonneId)->pushResponse(resp);
-    resps->erase(resps->begin());
-    if (resps->empty()) {
-      delete resps;
+    auto* callbacks = static_cast<std::vector<std::function<void()>>*>(resp_wrapper->get_custom_data());
+    if (callbacks->empty()) {
+      delete callbacks;
       delete resp_wrapper;
       _response_queue.pop();
+    } else {
+      (*callbacks).at(0)();
+      callbacks->erase(callbacks->begin());
     }
     if (nr_request++ > w_port_nr)
       break;
   }
-  if(_config.core_print_interval && _core_cycle % _config.core_print_interval == 0) {
+
+  /* Check print stat */
+  if(_config.core_print_interval && _core_cycle % _config.core_print_interval == 0)
     print_current_stats();
-  }
 }
 
 bool SparseCore::has_memory_request() {
@@ -248,6 +362,36 @@ std::shared_ptr<Tile> SparseCore::pop_finished_tile() {
     _finished_tiles.pop();
   }
   return result;
+}
+
+void SparseCore::finish_instruction(std::shared_ptr<Instruction>& inst) {
+  if (inst->finished) {
+    spdlog::error("[Core {}][{}] {} FINISHED, inst already finished!!", _id, _core_cycle,
+                  opcode_to_string(inst->get_opcode()));
+    exit(EXIT_FAILURE);
+  }
+  inst->finish_instruction();
+  static_cast<Tile*>(inst->get_owner())->inc_finished_inst();
+  if (inst->get_opcode() == Opcode::COMP) {
+    spdlog::trace("[StonneCore {}][{}] {} FINISHED",
+      _id, _core_cycle, opcode_to_string(inst->get_opcode()));
+  } else if (inst->get_opcode() == Opcode::MOVIN || inst->get_opcode() == Opcode::MOVOUT) {
+    spdlog::trace("[StonneCore {}][{}] {} FINISHED, free_sram_size: {}", _id, _core_cycle,
+      opcode_to_string(inst->get_opcode()), inst->get_free_sram_size());
+  }
+}
+
+void SparseCore::registerMemfetch(const std::tuple<uint64_t, mem_access_type, mf_type>& key, std::function<void()> callback) {
+  if (request_merge_table.find(key) == request_merge_table.end()) {
+    mem_fetch* req_wrapper = new mem_fetch(std::get<0>(key), std::get<1>(key), std::get<2>(key), _config.dram_req_size, -1);
+
+    auto* callbacks = new std::vector<std::function<void()>>();
+    req_wrapper->set_custom_data(static_cast<void*>(callbacks));
+    request_merge_table[key] = req_wrapper;
+  }
+  mem_fetch* req_wrapper = request_merge_table[key];
+  auto* callbacks = static_cast<std::vector<std::function<void()>>*>(req_wrapper->get_custom_data());
+  callbacks->push_back(callback);
 }
 
 void SparseCore::dumpTrace(int stonne_core_id, const std::string& path) {
