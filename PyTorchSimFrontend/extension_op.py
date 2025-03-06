@@ -14,6 +14,35 @@ from PyTorchSimFrontend.extension_codecache import get_write_path
 from PyTorchSimFrontend import extension_config
 from Simulator.simulator import BackendSimulator, TORCH_TO_NUMPY
 
+graph_template = {
+    0: {
+        "node_id": 0,
+        "node_name": "root",
+        "node_type": 0,
+        "parents": [],
+        "children": [1]
+    },
+    1: {
+        "node_id": 1,
+        "node_name": "loopNode",
+        "node_type": 2,
+        "parents": [0],
+        "children": [2],
+        "loop_index": "loop_arg000",
+        "loop_start": 0,
+        "loop_end": 8,  # FIXME. this is a trick that generate multiple tile.
+        "loop_step": 1,
+        "loop_type": "outer_loop"
+    },
+    2: {
+        "node_id": 2,
+        "node_name": "stonneNode",
+        "node_type": 5,
+        "parents": [1],
+        "children": [],
+    }
+}
+
 class MLIRExternKernelChoice(ExternKernelChoice):
     def call_name(self):
         is_dryrun = int(os.environ.get('BACKENDSIM_DRYRUN', default=False))
@@ -162,76 +191,53 @@ def prepare_outer_product_matrix(a, b, out):
     assert(x_sparsity >= 0 and x_sparsity < 100)
     assert(w_sparsity >= 0 and w_sparsity < 100)
 
-    # Generating inputs
-    dir_path = os.path.join(
-        extension_config.CONFIG_TORCHSIM_DIR,
-        'PyTorchSimBackend/extern/stonneCore/tests/outerproduct'
-    )
-    os.makedirs(dir_path, exist_ok=True)
-    mem_init = os.path.join(dir_path, f'{prefix}_outerproduct_gemm_mem.ini')
-    dram_a_address, dram_b_address, dram_c_address = generate_outer_product_matrix(a, b, M, K, N, prefix, dir_path)
-    value_path = os.path.join(dir_path, f'{prefix}outerproduct_gemm_mem.ini')
-    a_row_init = os.path.join(dir_path, f'{prefix}_outerproduct_gemm_rowpointerA.in')
-    a_col_init = os.path.join(dir_path, f'{prefix}_outerproduct_gemm_colpointerA.in')
-    b_row_init = os.path.join(dir_path, f'{prefix}_outerproduct_gemm_rowpointerB.in')
-    b_col_init = os.path.join(dir_path, f'{prefix}_outerproduct_gemm_colpointerB.in')
-    c_result = os.path.join(dir_path, f'{prefix}_result.out')
-    graph = {
-        0: {
-            "node_id": 0,
-            "node_name": "root",
-            "node_type": 0,
-            "parents": [],
-            "children": [1]
-        },
-        1: {
-            "node_id": 1,
-            "node_name": "loopNode",
-            "node_type": 2,
-            "parents": [0],
-            "children": [2],
-            "loop_index": "loop_arg000",
-            "loop_start": 0,
-            "loop_end": 8,  # FIXME. this is a trick that generate multiple tile.
-            "loop_step": 1,
-            "loop_type": "outer_loop"
-        },
-        2: {
-            "node_id": 2,
-            "node_name": "stonneNode",
-            "node_type": 5,
-            "parents": [1],
-            "children": [],
-            # Operation Type
-            "stonne_operation": "outerProductGEMM",
+    graph = dict(graph_template)
+    meta_data = {
+        # Operation Type
+        "stonne_operation": "outerProductGEMM",
 
-            # GEMM Parameters
-            "stonne_GEMM_K": K,
-            "stonne_GEMM_N": N,
-            "stonne_GEMM_M": M,
-            "stonne_GEMM_T_K": 4,	# Currently fixed
-            "stonne_GEMM_T_N": 1,	# Currently fixed
-            "stonne_GEMM_T_M": 1,
-
-            # Memory Initialization & File Paths
-            "stonne_mem_init": os.path.join(extension_config.CONFIG_TORCHSIM_DIR, 'PyTorchSimBackend/extern/stonneCore/tests/outerproduct/outerproduct_gemm_mem.ini'),
-            "stonne_mem_matrix_c_file_name": c_result,
-
-            # Memory Addresses
-            "stonne_matrix_a_dram_address": dram_a_address,
-            "stonne_matrix_b_dram_address": dram_b_address,
-            "stonne_matrix_c_dram_address": dram_c_address,
-
-            # CSR & Bitmap Initialization
-            "stonne_rowpointer_matrix_a_init": a_row_init,
-            "stonne_colpointer_matrix_a_init": a_col_init,
-            "stonne_rowpointer_matrix_b_init": b_row_init,
-            "stonne_colpointer_matrix_b_init": b_col_init,
-        }
+        # GEMM Parameters
+        "stonne_GEMM_K": K,
+        "stonne_GEMM_N": N,
+        "stonne_GEMM_M": M,
+        "a_hash" : hash(a.cpu().numpy().tobytes()),
+        "b_hash" : hash(b.cpu().numpy().tobytes()),
     }
-    source_code = "graph = " + str(graph)
+    graph[2].update(meta_data)
 
-    write_path = get_write_path(source_code)
+    # Create write path
+    write_path = get_write_path(str(graph))
+    os.makedirs(write_path, exist_ok=True)
+
+    # Generating inputs
+    dram_a_address, dram_b_address, dram_c_address = generate_outer_product_matrix(a, b, M, K, N, prefix, write_path)
+    mem_init = os.path.join(write_path, f'{prefix}_outerproduct_gemm_mem.ini')
+    a_row_init = os.path.join(write_path, f'{prefix}_outerproduct_gemm_rowpointerA.in')
+    a_col_init = os.path.join(write_path, f'{prefix}_outerproduct_gemm_colpointerA.in')
+    b_row_init = os.path.join(write_path, f'{prefix}_outerproduct_gemm_rowpointerB.in')
+    b_col_init = os.path.join(write_path, f'{prefix}_outerproduct_gemm_colpointerB.in')
+    c_result = os.path.join(write_path, f'{prefix}_result.out')
+
+    meta_data = {
+        # Memory Initialization & File Paths
+        "stonne_mem_init": mem_init,
+        "stonne_mem_matrix_c_file_name": c_result,
+
+        # Memory Addresses
+        "stonne_matrix_a_dram_address": dram_a_address,
+        "stonne_matrix_b_dram_address": dram_b_address,
+        "stonne_matrix_c_dram_address": dram_c_address,
+
+        # CSR & Bitmap Initialization
+        "stonne_rowpointer_matrix_a_init": a_row_init,
+        "stonne_colpointer_matrix_a_init": a_col_init,
+        "stonne_rowpointer_matrix_b_init": b_row_init,
+        "stonne_colpointer_matrix_b_init": b_col_init,
+    }
+    graph[2].update(meta_data)
+
+    graph[2]["stonne_trace_path"] = os.path.join(write_path, "trace.py")
+    source_code = "graph = " + str(graph)
     key, raw_tog_path = write(source_code, "py", specified_dir=write_path)
     tile_graph_generator = tog_generator(["flexagon_matmul"])
     tile_graph_generator.load_file(raw_tog_path)
@@ -258,10 +264,10 @@ def sparse_mm_stonne_outer(a, b, out):
     BackendSimulator.get_result_from_file(result_path)
 
     # Load result data
-    with open(c_result_path, 'rb') as f:
-        np_array = np.fromfile(f, dtype=TORCH_TO_NUMPY[out.dtype])
-        src_tensor = torch.as_strided(torch.from_numpy(np_array), out.size(), out.stride())
-        out.copy_(src_tensor.to(dtype=out.dtype))
+    #with open(c_result_path, 'rb') as f:
+    #    np_array = np.fromfile(f, dtype=TORCH_TO_NUMPY[out.dtype])
+    #    src_tensor = torch.as_strided(torch.from_numpy(np_array), out.size(), out.stride())
+    #    out.copy_(src_tensor.to(dtype=out.dtype))
 
 def sparse_mm_dummy_stonne_outer(a, b, out):
     onnx_path, attribute_path, c_result_path = prepare_outer_product_matrix(a, b, out)

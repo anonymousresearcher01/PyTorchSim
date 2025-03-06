@@ -288,6 +288,8 @@ class TileStonneNode : public TileNode {
           desc.bitmap_matrix_b_init = attribute.s();
       }  else if (attribute.name() == "torchsim_mem_matrix_c_file_name") {
           desc.mem_matrix_c_file_name = attribute.s();
+      }  else if (attribute.name() == "torchsim_trace_path") {
+          desc.trace_path = attribute.s();
       } else {
           spdlog::warn("[TileStonneNode] Unrecognized attribute: {}", attribute.name());
       }

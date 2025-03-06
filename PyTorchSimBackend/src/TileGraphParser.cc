@@ -261,6 +261,7 @@ void TileStonneNode::print_node() {
   spdlog::debug("{} colpointer_matrix_a_init: {}", spaces, desc.colpointer_matrix_a_init);
   spdlog::debug("{} rowpointer_matrix_b_init: {}", spaces, desc.rowpointer_matrix_b_init);
   spdlog::debug("{} colpointer_matrix_b_init: {}", spaces, desc.colpointer_matrix_b_init);
+  spdlog::debug("{} trace_path: {}", spaces, desc.trace_path);
 }
 
 void TileMemoryWaitNode::print_node() {

@@ -6,6 +6,9 @@ SparseCore::SparseCore(uint32_t id, SimulationConfig config) : Core(id, config) 
   coreBusy.resize(nr_cores);
   traceCoreStatus.resize(nr_cores);
   traceCoreCycle.resize(nr_cores);
+  traceNodeList.resize(nr_cores);
+  traceLoadTraffic.resize(nr_cores);
+  traceStoreTraffic.resize(nr_cores);
   percore_tiles.resize(nr_cores);
   stonneCores.resize(nr_cores);
   for (int i=0; i<nr_cores; i++) {
@@ -67,6 +70,7 @@ void SparseCore::issue(std::shared_ptr<Tile> tile) {
   //SST_STONNE::sstStonne* core = new SST_STONNE::sstStonne(_config.stonne_config_path);
   //stonneCores.at(selected_core_idx) = core;
   stonneCores.at(selected_core_idx)->init(1);
+  traceNodeList.at(selected_core_idx).clear();
 
   spdlog::info("[StonneCore {}][{}] issued new tile", _id, selected_core_idx);
   SST_STONNE::StonneOpDesc *opDesc = static_cast<SST_STONNE::StonneOpDesc*>(tile->get_custom_data());
@@ -92,13 +96,28 @@ void SparseCore::cycle() {
     int new_status = stonneCore->getMCFSMStats();
     int compute_cycle = stonneCore->getMSStats().n_multiplications;
     if (traceCoreStatus.at(stonne_core_id) != new_status) {
-      spdlog::trace("Stonne Core [{}][{}] status transition {} -> {}, Load/Store: {}/{}, compute_cycle: {}",
+      spdlog::info("Stonne Core [{}][{}] status transition {} -> {}, Load/Store: {}/{}, compute_cycle: {}",
         _id, _core_cycle, traceCoreStatus.at(stonne_core_id), new_status,
-        traceLoadTraffic.size(), traceStoreTraffic.size(), (compute_cycle - traceCoreCycle.at(stonne_core_id))/num_ms);
+        traceLoadTraffic.at(stonne_core_id).size(), traceStoreTraffic.at(stonne_core_id).size(), (compute_cycle - traceCoreCycle.at(stonne_core_id))/num_ms);
+      if (traceLoadTraffic.at(stonne_core_id).size()) {
+        TraceNode load_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "load", 1);
+        load_node.setAddress(traceLoadTraffic.at(stonne_core_id));
+        traceNodeList.at(stonne_core_id).push_back(load_node);
+      }
+      if ((compute_cycle - traceCoreCycle.at(stonne_core_id))/num_ms) {
+        TraceNode compute_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "compute", 0, (compute_cycle - traceCoreCycle.at(stonne_core_id))/num_ms);
+        traceNodeList.at(stonne_core_id).push_back(compute_node);
+      }
+      if (traceStoreTraffic.at(stonne_core_id).size()) {
+        TraceNode store_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "store", 0);
+        store_node.setAddress(traceStoreTraffic.at(stonne_core_id));
+        traceNodeList.at(stonne_core_id).push_back(store_node);
+      }
+
       traceCoreStatus.at(stonne_core_id) = new_status;
       traceCoreCycle.at(stonne_core_id) = compute_cycle;
-      traceLoadTraffic.clear();
-      traceStoreTraffic.clear();
+      traceLoadTraffic.at(stonne_core_id).clear();
+      traceStoreTraffic.at(stonne_core_id).clear();
     }
 
     /* Send Memory Request */
@@ -111,12 +130,12 @@ void SparseCore::cycle() {
         case SimpleMem::Request::Read:
           acc_type = mem_access_type::GLOBAL_ACC_R;
           type = mf_type::READ_REQUEST;
-          traceLoadTraffic.insert(target_addr);
+          traceLoadTraffic.at(stonne_core_id).insert(target_addr);
           break;
         case SimpleMem::Request::Write:
           acc_type = mem_access_type::GLOBAL_ACC_W;
           type = mf_type::WRITE_REQUEST;
-          traceStoreTraffic.insert(target_addr);
+          traceStoreTraffic.at(stonne_core_id).insert(target_addr);
           break;
         default:
           spdlog::error("[SparseCore] Invalid request type from core");
@@ -132,8 +151,11 @@ void SparseCore::cycle() {
 
     if (coreBusy.at(stonne_core_id) && stonneCore->isFinished()) {
       stonneCore->finish();
-
       std::shared_ptr<Tile> target_tile = percore_tiles.at(stonne_core_id).front();
+      SST_STONNE::StonneOpDesc *opDesc = static_cast<SST_STONNE::StonneOpDesc*>(target_tile->get_custom_data());
+      if (opDesc->trace_path != "")
+        dumpTrace(stonne_core_id, opDesc->trace_path);
+
       target_tile->set_status(Tile::Status::FINISH);
       _finished_tiles.push(target_tile);
       percore_tiles.at(stonne_core_id).erase(percore_tiles.at(stonne_core_id).begin());
@@ -226,4 +248,35 @@ std::shared_ptr<Tile> SparseCore::pop_finished_tile() {
     _finished_tiles.pop();
   }
   return result;
+}
+
+void SparseCore::dumpTrace(int stonne_core_id, const std::string& path) {
+  std::ofstream outFile(path);
+  if (!outFile) {
+    spdlog::error("[StonneCore] Failed to make trace dump file to \"{}\"", path);
+    return;
+  }
+  // Static nodes for the graph
+  outFile << "graph = {\n 0: {\n"
+          << "    \"node_id\": 0,\n"
+          << "    \"node_name\": \"root\",\n"
+          << "    \"node_type\": 0,\n"
+          << "    \"parents\": [],\n"
+          << "    \"children\": [1]\n"
+          << "  },\n"
+          << "  1: {\n"
+          << "    \"node_id\": 1,\n"
+          << "    \"node_name\": \"loopNode\",\n"
+          << "    \"node_type\": 2,\n"
+          << "    \"parents\": [0],\n"
+          << "    \"children\": [2]\n"
+          << "  },\n";
+
+  // Output traceNodeList
+  for (size_t i = 0; i < traceNodeList.at(stonne_core_id).size(); ++i) {
+      if (i != 0) outFile << ",\n";
+      outFile << traceNodeList.at(stonne_core_id)[i];
+  }
+  outFile << "\n}" << std::endl;
+  spdlog::info("[StonneCore] Success to save trace dump file to \"{}\"", path);
 }

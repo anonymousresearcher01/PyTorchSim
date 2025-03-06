@@ -147,6 +147,7 @@ class stonne_node(node):
         self.torchsim_stonne_colpointer_matrix_a_init = tile_info.get("stonne_colpointer_matrix_a_init", "")
         self.torchsim_stonne_rowpointer_matrix_b_init = tile_info.get("stonne_rowpointer_matrix_b_init", "")
         self.torchsim_stonne_colpointer_matrix_b_init = tile_info.get("stonne_colpointer_matrix_b_init", "")
+        self.torchsim_trace_path = tile_info.get("stonne_trace_path", "")
 
 def connect_nodes(parent, child):
     child.add_parent(parent)
