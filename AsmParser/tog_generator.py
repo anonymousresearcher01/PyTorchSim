@@ -6,8 +6,10 @@ from collections import defaultdict
 
 if __name__ == "__main__":
     from onnx_utility import node, loop_index_node, loop_end_node, load_node, store_node, memory_wait_node, compute_node, connect_nodes, dump_onnx_graph
+    from onnx_utility import stonne_node, stonne_trace_compute_node, stonne_trace_load_node, stonne_trace_store_node
 else:
-    from AsmParser.onnx_utility import node, loop_index_node, loop_end_node, load_node, store_node, memory_wait_node, compute_node, stonne_node, connect_nodes, dump_onnx_graph
+    from AsmParser.onnx_utility import node, loop_index_node, loop_end_node, load_node, store_node, memory_wait_node, compute_node, connect_nodes, dump_onnx_graph
+    from AsmParser.onnx_utility import stonne_node, stonne_trace_compute_node, stonne_trace_load_node, stonne_trace_store_node
 
 
 def import_module_from_path(module_name, path):
@@ -32,6 +34,9 @@ class tog_generator:
     DMANodeKind = 3
     DMAWaitNodeKind = 4
     StonneNodeKind = 5
+    StonneTraceCompute= 6
+    StonneTraceLoad = 7
+    StonneTraceStore = 8
     def __init__(self, origins="Unknown") -> None:
         self.module_name = "tile_operation_graph"
         self.module = None
@@ -107,6 +112,12 @@ class tog_generator:
             new_node = memory_wait_node(tile_info, node_id=node_id)
         elif node_type == self.StonneNodeKind:
             new_node = stonne_node(dump_data, node_id=node_id)
+        elif node_type == self.StonneTraceCompute:
+            new_node = stonne_trace_compute_node(dump_data['trace_compute_cycle'], node_id=node_id)
+        elif node_type == self.StonneTraceLoad:
+            new_node = stonne_trace_load_node(dump_data['trace_address'], node_id=node_id)
+        elif node_type == self.StonneTraceStore:
+            new_node = stonne_trace_store_node(dump_data['trace_address'], node_id=node_id)
         else:
             print("Unexpected node_type :", node_type)
             exit(1)

@@ -14,6 +14,7 @@ private:
   int compute_cycle;
 
 public:
+  enum TraceType {StonneTraceCompute=6, StonneTraceLoad=7, StonneTraceStore=8};
   TraceNode(int id, std::string name, int type, int cycle = 0)
       : node_id(id), node_name(name), node_type(type), compute_cycle(cycle) {}
   void setAddress(std::set<uint64_t> addr_set) { address_set = addr_set; }

@@ -149,6 +149,21 @@ class stonne_node(node):
         self.torchsim_stonne_colpointer_matrix_b_init = tile_info.get("stonne_colpointer_matrix_b_init", "")
         self.torchsim_trace_path = tile_info.get("stonne_trace_path", "")
 
+class stonne_trace_compute_node(node):
+    def __init__(self, cycle=0, node_id=0):
+        super().__init__(node_id)
+        self.torchsim_trace_compute_cycle = cycle
+
+class stonne_trace_store_node(node):
+    def __init__(self, addr_list=list(), node_id=0):
+        super().__init__(node_id)
+        self.torchsim_trace_address = addr_list
+
+class stonne_trace_load_node(node):
+    def __init__(self, addr_list=list(), node_id=0):
+        super().__init__(node_id)
+        self.torchsim_trace_address = addr_list
+
 def connect_nodes(parent, child):
     child.add_parent(parent)
     parent.add_child(child)

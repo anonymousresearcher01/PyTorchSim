@@ -100,16 +100,16 @@ void SparseCore::cycle() {
         _id, _core_cycle, traceCoreStatus.at(stonne_core_id), new_status,
         traceLoadTraffic.at(stonne_core_id).size(), traceStoreTraffic.at(stonne_core_id).size(), (compute_cycle - traceCoreCycle.at(stonne_core_id))/num_ms);
       if (traceLoadTraffic.at(stonne_core_id).size()) {
-        TraceNode load_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "load", 1);
+        TraceNode load_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "load", TraceNode::StonneTraceLoad);
         load_node.setAddress(traceLoadTraffic.at(stonne_core_id));
         traceNodeList.at(stonne_core_id).push_back(load_node);
       }
       if ((compute_cycle - traceCoreCycle.at(stonne_core_id))/num_ms) {
-        TraceNode compute_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "compute", 0, (compute_cycle - traceCoreCycle.at(stonne_core_id))/num_ms);
+        TraceNode compute_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "compute", TraceNode::StonneTraceCompute, (compute_cycle - traceCoreCycle.at(stonne_core_id))/num_ms);
         traceNodeList.at(stonne_core_id).push_back(compute_node);
       }
       if (traceStoreTraffic.at(stonne_core_id).size()) {
-        TraceNode store_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "store", 0);
+        TraceNode store_node = TraceNode(traceNodeList.at(stonne_core_id).size()+2, "store", TraceNode::StonneTraceStore);
         store_node.setAddress(traceStoreTraffic.at(stonne_core_id));
         traceNodeList.at(stonne_core_id).push_back(store_node);
       }
@@ -269,7 +269,12 @@ void SparseCore::dumpTrace(int stonne_core_id, const std::string& path) {
           << "    \"node_name\": \"loopNode\",\n"
           << "    \"node_type\": 2,\n"
           << "    \"parents\": [0],\n"
-          << "    \"children\": [2]\n"
+          << "    \"children\": [2],\n"
+          << "    \"loop_index\": \"loop_arg000\",\n"
+          << "    \"loop_start\": 0,\n"
+          << "    \"loop_end\": 8,\n"
+          << "    \"loop_step\": 1,\n"
+          << "    \"loop_type\": \"outer_loop\""
           << "  },\n";
 
   // Output traceNodeList

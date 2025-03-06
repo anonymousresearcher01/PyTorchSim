@@ -6,6 +6,7 @@ from datetime import datetime
 import random
 import torch
 import numpy as np
+import hashlib
 from torch._inductor.select_algorithm import ExternKernelChoice
 from torch._inductor.codecache import get_hash
 from AsmParser.tog_generator import tog_generator
@@ -200,8 +201,8 @@ def prepare_outer_product_matrix(a, b, out):
         "stonne_GEMM_K": K,
         "stonne_GEMM_N": N,
         "stonne_GEMM_M": M,
-        "a_hash" : hash(a.cpu().numpy().tobytes()),
-        "b_hash" : hash(b.cpu().numpy().tobytes()),
+        "a_hash" : hashlib.sha512(a.cpu().numpy().tobytes()).hexdigest(),
+        "b_hash" : hashlib.sha512(b.cpu().numpy().tobytes()).hexdigest(),
     }
     graph[2].update(meta_data)
 
@@ -210,48 +211,65 @@ def prepare_outer_product_matrix(a, b, out):
     os.makedirs(write_path, exist_ok=True)
 
     # Generating inputs
-    dram_a_address, dram_b_address, dram_c_address = generate_outer_product_matrix(a, b, M, K, N, prefix, write_path)
     mem_init = os.path.join(write_path, f'{prefix}_outerproduct_gemm_mem.ini')
     a_row_init = os.path.join(write_path, f'{prefix}_outerproduct_gemm_rowpointerA.in')
     a_col_init = os.path.join(write_path, f'{prefix}_outerproduct_gemm_colpointerA.in')
     b_row_init = os.path.join(write_path, f'{prefix}_outerproduct_gemm_rowpointerB.in')
     b_col_init = os.path.join(write_path, f'{prefix}_outerproduct_gemm_colpointerB.in')
     c_result = os.path.join(write_path, f'{prefix}_result.out')
+    trace_path = os.path.join(write_path, "trace.py")
 
-    meta_data = {
-        # Memory Initialization & File Paths
-        "stonne_mem_init": mem_init,
-        "stonne_mem_matrix_c_file_name": c_result,
+    if not os.path.isfile(trace_path):
+        dram_a_address, dram_b_address, dram_c_address = generate_outer_product_matrix(a, b, M, K, N, prefix, write_path)
+        meta_data = {
+            # Memory Initialization & File Paths
+            "stonne_mem_init": mem_init,
+            "stonne_mem_matrix_c_file_name": c_result,
 
-        # Memory Addresses
-        "stonne_matrix_a_dram_address": dram_a_address,
-        "stonne_matrix_b_dram_address": dram_b_address,
-        "stonne_matrix_c_dram_address": dram_c_address,
+            # Memory Addresses
+            "stonne_matrix_a_dram_address": dram_a_address,
+            "stonne_matrix_b_dram_address": dram_b_address,
+            "stonne_matrix_c_dram_address": dram_c_address,
 
-        # CSR & Bitmap Initialization
-        "stonne_rowpointer_matrix_a_init": a_row_init,
-        "stonne_colpointer_matrix_a_init": a_col_init,
-        "stonne_rowpointer_matrix_b_init": b_row_init,
-        "stonne_colpointer_matrix_b_init": b_col_init,
-    }
-    graph[2].update(meta_data)
+            # CSR & Bitmap Initialization
+            "stonne_rowpointer_matrix_a_init": a_row_init,
+            "stonne_colpointer_matrix_a_init": a_col_init,
+            "stonne_rowpointer_matrix_b_init": b_row_init,
+            "stonne_colpointer_matrix_b_init": b_col_init,
+            "stonne_trace_path": trace_path
+        }
+        graph[2].update(meta_data)
 
-    graph[2]["stonne_trace_path"] = os.path.join(write_path, "trace.py")
-    source_code = "graph = " + str(graph)
-    key, raw_tog_path = write(source_code, "py", specified_dir=write_path)
-    tile_graph_generator = tog_generator(["flexagon_matmul"])
-    tile_graph_generator.load_file(raw_tog_path)
-    tile_graph_generator.generate_tile_graph(
-        os.path.join(write_path, "tile_graph.onnx"),
-        cycle_list=[0],
-        x_offset=0,
-        w_offset=0,
-        vector_lane=0,
-        stonneGraph=True
-    )
-    onnx_path = os.path.join(write_path, "tile_graph.onnx")
-    attribute_path = os.path.join(write_path, "attributes")
-    return onnx_path, attribute_path, c_result
+        source_code = "graph = " + str(graph)
+        key, raw_tog_path = write(source_code, "py", specified_dir=write_path)
+        tile_graph_generator = tog_generator(["flexagon_matmul"])
+        tile_graph_generator.load_file(raw_tog_path)
+        tile_graph_generator.generate_tile_graph(
+            os.path.join(write_path, "tile_graph.onnx"),
+            cycle_list=[0],
+            x_offset=0,
+            w_offset=0,
+            vector_lane=0,
+            stonneGraph=True
+        )
+        onnx_path = os.path.join(write_path, "tile_graph.onnx")
+        attribute_path = os.path.join(write_path, "attributes")
+        return onnx_path, attribute_path, c_result
+    else: # Use trace file to generate onnx graph
+        tile_graph_generator = tog_generator(["flexagon_matmul"])
+        tile_graph_generator.load_file(trace_path)
+        tile_graph_generator.generate_tile_graph(
+            os.path.join(write_path, "trace_tile_graph.onnx"),
+            cycle_list=[0],
+            x_offset=0,
+            w_offset=0,
+            vector_lane=0,
+            stonneGraph=True
+        )
+        onnx_path = os.path.join(write_path, "trace_tile_graph.onnx")
+        attribute_path = os.path.join(write_path, "attributes")
+        return onnx_path, attribute_path, c_result
+
 
 
 def sparse_mm_stonne_outer(a, b, out):
