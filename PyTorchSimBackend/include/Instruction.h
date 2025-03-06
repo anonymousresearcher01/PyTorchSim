@@ -75,6 +75,8 @@ class Instruction {
     }
     return address_set;
   }
+  std::vector<addr_type> get_trace_address() { return _trace_address; }
+  void set_trace_address(std::vector<addr_type>& trace_address) { _trace_address = trace_address; }
   size_t get_free_sram_size() { return _free_sram_size; }
   void adjust_dram_address() {
     int offset = std::inner_product(_idx_list.begin(), _idx_list.end(), _stride_list.begin(), 0);
@@ -125,6 +127,7 @@ class Instruction {
   std::vector<int> _tag_key;
   std::vector<int> _accum_tag_idx_list;
   std::vector<int> _loop_size_list;
+  std::vector<addr_type> _trace_address;
   std::string _addr_name;
   int _nr_inner_loop = 0;
   bool _is_async_dma=false;

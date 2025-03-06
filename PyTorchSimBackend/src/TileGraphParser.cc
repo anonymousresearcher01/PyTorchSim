@@ -130,6 +130,12 @@ TileType TileNode::get_tile_type(std::string type) {
     return TileType::MEMORY_WAIT_NODE;
   else if (type == "stonne_node")
     return TileType::STONNE_NODE;
+  else if (type == "stonne_trace_compute_node")
+    return TileType::STONNE_TRACE_COMPUTE_NODE;
+  else if (type == "stonne_trace_load_node")
+    return TileType::STONNE_TRACE_LOAD_NODE;
+  else if (type == "stonne_trace_store_node")
+    return TileType::STONNE_TRACE_STORE_NODE;
   spdlog::error("[TileGraphParser] Invalid node type...");
   exit(EXIT_FAILURE);
 }
@@ -269,6 +275,18 @@ void TileMemoryWaitNode::print_node() {
   std::string spaces(get_depth(), '\t');
   spdlog::debug("{} tag_idx_list: {}", spaces, fmt::join(_tag_idx_list, ", "));
   spdlog::debug("{} tag_stride_list: {}", spaces, fmt::join(_tag_stride_list, ", "));
+}
+
+void TileStonneTraceComputeNode::print_node() {
+  TileNode::print_node();
+  std::string spaces(get_depth(), '\t');
+  spdlog::debug("{} ComputeCycle: {}", spaces, _cycle);
+}
+
+void TileStonneTraceMemoryNode::print_node() {
+  TileNode::print_node();
+  std::string spaces(get_depth(), '\t');
+  spdlog::debug("{} Address: {}", spaces, fmt::join(trace_address, ", "));
 }
 
 TileLoopNode::TileLoopNode(onnx::NodeProto& node) : TileNode(node) {
@@ -570,25 +588,78 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       /* Create new tile */
       tile_vec.push_back(child);
     } else if (tile_node->get_type() == TileType::STONNE_NODE) {
-        printIndexMap("[TOGParser] Stonne Node ", iter);
-        std::shared_ptr<TileStonneNode> stonne_node = std::static_pointer_cast<TileStonneNode>(tile_node);
-        /* Lookup given name's address */
-        std::vector<int> iter_list;
-        std::vector<int> tag_list;
-        std::vector<int> tag_stride_list;
-        std::vector<int> accum_tag_list;
+      printIndexMap("[TOGParser] Stonne Node ", iter);
+      std::shared_ptr<TileStonneNode> stonne_node = std::static_pointer_cast<TileStonneNode>(tile_node);
+      /* Lookup given name's address */
+      std::vector<int> iter_list;
+      std::vector<int> tag_list;
+      std::vector<int> tag_stride_list;
+      std::vector<int> accum_tag_list;
 
-        /* Put dummy computation instruction */
-        std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
-          Opcode::COMP, 0,
-          0, 0,
-          std::vector<size_t>(), 0, iter_list,
-          iter_list, tag_list, tag_stride_list, accum_tag_list, std::vector<int>()
-        );
-        link_map[tile_node] = inst;
-        tile_vec.back()->append_instuction(inst);
-        tile_vec.back()->set_custom_data(stonne_node->getDesc());
-        tile_vec.back()->set_stonne_tile(true);
+      /* Put dummy computation instruction */
+      std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
+        Opcode::COMP, 0,
+        0, 0,
+        std::vector<size_t>(), 0, iter_list,
+        iter_list, tag_list, tag_stride_list, accum_tag_list, std::vector<int>()
+      );
+      link_map[tile_node] = inst;
+      tile_vec.back()->append_instuction(inst);
+      tile_vec.back()->set_custom_data(stonne_node->getDesc());
+      tile_vec.back()->set_stonne_tile(true);
+    } else if (tile_node->get_type() == TileType::STONNE_TRACE_COMPUTE_NODE) {
+      std::shared_ptr<TileStonneTraceComputeNode> stonne_node = std::static_pointer_cast<TileStonneTraceComputeNode>(tile_node);
+      /* Lookup given name's address */
+      std::vector<int> iter_list;
+      std::vector<int> tag_list;
+      std::vector<int> tag_stride_list;
+      std::vector<int> accum_tag_list;
+
+      std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
+        Opcode::COMP, stonne_node->get_cycle(),
+        0, 0,
+        std::vector<size_t>(), 0, iter_list,
+        iter_list, tag_list, tag_stride_list, accum_tag_list, std::vector<int>()
+      );
+      link_map[tile_node] = inst;
+      tile_vec.back()->append_instuction(inst);
+      tile_vec.back()->set_stonne_tile(true);
+    } else if (tile_node->get_type() == TileType::STONNE_TRACE_LOAD_NODE) {
+      std::shared_ptr<TileStonneTraceLoadNode> stonne_node = std::static_pointer_cast<TileStonneTraceLoadNode>(tile_node);
+      /* Lookup given name's address */
+      std::vector<int> iter_list;
+      std::vector<int> tag_list;
+      std::vector<int> tag_stride_list;
+      std::vector<int> accum_tag_list;
+
+      std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
+        Opcode::MOVIN, 0,
+        0, 0,
+        std::vector<size_t>(), 0, iter_list,
+        iter_list, tag_list, tag_stride_list, accum_tag_list, std::vector<int>()
+      );
+      inst->set_trace_address(stonne_node->get_address());
+      link_map[tile_node] = inst;
+      tile_vec.back()->append_instuction(inst);
+      tile_vec.back()->set_stonne_tile(true);
+    } else if (tile_node->get_type() == TileType::STONNE_TRACE_STORE_NODE) {
+      std::shared_ptr<TileStonneTraceStoreNode> stonne_node = std::static_pointer_cast<TileStonneTraceStoreNode>(tile_node);
+      /* Lookup given name's address */
+      std::vector<int> iter_list;
+      std::vector<int> tag_list;
+      std::vector<int> tag_stride_list;
+      std::vector<int> accum_tag_list;
+
+      std::shared_ptr<Instruction> inst = std::make_shared<Instruction>(
+        Opcode::MOVOUT, 0,
+        0, 0,
+        std::vector<size_t>(), 0, iter_list,
+        iter_list, tag_list, tag_stride_list, accum_tag_list, std::vector<int>()
+      );
+      inst->set_trace_address(stonne_node->get_address());
+      link_map[tile_node] = inst;
+      tile_vec.back()->append_instuction(inst);
+      tile_vec.back()->set_stonne_tile(true);
     }
   }
 
@@ -702,6 +773,18 @@ TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
       register_tile(tile_node);
     } else if (type == TileType::STONNE_NODE) {
       std::shared_ptr<TileStonneNode> tile_node = std::make_shared<TileStonneNode>(node_proto);
+      /* Register output */
+      register_tile(tile_node);
+    } else if (type == TileType::STONNE_TRACE_COMPUTE_NODE) {
+      std::shared_ptr<TileStonneTraceComputeNode> tile_node = std::make_shared<TileStonneTraceComputeNode>(node_proto);
+      /* Register output */
+      register_tile(tile_node);
+    } else if (type == TileType::STONNE_TRACE_LOAD_NODE) {
+      std::shared_ptr<TileStonneTraceLoadNode> tile_node = std::make_shared<TileStonneTraceLoadNode>(node_proto);
+      /* Register output */
+      register_tile(tile_node);
+    } else if (type == TileType::STONNE_TRACE_STORE_NODE) {
+      std::shared_ptr<TileStonneTraceStoreNode> tile_node = std::make_shared<TileStonneTraceStoreNode>(node_proto);
       /* Register output */
       register_tile(tile_node);
     }

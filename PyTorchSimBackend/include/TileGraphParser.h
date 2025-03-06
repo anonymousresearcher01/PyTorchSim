@@ -21,6 +21,9 @@ enum class TileType{
   COMPUTE_NODE,
   MEMORY_WAIT_NODE,
   STONNE_NODE,
+  STONNE_TRACE_COMPUTE_NODE,
+  STONNE_TRACE_LOAD_NODE,
+  STONNE_TRACE_STORE_NODE
 };
 
 enum class LoopType {
@@ -299,4 +302,45 @@ class TileStonneNode : public TileNode {
   void print_node() override;
  private:
   SST_STONNE::StonneOpDesc desc;
+};
+
+class TileStonneTraceComputeNode : public TileNode {
+ public:
+  TileStonneTraceComputeNode(onnx::NodeProto& node) : TileNode(node) {
+    for (auto attribute : node.attribute()) {
+      if (attribute.name() == "torchsim_trace_compute_cycle") {
+          _cycle = attribute.i();
+      }
+    }
+  }
+  uint32_t get_cycle() { return _cycle; }
+  void print_node();
+
+ private:
+  uint64_t _cycle;
+};
+
+class TileStonneTraceMemoryNode : public TileNode {
+ public:
+  TileStonneTraceMemoryNode(onnx::NodeProto& node) : TileNode(node) {
+    for (auto attribute : node.attribute()) {
+      if (attribute.name() == "torchsim_trace_address") {
+        trace_address.assign(attribute.ints().begin(), attribute.ints().end());
+      }
+    }
+  }
+  std::vector<uint64_t>& get_address() { return trace_address; }
+  void print_node();
+
+ private:
+  std::vector<uint64_t> trace_address;
+};
+class TileStonneTraceLoadNode : public TileStonneTraceMemoryNode {
+ public:
+  using TileStonneTraceMemoryNode::TileStonneTraceMemoryNode;
+};
+
+class TileStonneTraceStoreNode : public TileStonneTraceMemoryNode {
+ public:
+  using TileStonneTraceMemoryNode::TileStonneTraceMemoryNode;
 };
