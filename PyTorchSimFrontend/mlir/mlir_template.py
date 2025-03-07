@@ -247,9 +247,13 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
 
     def meta_kernel(self):
         wrapper = V.graph.wrapper_code
-        arg_attributes = self.kernel_arg_attributes
-        if arg_attributes is None:
-            _, _, arg_attributes, _ = self.kernel_group.args.mlir_argdefs()
+        kernel_arg_attributes = self.kernel_arg_attributes
+        _, _, arg_attributes, _ = self.kernel_group.args.mlir_argdefs()
+        if kernel_arg_attributes is not None:
+            for name, attr in kernel_arg_attributes:
+                for idx in range(len(arg_attributes)):
+                    if arg_attributes[idx][0] == name:
+                        arg_attributes[idx][1] = attr
         wrapper.add_import_once('\nprint(f\'Wrapper Codegen Path = {__file__}\')')
         wrapper.add_import_once(f'\nfrom PyTorchSimFrontend.extension_codecache import CustomAsyncCompile')
         wrapper.add_import_once(f'\ncustom_async_compile = CustomAsyncCompile()')
@@ -267,26 +271,27 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             kernel_name if self.outer_func_name is None else self.outer_func_name,
             call_args, cuda=False)
 
-    def codegen_body(self, vlane_split_axis):
-        def template_store(options):
-            sram_var = "Y_buffer"
-            dram_var = "Y"
-            index_var = "index2"
-            tag_var = "tag"
-            vlane_stride = 1
-            mlir_dtype = "f32"
-            dram_shape = f"memref<{options['Y_numel']}x{mlir_dtype}>"
-            tile_shape = f"memref<{options['TILE_M']}x{options['TILE_N']}x{mlir_dtype}, 1>"
+    def codegen_body(self):
+        def template_store():
+            sram_var = self.store_info["sram_var"]
+            dram_var = self.store_info["dram_var"]
+            index_var = self.store_info["index_var"]
+            tag_var = self.store_info["tag_var"]
+            vlane_split_axis = self.store_info["vlane_split_axis"]
+            vlane_stride = self.store_info["vlane_stride"]
+            mlir_dtype = self.store_info["mlir_dtype"]
+            dram_shape = self.store_info["dram_shape"]
+            tile_shape = self.store_info["tile_shape"]
             zero_cse = self.get_const_cse(0)
-            sram_index_var = ",".join([f"%{zero_cse}"] * 2)
-            tile_stride = [1, options['TILE_M']]
+            sram_index_var = ",".join([f"%{zero_cse}"] * self.store_info["tile_nr_dim"])
+            tile_stride = self.store_info['tile_stride']
             code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
                                  tag_var, dram_shape, tile_shape, tile_stride)
             self.cse.generate(self.stores, code, assignment = False)
         self.body.splice(self.loads)
         self.body.splice(self.compute)
         if len(self.stores._lines) == 0:
-            template_store(self.render_options)
+            template_store()
         self.body.splice(self.stores)
         self.loads.clear()
         self.compute.clear()
@@ -327,7 +332,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
                     extra_node[node.get_name()] = node.node
                 else:
                     extra_node[node.get_name()] = node
-                self.buffer_names[node.get_name()] = 'Y_buffer'   #TODO: Buffer name fixed
+                self.buffer_names[node.get_name()] = self.store_info['sram_var']
 
         def hook():
             arg_defs, *_ = self.kernel_group.args.mlir_argdefs(extra_node=extra_node)
@@ -336,6 +341,91 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         assert "<DEF_KERNEL>" not in self.render_hooks
         self.render_hooks["<DEF_KERNEL>"] = hook
         return "<DEF_KERNEL>"
+
+    # This function is a temporal function for convolution because currently convolution kernel is not considering padding.
+    # Padding is done by python wrapper so the padded input size is manually applied here.
+    def def_conv_kernel(
+        self,
+        inputs: List[IRNode],
+        outputs: List[IRNode],
+        names_str: str = "",
+        padded_input_size: List[int] = [],
+        input_reorder: Optional[List[int]] = None,
+    ) -> str:
+        names = [x.strip() for x in names_str.strip().split(",")]
+        if len(inputs) + len(outputs) != len(names):
+            raise RuntimeError(
+                f"{len(inputs) + len(outputs)=} != {len(names)=}, {inputs=}, {outputs=}, {names=}"
+            )
+
+        if input_reorder is not None:
+            assert len(inputs) == len(input_reorder)
+        else:
+            input_reorder = list(range(len(inputs)))
+
+        for idx in input_reorder:
+            name = names[idx]
+            node = inputs[idx]
+            if node is not None:
+                self.named_nodes[name] = node
+                self.kernel_group.args.input_buffers[node.get_name()] = name
+
+        self.extra_node = {}
+        for name, node in zip(names[len(inputs) : len(inputs) + len(outputs)], outputs):
+            if node is not None:
+                self.named_nodes[name] = node
+                self.kernel_group.args.output_buffers[node.get_name()] = name
+                self.store_buffer_names.add(node.get_name())    #TODO: Is this enough not calling store() in mlir_common.py?
+                self.extra_node[node.get_name()] = node
+                self.buffer_names[node.get_name()] = self.store_info['sram_var']   #TODO: Buffer name fixed
+
+        def kernel_hook():
+            arg_defs, *_ = self.kernel_group.args.mlir_argdefs(extra_node=self.extra_node)
+            arg_defs[0] = re.sub(r'(\d+)(?=xf32)', str(padded_input_size), arg_defs[0])
+            return f"({', '.join(arg_defs)})"
+
+        assert "<DEF_CONV_KERNEL>" not in self.render_hooks
+        self.render_hooks["<DEF_CONV_KERNEL>"] = kernel_hook
+        return "<DEF_CONV_KERNEL>"
+
+    # This function is for convolution wrapper function finalizing.
+    def def_wrapper(self, only_store_buffer: bool = False, epilogue_buffer: str = False):
+        def wrapper_store_buf_hook():
+            output_bufs = self.kernel_group.args.output_buffers
+            if self.store_info['output_node'] not in output_bufs:
+                assert False, f"Output buffer {self.store_info['output_node']} not found in {output_bufs}"
+            if output_bufs[self.store_info['output_node']] == 'REMOVED':
+                if len(output_bufs) == 1 or len(self.store_info['dependent_buf']) == 0:
+                    assert False, "Output buffer is removed and no other output buffer is found"
+                return output_bufs[self.store_info['dependent_buf'][0]]  # FIXME: Only using the first dependent buffer
+            else:
+                return output_bufs[self.store_info['output_node']]
+
+        def wrapper_epilogue_buf_hook(name):
+            if name not in self.kernel_group.args.input_buffers:
+                assert False, f"Input buffer {name} not found in {self.kernel_group.args.input_buffers}"
+            return self.kernel_group.args.input_buffers[name]
+
+        def wrapper_hook():
+            arg_defs, *_ = self.kernel_group.args.mlir_argdefs(extra_node=self.extra_node)
+            wrapper_arg_defs = [arg.split('%')[1].split(':')[0] for arg in arg_defs]
+            return f"({', '.join(wrapper_arg_defs)})"
+
+        if only_store_buffer:
+            if "<DEF_CONV_WRAPPER_STORE_BUFFER>" not in self.render_hooks:
+                self.render_hooks["<DEF_CONV_WRAPPER_STORE_BUFFER>"] = wrapper_store_buf_hook
+            return "<DEF_CONV_WRAPPER_STORE_BUFFER>"
+        if epilogue_buffer:
+            if f"<DEF_CONV_WRAPPER_EPILOGUE_BUFFER_{epilogue_buffer}>" not in self.render_hooks:
+                self.render_hooks[f"<DEF_CONV_WRAPPER_EPILOGUE_BUFFER_{epilogue_buffer}>"] = functools.partial(
+                    wrapper_epilogue_buf_hook,
+                    name=epilogue_buffer
+                )
+            return f"<DEF_CONV_WRAPPER_EPILOGUE_BUFFER_{epilogue_buffer}>"
+        else:
+            if "<DEF_CONV_WRAPPER>" not in self.render_hooks:
+                self.render_hooks["<DEF_CONV_WRAPPER>"] = wrapper_hook
+            return "<DEF_CONV_WRAPPER>"
 
     def output_name(self):
         # Cannot know the output name from the template, so we need to hook it
@@ -349,10 +439,10 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         self.render_hooks["<OUPUT>"] = hook
         return "<OUPUT>"
 
-    def store_output(self, vlane_split_axis=1):
+    def store_output(self, indent_size: int = 0):
         def hook():
-            self.codegen_body(vlane_split_axis)
-            return textwrap.indent(self.body.getvalue(), "      ").strip()  #TODO: First line is not indented
+            self.codegen_body()
+            return textwrap.indent(self.body.getvalue(), " "*indent_size).strip()
 
         assert "<STORE_OUTPUT>" not in self.render_hooks
         self.render_hooks["<STORE_OUTPUT>"] = hook
@@ -362,7 +452,11 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
     def def_function(self):
         _, call_args, _ = self.kernel_group.args.python_argdefs()
         if self.outer_func_render is not None:
-            return self.outer_func_render(input_args=call_args)
+            partial_code, function_name = self.outer_func_render(input_args=call_args)
+            return PartialRender(
+                partial_code,
+                self.render_hooks,
+            ), function_name
         else:
             return None, None
 
@@ -390,10 +484,13 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         self.render_hooks[key] = hook
         return key
 
-    def render(self, template, kwargs):
+    def render(self, template, kwargs, define_function=None):
         # self.render_hooks = {}
+        code = template.render(**kwargs)
+        if define_function is not None:
+            define_function(self)
         return PartialRender(
-            template.render(**kwargs),
+            code,
             self.render_hooks,
         )
 
@@ -401,16 +498,8 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         size = tile_m * ((tile_n + self.vector_lane - 1) // self.vector_lane)
         return max(size, 2) # vector load/store
 
-    def adjust_tile_size(self):
-        # Fixed tile size for template kernel
-        self.kernel_group.tile_desc.set_tile_size((self.render_options['TILE_M'], self.render_options['TILE_N']))
-        self.kernel_group.tile_desc.vlane_split_axis = 1 # FIXME: Fixed
-        self.kernel_group.tile_desc.vlane_stride = 1 # FIXME: Fixed
-        return
-
     def load_epilogue(self, name: str, index: sympy.Expr):
-        #index_var = self.parse_indices(index)
-        index_var = "index2"
+        index_var = self.store_info['index_var']
         index = self.rename_indexing(index)
         dram_var = self.kernel_group.args.input(name)
         dtype = V.graph.get_dtype(name)
@@ -422,8 +511,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             # Allocate sram buffer
             dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
             tile_shape = self.kernel_group.tile_desc.get_mlir_shape(mlir_dtype)
-            # tile_stride = self.kernel_group.tile_desc.get_tile_stride()
-            tile_stride = [1, self.render_options['TILE_M']] # FIXME: Fixed
+            tile_stride = self.store_info['tile_stride']
             sram_var, index_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, tile_numel_per_lane, tile_shape, self.loads, index_var, index)
             self.buffer_names[name] = sram_var
             code = self.get_dma_code("MVIN", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
@@ -435,14 +523,14 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         operation = "affine.vector_load" if tile_numel_per_lane > 1 else "affine.load"
         shape = f", vector<{tile_numel_per_lane}x{mlir_dtype}>" if tile_numel_per_lane > 1 else ""
         zero_var = self.get_const_cse(0)
-        line = f"{operation} %{sram_var}[%{zero_var}, %{zero_var}] : memref<{self.render_options['TILE_M']}x{self.render_options['TILE_N']}x{mlir_dtype}, 1>{shape}"
+        tile_indices = ",".join([f"%{zero_var}"] * self.store_info["tile_nr_dim"])
+        line = f"{operation} %{sram_var}[{tile_indices}] : {self.store_info['tile_shape']}{shape}"
         out = self.cse.generate(self.loads, line)
         self.register_var_info(out, [tile_numel_per_lane, mlir_dtype])
         return out
 
     def store_epilogue(self, name: str, index: sympy.Expr, value, *args, **kwargs):
-        #index_var = self.parse_indices(index)
-        index_var = "index2"
+        index_var = self.store_info['index_var']
         dram_var = self.kernel_group.args.output(name)
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
@@ -452,8 +540,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
 
         dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         tile_shape = self.kernel_group.tile_desc.get_mlir_shape(mlir_dtype)
-        # tile_stride = self.kernel_group.tile_desc.get_tile_stride()
-        tile_stride = [1, self.render_options['TILE_M']] # FIXME: Fixed
+        tile_stride = self.store_info['tile_stride']
 
         if name not in self.buffer_names:
             sram_var, index_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, tile_numel_per_lane, tile_shape, self.stores, index_var, index)
@@ -467,10 +554,9 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         operation = "affine.vector_store" if tile_numel_per_lane > 1 else "affine.store"
         shape = f", vector<{tile_numel_per_lane}x{mlir_dtype}>" if tile_numel_per_lane > 1 else ""
         zero_var = self.get_const_cse(0)
-        line = f"{operation} %{value}, %{sram_var}[%{zero_var}, %{zero_var}] : memref<{self.render_options['TILE_M']}x{self.render_options['TILE_N']}x{mlir_dtype}, 1>{shape}"
+        tile_indices = ",".join([f"%{zero_var}"] * self.store_info["tile_nr_dim"])
+        line = f"{operation} %{value}, %{sram_var}[{tile_indices}] : {tile_shape}{shape}"
         self.cse.generate(self.stores, line, assignment = False)
-
-        index_var = "index2"                # FIXME. Is it okay?
         code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
                                  f"{name}_tag", dram_shape, tile_shape, tile_stride)
         self.cse.generate(self.stores, code, assignment = False)
