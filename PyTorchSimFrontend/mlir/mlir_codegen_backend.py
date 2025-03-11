@@ -220,15 +220,16 @@ class ExtensionOverrides(common.OpOverrides):
     def to_dtype(operand, dst_mlir_dtype, *args, var_info=None, **kwargs):
         src_mlir_dtype = var_info[operand][1]
         tile_size = var_info[operand][0]
-
+        if isinstance(dst_mlir_dtype, torch.dtype):
+            dst_mlir_dtype = mlir_common.DTYPE_TO_MLIR[dst_mlir_dtype]
         dst_bits = int(dst_mlir_dtype[1:])
         src_bits = int(src_mlir_dtype[1:])
         shape = f"vector<{tile_size}x{dst_mlir_dtype}>" if tile_size > 1 else dst_mlir_dtype
         src_shape = f"vector<{tile_size}x{src_mlir_dtype}>" if tile_size > 1 else src_mlir_dtype
         if dst_mlir_dtype[0] == "i" and src_mlir_dtype[0] == "f":
-            raise NotImplementedError("floating point to integer conversion")
+            return f"arith.fptoui%{operand} : {src_shape} to {shape}", [tile_size, dst_mlir_dtype]
         if dst_mlir_dtype[0] == "f" and src_mlir_dtype[0] == "i":
-            raise NotImplementedError("integer to floating point conversion")
+            return f"arith.uitofp%{operand} : {src_shape} to {shape}", [tile_size, dst_mlir_dtype]
         if dst_mlir_dtype[0] == "i":
             if dst_bits > src_bits:
                 return f"arith.extui %{operand} : {src_shape} to {shape}", [tile_size, dst_mlir_dtype]
