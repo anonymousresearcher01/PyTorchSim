@@ -118,6 +118,8 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def binary_elementwise_common(operand1, operand2, var_info):
+        operand1.bounds = operand1.bounds.unknown()
+        operand2.bounds = operand2.bounds.unknown()
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
         # Tile size check
@@ -250,15 +252,15 @@ class ExtensionOverrides(common.OpOverrides):
         if isinstance(src_type, torch.dtype):
             src_type = mlir_common.DTYPE_TO_MLIR[src_type]
 
+        if "inf" == str(value) or "-inf" == str(value) or "nan" == str(value):
+            value = f"0x{mlir_common.MLIR_INF[str(value)][src_type]:x}"
         # if value represented by e notation, convert to float (ex 1e-3 -> 1.0e-3)
-        if "e" in str(value):
-            value = float(value)
+        elif "e" in str(value):
+            value = format(float(value), ".20f")
         elif src_type[0] == "f":
             value = format(value, ".20f")
         elif src_type[0] == "i":
             value = int(value)
-        if "inf" == str(value) or "-inf" == str(value) or "nan" == str(value):
-            value = f"0x{mlir_common.MLIR_INF[str(value)][src_type]:x}"
         return f'arith.constant {value} : {src_type}', [1, src_type]
 
     @staticmethod

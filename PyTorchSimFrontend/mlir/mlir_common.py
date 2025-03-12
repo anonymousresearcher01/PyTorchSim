@@ -550,19 +550,11 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
             @staticmethod
             def __getattr__(name: str) -> Callable[..., common.CSEVariable]:  # type: ignore[misc]
                 def inner(*args, **kwargs):
-                    # TritonTemplateKernel has no current_node
-                    buf_bounds = ValueRanges.unknown()
-                    if hasattr(V.interpreter, "current_node"):
-                        fx_node = V.interpreter.current_node
-                        assert isinstance(self.node_to_bounds, dict)
-                        buf_bounds = self.node_to_bounds.get(
-                            fx_node, ValueRanges.unknown()
-                        )
                     code, ret_info = getattr(parent_handler, name)(*args, var_info=self.var_info)
                     csevar = self.cse.generate(
                         self.compute,
                         code,
-                        bounds=buf_bounds,
+                        bounds=ValueRanges.unknown(),
                         assignment=(ret_info[0] is not None)
                     )
                     if ret_info[0] is not None:
