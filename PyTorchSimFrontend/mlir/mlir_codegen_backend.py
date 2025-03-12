@@ -257,6 +257,8 @@ class ExtensionOverrides(common.OpOverrides):
             value = format(value, ".20f")
         elif src_type[0] == "i":
             value = int(value)
+        if "inf" == str(value) or "-inf" == str(value) or "nan" == str(value):
+            value = f"0x{mlir_common.MLIR_INF[str(value)][src_type]:x}"
         return f'arith.constant {value} : {src_type}', [1, src_type]
 
     @staticmethod
