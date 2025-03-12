@@ -168,8 +168,8 @@ class Attention(nn.Module):
         v = v.view(bsz, seqlen, self.n_local_heads, self.head_dim)
 
         # Todo.
-        # q = apply_rotary_emb(q, freqs_cis)
-        # k = apply_rotary_emb(k, freqs_cis)
+        q = apply_rotary_emb(q, freqs_cis)
+        k = apply_rotary_emb(k, freqs_cis)
 
         q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
 
@@ -223,10 +223,12 @@ def precompute_freqs_cis(
     cache = torch.stack([freqs_cis.real, freqs_cis.imag], dim=-1)
     return cache.to(dtype=torch.bfloat16)
 
-
 def apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
-    xshaped = x.float().reshape(*x.shape[:-1], -1, 2).contiguous()
-    freqs_cis = freqs_cis.view(1, xshaped.size(1), 1, xshaped.size(3), 2).contiguous()
+    # FIXME. This is dummy rotary embedding
+    return x*freqs_cis
+
+def apply_rotary_emb2(x: Tensor, freqs_cis: Tensor) -> Tensor:
+    xshaped = x.reshape(*x.shape[:-1], -1, 2)
     x_out2 = torch.stack(
         [
             xshaped[..., 0] * freqs_cis[..., 0] - xshaped[..., 1] * freqs_cis[..., 1],

@@ -100,6 +100,8 @@ def test_decode(device, prompt_length, nr_tokens):
         input_pos = input_pos.to(device=device)
         cpu_mask = copy.deepcopy(mask)
         mask = mask.to(device=device)
+
+        freqs_cis = freqs_cis.view(1, T, 1, -1)
         cpu_freqs_cis = copy.deepcopy(freqs_cis)
         freqs_cis = freqs_cis.to(device=device)
 
