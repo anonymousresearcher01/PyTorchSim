@@ -20,6 +20,7 @@ class MLIRScheduling(BaseScheduling):
         self._ready_to_flush = False
         self.outer_function = set()
         config.inplace_buffers = False # FIXME. inout kernel makes trouble.. So disabled it!
+        self.max_fusion_size = 5
 
     def _set_flush_status(self, status: bool):
         self._ready_to_flush = status
@@ -28,6 +29,8 @@ class MLIRScheduling(BaseScheduling):
         return self.can_fuse_horizontal(node1, node2)
 
     def can_fuse_horizontal(self, node1, node2):
+        if (len(node1.get_nodes())+ len(node2.get_nodes())) > self.max_fusion_size:
+            return False
         _, (vars1, reduce1) = node1.group
         _, (vars2, reduce2) = node2.group
 

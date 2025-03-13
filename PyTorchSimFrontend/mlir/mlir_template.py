@@ -14,7 +14,7 @@ from torch._inductor.ir import Buffer, IRNode, TemplateBuffer
 from torch._inductor.select_algorithm import PartialRender
 from torch._inductor.codegen.cuda.cuda_kernel import CUDATemplateCaller
 from torch._inductor.autotune_process import TensorMeta
-from torch._inductor.virtualized import V
+from torch._inductor.virtualized import V, NullHandler
 from torch._inductor.utils import IndentedBuffer
 
 from PyTorchSimFrontend.mlir.mlir_autotune import MLIRBenchmarkRequest
@@ -390,42 +390,20 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
 
     # This function is for convolution wrapper function finalizing.
     def def_wrapper(self, only_store_buffer: bool = False, epilogue_buffer: str = False):
-        def wrapper_store_buf_hook():
-            output_bufs = self.kernel_group.args.output_buffers
-            if self.store_info['output_node'] not in output_bufs:
-                assert False, f"Output buffer {self.store_info['output_node']} not found in {output_bufs}"
-            if output_bufs[self.store_info['output_node']] == 'REMOVED':
-                if len(output_bufs) == 1 or len(self.store_info['dependent_buf']) == 0:
-                    assert False, "Output buffer is removed and no other output buffer is found"
-                return output_bufs[self.store_info['dependent_buf'][0]]  # FIXME: Only using the first dependent buffer
-            else:
-                return output_bufs[self.store_info['output_node']]
-
-        def wrapper_epilogue_buf_hook(name):
-            if name not in self.kernel_group.args.input_buffers:
-                assert False, f"Input buffer {name} not found in {self.kernel_group.args.input_buffers}"
-            return self.kernel_group.args.input_buffers[name]
-
         def wrapper_hook():
             arg_defs, *_ = self.kernel_group.args.mlir_argdefs(extra_node=self.extra_node)
             wrapper_arg_defs = [arg.split('%')[1].split(':')[0] for arg in arg_defs]
             return f"({', '.join(wrapper_arg_defs)})"
 
-        if only_store_buffer:
-            if "<DEF_CONV_WRAPPER_STORE_BUFFER>" not in self.render_hooks:
-                self.render_hooks["<DEF_CONV_WRAPPER_STORE_BUFFER>"] = wrapper_store_buf_hook
-            return "<DEF_CONV_WRAPPER_STORE_BUFFER>"
-        if epilogue_buffer:
-            if f"<DEF_CONV_WRAPPER_EPILOGUE_BUFFER_{epilogue_buffer}>" not in self.render_hooks:
-                self.render_hooks[f"<DEF_CONV_WRAPPER_EPILOGUE_BUFFER_{epilogue_buffer}>"] = functools.partial(
-                    wrapper_epilogue_buf_hook,
-                    name=epilogue_buffer
-                )
-            return f"<DEF_CONV_WRAPPER_EPILOGUE_BUFFER_{epilogue_buffer}>"
-        else:
-            if "<DEF_CONV_WRAPPER>" not in self.render_hooks:
-                self.render_hooks["<DEF_CONV_WRAPPER>"] = wrapper_hook
-            return "<DEF_CONV_WRAPPER>"
+        if "<DEF_CONV_WRAPPER>" not in self.render_hooks:
+            self.render_hooks["<DEF_CONV_WRAPPER>"] = wrapper_hook
+        return "<DEF_CONV_WRAPPER>"
+
+    def get_conv_inputs(self):
+        return self.kernel_group.args.input_buffers
+
+    def get_conv_outputs(self):
+        return {k: v for k, v in self.kernel_group.args.output_buffers.items() if v != 'REMOVED'}
 
     def output_name(self):
         # Cannot know the output name from the template, so we need to hook it
@@ -499,14 +477,18 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         return max(size, 2) # vector load/store
 
     def load_epilogue(self, name: str, index: sympy.Expr):
-        index_var = self.store_info['index_var']
+        load_dim = []
+        if not isinstance(V.graph, NullHandler) and name in V.graph.graph_inputs:
+            load_dim = V.graph.graph_inputs[name].layout.size
+        index_var = self.store_info['index_var'] if len(load_dim) != 1 else 'tile_n'
         index = self.rename_indexing(index)
         dram_var = self.kernel_group.args.input(name)
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
-        vlane_split_axis = self.kernel_group.tile_desc.vlane_split_axis
-        vlane_stride = self.kernel_group.tile_desc.vlane_stride
+        vlane_split_axis = self.kernel_group.tile_desc.vlane_split_axis if len(load_dim) != 1 else 0
+        vlane_stride = self.kernel_group.tile_desc.vlane_stride if len(load_dim) != 1 else 1
         tile_numel_per_lane = self.kernel_group.tile_desc.get_numel_per_lane()
+        # layout = V.graph.graph_inputs[name].layout
         if name not in self.buffer_names:
             # Allocate sram buffer
             dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])

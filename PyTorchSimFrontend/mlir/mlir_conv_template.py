@@ -511,38 +511,56 @@ def {{ FUNC_NAME }}{{kernel.def_wrapper()}}:
     X_padding[:, :, {{ PADDING_H }}:X.shape[2] + {{ PADDING_H }}, {{ PADDING_W }}:X.shape[3] + {{ PADDING_W }}] = X
 
     # Holding original output tensor
-    {{kernel.def_wrapper(only_store_buffer=True)}}_t = {{kernel.def_wrapper(only_store_buffer=True)}}
+    {%- for buf, name in kernel.get_conv_outputs().items() %}
+    {{ name }}_t = {{ name }}
+    {%- endfor %}
 
-    # Tanspose tensors
-    {%- if MULTI_TILE %}
-    X = X_padding.permute(2, 0, 3, 1).contiguous() # (BATCH, I_C, I_H, I_W) -> (I_H, BATCH, I_W, I_C)
-    {% elif SINGLE_BATCH %}
-    X = X_padding.permute(0, 2, 3, 1).contiguous() # (BATCH, I_C, I_H, I_W) -> (BATCH, I_H, I_W, I_C)
-    {% else %}
-    X = X_padding.permute(2, 3, 0, 1).contiguous() # (BATCH, I_C, I_H, I_W) -> (I_H, I_W, BATCH, I_C)
-    {% endif -%}
-    W = W.permute(2, 3, 1, 0).contiguous() # (O_C, I_C, K_H, K_W) -> (K_H, K_W, I_C, O_C)
-    {%- if SINGLE_BATCH %}
-    {{kernel.def_wrapper(only_store_buffer=True)}} = {{kernel.def_wrapper(only_store_buffer=True)}}.permute(0, 2, 3, 1).contiguous() # (BATCH, O_C, O_H, O_W) -> (BATCH, O_H, O_W, O_C)
-    {%- for buf in EPILOGUE_READS %}
-    {{kernel.def_wrapper(epilogue_buffer=buf)}} = {{kernel.def_wrapper(epilogue_buffer=buf)}}.permute(0, 2, 3, 1).contiguous()
+    # Tanspose inputs
+    {%- for buf, name in kernel.get_conv_inputs().items() %}
+      {%- if name == "X" %}
+        {%- if MULTI_TILE %}
+    {{ name }} = {{ name }}_padding.permute(2, 0, 3, 1).contiguous() # (BATCH, I_C, I_H, I_W) -> (I_H, BATCH, I_W, I_C)
+        {%- elif SINGLE_BATCH %}
+    {{ name }} = {{ name }}_padding.permute(0, 2, 3, 1).contiguous() # (BATCH, I_C, I_H, I_W) -> (BATCH, I_H, I_W, I_C)
+        {%- else %}
+    {{ name }} = {{ name }}_padding.permute(2, 3, 0, 1).contiguous() # (BATCH, I_C, I_H, I_W) -> (I_H, I_W, BATCH, I_C)
+        {%- endif %}
+      {%- elif name == "W" %}
+    {{ name }} = {{ name }}.permute(2, 3, 1, 0).contiguous() # (O_C, I_C, K_H, K_W) -> (K_H, K_W, I_C, O_C)
+      {%- elif name == "Bias" %}
+    {{ name }} = {{ name }}
+      {%- else %}
+        {%- if SINGLE_BATCH %}
+    {{ name }} = {{ name }}.permute(0, 2, 3, 1).contiguous() # (BATCH, O_C, O_H, O_W) -> (BATCH, O_H, O_W, O_C)
+        {%- else %}
+    {{ name }} = {{ name }}.permute(2, 3, 0, 1).contiguous() # (BATCH, O_C, O_H, O_W) -> (O_H, O_W, BATCH, O_C)
+        {%- endif %}
+      {%- endif %}
     {%- endfor %}
-    {% else %}
-    {{kernel.def_wrapper(only_store_buffer=True)}} = {{kernel.def_wrapper(only_store_buffer=True)}}.permute(2, 3, 0, 1).contiguous() # (BATCH, O_C, O_H, O_W) -> (O_H, O_W, BATCH, O_C)
-    {%- for buf in EPILOGUE_READS %}
-    {{kernel.def_wrapper(epilogue_buffer=buf)}} = {{kernel.def_wrapper(epilogue_buffer=buf)}}.permute(2, 3, 0, 1).contiguous()
+
+    # Transpose outputs
+    {%- for buf, name in kernel.get_conv_outputs().items() %}
+      {%- if SINGLE_BATCH %}
+    {{ name }} = {{ name }}.permute(0, 2, 3, 1).contiguous() # (BATCH, O_C, O_H, O_W) -> (BATCH, O_H, O_W, O_C)
+      {%- else %}
+    {{ name }} = {{ name }}.permute(2, 3, 0, 1).contiguous() # (BATCH, O_C, O_H, O_W) ->  (O_H, O_W, BATCH, O_C)
+      {%- endif %}
     {%- endfor %}
-    {% endif -%}
+
+    # Launch kernel
     {{ KERNEL_NAME }}<DEF_CONV_WRAPPER>
-    {% if BACKENDSIM_EAGER_MODE %}
+    {%- if BACKENDSIM_EAGER_MODE %}
     yield ({{KERNEL_NAME}}, <DEF_CONV_WRAPPER>)
-    {% endif %}
-    # Transpose back
-    {%- if SINGLE_BATCH %}
-    {{kernel.def_wrapper(only_store_buffer=True)}}_t.copy_({{kernel.def_wrapper(only_store_buffer=True)}}.permute(0, 3, 1, 2).contiguous()) # (BATCH, O_H, O_W, O_C) -> (BATCH, O_C, O_H, O_W)
-    {% else %}
-    {{kernel.def_wrapper(only_store_buffer=True)}}_t.copy_({{kernel.def_wrapper(only_store_buffer=True)}}.permute(2, 3, 0, 1).contiguous()) # (O_H, O_W, BATCH, O_C) -> (BATCH, O_C, O_H, O_W)
-    {% endif -%}
+    {%- endif %}
+
+    # Transpose back outputs
+    {%- for buf, name in kernel.get_conv_outputs().items() %}
+      {%- if SINGLE_BATCH %}
+    {{ name }}_t.copy_({{ name }}.permute(0, 3, 1, 2).contiguous()) # (BATCH, O_H, O_W, O_C) -> (BATCH, O_C, O_H, O_W)
+      {%- else %}
+    {{ name }}_t.copy_({{ name }}.permute(2, 3, 0, 1).contiguous()) # (O_H, O_W, BATCH, O_C) -> (BATCH, O_C, O_H, O_W)
+      {%- endif %}
+    {%- endfor %}
 """
 
 class MLIRConvTemplate(MLIRTemplate):
@@ -738,26 +756,6 @@ class MLIRConvTemplate(MLIRTemplate):
         Y = self.output_node
         Bias = None if len(self.input_nodes) == 2 else self.input_nodes[2]
 
-        # Wrapper function needs to transpose the epilogue node tensors same as the convolution input/outputs
-        # Currently, only the read tensors are transposed
-        epilogue_reads = []
-        epilogue_writes = []
-        if self.epilogue_nodes is not None:
-          main_node_rw = [X.get_name(), W.get_name(), Y.get_name()]
-          if Bias is not None:
-            main_node_rw.append(Bias.get_name())
-
-          for epilogue_node in self.epilogue_nodes:
-            reads = epilogue_node.read_writes.reads
-            for read in list(reads):
-              if read[0] not in main_node_rw:
-                epilogue_reads.append(read[0])
-
-            writes = epilogue_node.read_writes.writes
-            for write in list(writes):
-              if write[0] not in main_node_rw:
-                epilogue_writes.append(write[0])
-
         eager_mode = int(os.environ.get('BACKENDSIM_EAGER_MODE', default=False))
         options = dict(
             kernel=self.kernel,
@@ -767,8 +765,6 @@ class MLIRConvTemplate(MLIRTemplate):
             WEIGHT=W,
             BIAS=Bias,
             OUTPUT=Y,
-            EPILOGUE_READS=epilogue_reads,
-            EPILOGUE_WRITES=epilogue_writes,  # NOT USED YET
             PADDING_H=self.padding[0],
             PADDING_W=self.padding[1],
             MULTI_TILE=self.is_multi_tile(self.input_shape[1]),
