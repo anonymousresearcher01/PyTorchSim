@@ -4,6 +4,7 @@ import textwrap
 import re
 import math
 import sympy
+from collections import OrderedDict
 
 from typing import List, Optional
 from unittest.mock import patch
@@ -19,6 +20,7 @@ from torch._inductor.utils import IndentedBuffer
 from PyTorchSimFrontend.mlir.mlir_autotune import MLIRBenchmarkRequest
 from PyTorchSimFrontend.mlir.mlir_common import BaseMLIRHardwareInfo
 from PyTorchSimFrontend.mlir.mlir_codegen_backend import MLIRKernel
+from PyTorchSimFrontend.mlir.mlir_scheduling import SchedulerNode
 
 from . import mlir_common
 
@@ -42,7 +44,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         self.outer_func_name = outer_func_name
         self.outer_func_render = outer_func_render
         self.kernel_arg_attributes = kernel_arg_attributes
-        self.render_hooks = dict()
+        self.render_hooks = OrderedDict()
         self.buffer_names = dict()
         self.render_options = dict()
         self.tile_size = []
@@ -321,7 +323,10 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
                 self.named_nodes[name] = node
                 self.kernel_group.args.output_buffers[node.get_name()] = name
                 self.store_buffer_names.add(node.get_name())    #TODO: Is this enough not calling store() in mlir_common.py?
-                extra_node[node.get_name()] = node
+                if isinstance(node, SchedulerNode):
+                    extra_node[node.get_name()] = node.node
+                else:
+                    extra_node[node.get_name()] = node
                 self.buffer_names[node.get_name()] = 'Y_buffer'   #TODO: Buffer name fixed
 
         def hook():
@@ -351,6 +356,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
 
         assert "<STORE_OUTPUT>" not in self.render_hooks
         self.render_hooks["<STORE_OUTPUT>"] = hook
+        self.render_hooks.move_to_end("<STORE_OUTPUT>", last=False) # Force order to be triggered first
         return "<STORE_OUTPUT>"
 
     def def_function(self):
@@ -361,30 +367,28 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             return None, None
 
     def def_global_vars(self):
-        return "<GLOBAL_VARS>"
-
-    def replace_global_vars(self):
-        return textwrap.indent(self.global_vars.getvalue(), "").strip()
-
-    def add_extra_global_vars(self, code):
         key = "<GLOBAL_VARS>"
-        return code.replace(key, self.replace_global_vars())
+        def hook():
+            return textwrap.indent(self.global_vars.getvalue(), "").strip()
+
+        assert key not in self.render_hooks
+        self.render_hooks[key] = hook
+        return key
 
     def def_local_vars(self):
-        return "<LOCAL_VARS>"
-
-    def replace_local_vars(self):
-        code = IndentedBuffer()
-        code.tabwidth = 2
-        code.splice("\n")
-        with code.indent():
-            code.splice(self.const_buffer)
-            code.splice(self.alloc_buffer)
-        return code.getvalue()
-
-    def add_extra_local_vars(self, code):
         key = "<LOCAL_VARS>"
-        return code.replace(key, self.replace_local_vars())
+        def hook():
+            code = IndentedBuffer()
+            code.tabwidth = 2
+            code.splice("\n")
+            with code.indent():
+                code.splice(self.const_buffer)
+                code.splice(self.alloc_buffer)
+            return code.getvalue()
+
+        assert key not in self.render_hooks
+        self.render_hooks[key] = hook
+        return key
 
     def render(self, template, kwargs):
         # self.render_hooks = {}
@@ -454,6 +458,10 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         if name not in self.buffer_names:
             sram_var, index_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, tile_numel_per_lane, tile_shape, self.stores, index_var, index)
             self.buffer_names[name] = sram_var
+        else:
+            zero_cse = self.get_const_cse(0)
+            sram_dims = len(tile_shape.split("x")) - 1
+            sram_index_var = ",".join([f"%{zero_cse}"] * sram_dims)
         sram_var = self.buffer_names[name]
 
         operation = "affine.vector_store" if tile_numel_per_lane > 1 else "affine.store"

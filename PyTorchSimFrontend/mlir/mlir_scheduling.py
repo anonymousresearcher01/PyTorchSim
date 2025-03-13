@@ -4,7 +4,7 @@ from PyTorchSimFrontend import extension_config
 from PyTorchSimFrontend.mlir.mlir_codegen_backend import MLIRKernel
 
 from torch._inductor import config
-from torch._inductor.scheduler import BaseScheduling, FusedSchedulerNode
+from torch._inductor.scheduler import BaseScheduling, FusedSchedulerNode, SchedulerNode
 from torch._inductor.utils import IndentedBuffer
 from torch._inductor.virtualized import V
 
@@ -147,6 +147,8 @@ class MLIRScheduling(BaseScheduling):
                 tile_desc = kernel.compute_tile_size(epilogue_nodes, vars, reduction_vars)
                 kernel.kernel_group.set_tile_info(tile_desc)
                 kernel.adjust_tile_size()
+            # Flush created varaibles, since template fusion doen't share variable
+            kernel.cse.cache.clear()
             for node in epilogue_nodes:
                 node.codegen((vars, reduction_vars))
         with V.set_kernel_handler(kernel):
@@ -155,8 +157,6 @@ class MLIRScheduling(BaseScheduling):
                 if isinstance(partial_code, str)
                 else partial_code.finalize()
             )
-            src_code = kernel.add_extra_global_vars(src_code)
-            src_code = kernel.add_extra_local_vars(src_code)
         return src_code
 
     def codegen_template(self, template_node, epilogue_nodes):
