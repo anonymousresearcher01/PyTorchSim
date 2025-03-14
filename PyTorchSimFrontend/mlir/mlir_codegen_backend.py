@@ -105,7 +105,6 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
         )
 
 class ExtensionOverrides(common.OpOverrides):
-    index_set = set()
     # Binary element wise operations
     @staticmethod
     def custom_cast(operand, target_type, *args, var_info=None, **kwargs):
@@ -698,7 +697,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.welford_reduce_out = None
         self.reduce_iterator = {}
         self.is_template_kernel = False
-
+        self.index_set = set()
     # padding type 0: zero-padding 1: negative-padding(-inf) ...
     def get_padding_type(self):
         ops = self.current_node.node.origins
@@ -1051,9 +1050,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         renamed_symbols = {symbol: "d"+str(symbol)[5:] for symbol in index.free_symbols}
         renamed_expression = index.subs(renamed_symbols)
-        if index not in ExtensionOverrides.index_set:
+        if index not in self.index_set:
             # Register this operand
-            ExtensionOverrides.index_set.add(index)
+            self.index_set.add(index)
             ops._index_expr(tile_size, sram_var, renamed_expression, index)
 
         line = f"affine.vector_load %{sram_var}[0, 0, 0] : {tile_shape}, vector<{tile_numel_per_lane}x{mlir_dtype}> // {renamed_expression}"
