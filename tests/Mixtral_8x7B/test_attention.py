@@ -122,6 +122,23 @@ def test_ffn(device):
     cpu_res = cpu_model(cpu_prompt)
     test_result("FFN", res, cpu_res)
 
+def test_concat(device, size1=(1, 8, 32, 64), size2=(1, 8, 1, 64), dim=2):
+    def concat_tensors(a, b):
+        return torch.cat((a, b), dim=dim)
+
+    x = torch.randn(size1)
+    y = torch.randn(size2)
+    cpu_x = x.clone()
+    cpu_y = y.clone()
+    x = x.to(device=device)
+    y = y.to(device=device)
+
+    opt_fn = torch.compile(dynamic=False)(concat_tensors)
+    res = opt_fn(x, y)
+    out = concat_tensors(cpu_x, cpu_y)
+
+    test_result("ConcatTensors", res, out)
+
 if __name__ == "__main__":
     import os
     import sys
@@ -130,6 +147,7 @@ if __name__ == "__main__":
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()
     device = module.custom_device()
-    test_decode(device, 32, 1)
+    test_decode(device, 32, 2)
+    #test_concat(device, size1=(1, 8, 32, 64), size2=(1,8,1,64), dim=2)
     #test_attention(device)
     #test_ffn(device)
