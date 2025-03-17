@@ -225,7 +225,6 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         M, N, K = self.gemm_combination_mapping(O_W, N, K, n_extra_node)
         max_k_h_w = 1
         for o_h in sympy.divisors(O_H):
-            o_h = 32
             for k_h in sympy.divisors(K_H):
                 for k_w in sympy.divisors(K_W):
                     i_h = 1 + (o_h - 1) * stride[0] + (k_h - 1) * dilation[0]

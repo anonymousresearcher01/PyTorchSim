@@ -660,16 +660,14 @@ class MLIRConvTemplate(MLIRTemplate):
         elif self.is_single_batch(BATCH) and self.stride[0] == 1:
           conv_template = SINGLE_BATCH_CONV_TEMPLATE
           TILE_K_H, TILE_K_W, TILE_O_H, TILE_O_W, TILE_M, TILE_N, TILE_K = kernel.conv_single_batch_mapping(BATCH, O_C, I_C, K_H, 1, O_H, O_W, self.stride, self.dilation, n_extra_node) # TODO: implement K_W
-          if TILE_O_W > O_W:  # FIXME: Temporal solution for single batch fusion
-            TILE_O_W = O_W
           TILE_I_H = 1 + (TILE_O_H - 1) * self.stride[0] + (TILE_K_H - 1) * self.dilation[0]
           TILE_I_W = 1 + (TILE_O_W - 1) * self.stride[1] + (TILE_K_W - 1) * self.dilation[1]
           SUB_TILE_M = TILE_I_W if TILE_I_W < kernel.vector_lane else kernel.vector_lane
           SUB_TILE_N = TILE_N if TILE_N < kernel.vector_lane else kernel.vector_lane
           x_spad_size_per_lane = kernel.get_spad_size_per_lane(TILE_I_W * TILE_I_H, TILE_K)
-          y_spad_size_per_lane = kernel.get_spad_size_per_lane(TILE_O_H * TILE_O_W * TILE_M, TILE_N)
+          y_spad_size_per_lane = kernel.get_spad_size_per_lane(TILE_O_H  * TILE_M, TILE_N)
           x_spad_size = TILE_I_W * TILE_I_H * TILE_K
-          y_spad_size = TILE_O_H * TILE_O_W * TILE_M * TILE_N
+          y_spad_size = TILE_O_H * TILE_M * TILE_N
           TOG_latency = O_W if TILE_M > O_W else TILE_M
 
         kernel.loop_size = [TOG_latency, TILE_N, TILE_K]
@@ -739,7 +737,6 @@ class MLIRConvTemplate(MLIRTemplate):
             tile_stride = [TILE_O_W * TILE_M * TILE_N, TILE_M * TILE_N, 1, TILE_M]
         )
         code = self._template_from_string(conv_template).render(**kernel.render_options)
-
         self.header = f"float X_spad[{x_spad_size_per_lane}] __attribute__ ((section(\".spad\")));\n"
         self.header += f"float W_spad[{w_spad_size_per_lane}] __attribute__ ((section(\".spad\")));\n"
         self.header += f"float Y_spad[{y_spad_size_per_lane}] __attribute__ ((section(\".spad\")));\n"
