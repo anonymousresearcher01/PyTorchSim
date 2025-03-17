@@ -14,7 +14,7 @@ from torch._inductor.ir import Buffer, IRNode, TemplateBuffer
 from torch._inductor.select_algorithm import PartialRender
 from torch._inductor.codegen.cuda.cuda_kernel import CUDATemplateCaller
 from torch._inductor.autotune_process import TensorMeta
-from torch._inductor.virtualized import V, NullHandler
+from torch._inductor.virtualized import V, NullHandler, _ops as ops
 from torch._inductor.utils import IndentedBuffer
 
 from PyTorchSimFrontend.mlir.mlir_autotune import MLIRBenchmarkRequest
@@ -124,7 +124,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         max_spad_per_lane = spad_size_per_lane // 2 # double buffer
         m_pad_factor = self.vector_lane if M > self.vector_lane else 8
         n_pad_factor = self.vector_lane if N > self.vector_lane else 8
-        k_pad_factor = self.vector_lane if K > self.vector_lane else 8
+        k_pad_factor = self.vector_lane if K > self.vector_lane else 1
         K = max(K, 8)
         M_padded = ((M + m_pad_factor - 1) // m_pad_factor) * m_pad_factor
         N_padded = ((N + n_pad_factor - 1) // n_pad_factor) * n_pad_factor
@@ -225,6 +225,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         M, N, K = self.gemm_combination_mapping(O_W, N, K, n_extra_node)
         max_k_h_w = 1
         for o_h in sympy.divisors(O_H):
+            o_h = 32
             for k_h in sympy.divisors(K_H):
                 for k_w in sympy.divisors(K_W):
                     i_h = 1 + (o_h - 1) * stride[0] + (k_h - 1) * dilation[0]
@@ -536,8 +537,14 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         operation = "affine.vector_store" if tile_numel_per_lane > 1 else "affine.store"
         shape = f", vector<{tile_numel_per_lane}x{mlir_dtype}>" if tile_numel_per_lane > 1 else ""
         zero_var = self.get_const_cse(0)
+
+        _, operand_type = self.var_info[value]
+        if mlir_dtype != operand_type:
+            value = ops.to_dtype(value, mlir_dtype, var_info=self.var_info)
+
         tile_indices = ",".join([f"%{zero_var}"] * self.store_info["tile_nr_dim"])
         line = f"{operation} %{value}, %{sram_var}[{tile_indices}] : {tile_shape}{shape}"
+
         self.cse.generate(self.stores, line, assignment = False)
         code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
                                  f"{name}_tag", dram_shape, tile_shape, tile_stride)
