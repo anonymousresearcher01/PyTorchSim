@@ -106,6 +106,8 @@ if __name__ == "__main__":
     import os
     import sys
     base_dir = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
+    config = os.environ.get('TORCHSIM_CONFIG', default=f'{base_dir}/PyTorchSimBackend/configs/systolic_ws_128x128_c1_simple_noc_tpuv2.json')
+    config = config.split('/')[-1].split('.')[0] # extract config name from config path
     sys.path.append(base_dir)
     args = argparse.ArgumentParser()
     args.add_argument('--size', type=str, default='base')
@@ -115,7 +117,7 @@ if __name__ == "__main__":
     args = args.parse_args()
     size = args.size
     input_seq = args.input_size
-    result_path = os.path.join(base_dir, args.dump_path, f"BERT_{size}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    result_path = os.path.join(base_dir, args.dump_path, config, f"BERT_{size}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
     # setting environment variables
     os.environ['TORCHSIM_DUMP_PATH'] = result_path
     # only timing simulation
