@@ -753,8 +753,12 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if len(expr.args) == 0:
             return expr
 
+        args = list(expr.args)
+        # Sort index variable.. ex) (%index1, %index0)
+        args_dict = {term: list(term.free_symbols)[0] for term in args if term.free_symbols}
+        sorted_args = sorted(args_dict.keys(), key=lambda term: str(args_dict[term]))
         indices = []
-        for arg in expr.args:
+        for arg in sorted_args:
             if arg.is_Mul and arg.args[0].is_number:
                 new_arg = sympy.Symbol(str(self.convert_index(arg.args[1], buffer)))
                 expr = expr.replace(arg.args[1], new_arg)
@@ -763,7 +767,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 new_arg = sympy.Symbol(str(self.convert_index(arg, buffer)))
                 expr = expr.replace(arg, new_arg)
                 indices.append(str(new_arg))
-        indices.sort()
 
         # Extract index var
         expr_str = str(expr)
