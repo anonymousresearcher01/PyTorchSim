@@ -117,14 +117,14 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
 
         return inner_I, inner_J, inner_K
 
-    def gemm_combination_mapping(self, M, N, K, n_extra_node=0):
+    def gemm_combination_mapping(self, M, N, K, n_extra_node=0, pad_k=True):
         spad_size_per_lane = self.spad_info["spad_size"]
         spad_size = spad_size_per_lane * self.vector_lane
         max_spad_size = spad_size // 2 # double buffer
         max_spad_per_lane = spad_size_per_lane // 2 # double buffer
         m_pad_factor = self.vector_lane if M > self.vector_lane else 8
         n_pad_factor = self.vector_lane if N > self.vector_lane else 8
-        k_pad_factor = self.vector_lane if K > self.vector_lane else 1
+        k_pad_factor = self.vector_lane if K > self.vector_lane else (8 if pad_k else 1)
         K = max(K, 8)
         M_padded = ((M + m_pad_factor - 1) // m_pad_factor) * m_pad_factor
         N_padded = ((N + n_pad_factor - 1) // n_pad_factor) * n_pad_factor
@@ -161,7 +161,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         max_spad_per_lane = spad_size_per_lane // 2 # double buffer
 
         max_used_spad_size = 0
-        M, N, K = self.gemm_combination_mapping(M, N, K, n_extra_node)
+        M, N, K = self.gemm_combination_mapping(M, N, K, n_extra_node=n_extra_node, pad_k=False)
         max_k_h_w = 1 # maximize kernel size
         for o_h in sympy.divisors(O_H):
             for o_w in sympy.divisors(O_W):
@@ -192,7 +192,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         max_spad_per_lane = spad_size_per_lane // 2
 
         max_used_spad_size = 0
-        M, N, K = self.gemm_combination_mapping(M, N, K * K_W, n_extra_node)
+        M, N, K = self.gemm_combination_mapping(M, N, K * K_W, n_extra_node=n_extra_node, pad_k=False)
         max_k_h_w = K_W
         for o_h in sympy.divisors(O_H):
             for o_w in sympy.divisors(O_W):
@@ -222,7 +222,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         max_spad_per_lane = spad_size_per_lane // 2
 
         max_used_spad_size = 0
-        M, N, K = self.gemm_combination_mapping(O_W, N, K, n_extra_node)
+        M, N, K = self.gemm_combination_mapping(O_W, N, K, n_extra_node=n_extra_node, pad_k=False)
         max_k_h_w = 1
         for o_h in sympy.divisors(O_H):
             for k_h in sympy.divisors(K_H):
@@ -488,7 +488,6 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         vlane_split_axis = self.kernel_group.tile_desc.vlane_split_axis if len(load_dim) != 1 else 0    # FIXME: Fixed split axis for 1d load dim
         vlane_stride = self.kernel_group.tile_desc.vlane_stride if len(load_dim) != 1 else 1    # FIXME: Fixed stride for 1d load dim
         tile_numel_per_lane = self.kernel_group.tile_desc.get_numel_per_lane()
-        # layout = V.graph.graph_inputs[name].layout
         if name not in self.buffer_names:
             # Allocate sram buffer
             dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
