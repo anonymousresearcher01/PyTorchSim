@@ -3,9 +3,9 @@
 uint32_t Dram::get_channel_id(mem_fetch* access) {
   uint32_t channel_id;
   if (_n_ch_per_partition >= 16)
-    channel_id = ipoly_hash_function((new_addr_type)access->get_addr()/_config.dram_req_size, 0, _n_ch_per_partition);
+    channel_id = ipoly_hash_function((new_addr_type)access->get_addr()/_req_size, 0, _n_ch_per_partition);
   else
-    channel_id = ipoly_hash_function((new_addr_type)access->get_addr()/_config.dram_req_size, 0, 16) % _n_ch_per_partition;
+    channel_id = ipoly_hash_function((new_addr_type)access->get_addr()/_req_size, 0, 16) % _n_ch_per_partition;
 
   channel_id += ((access->get_numa_id() % _n_partitions)* _n_ch_per_partition);
   return channel_id;
@@ -54,7 +54,7 @@ DramRamulator2::DramRamulator2(SimulationConfig config, cycle_type* core_cycle) 
   _mem.resize(_n_ch);
   for (int ch = 0; ch < _n_ch; ch++) {
     _mem[ch] = std::make_unique<Ramulator2>(
-      ch, _n_ch, config.dram_config_path, "Ramulator2", _config.dram_print_interval, config.dram_nbl);
+      ch, _n_ch, config.dram_config_path, "Ramulator2", _config.dram_print_interval, _n_bl);
   }
   _tx_log2 = log2(_req_size);
   _tx_ch_log2 = log2(_n_ch_per_partition) + _tx_log2;
@@ -99,6 +99,8 @@ bool DramRamulator2::is_full(uint32_t cid, mem_fetch* request) {
 }
 
 void DramRamulator2::push(uint32_t cid, mem_fetch* request) {
+  addr_type target_addr = (request->get_addr() >> _tx_ch_log2) << _tx_log2;
+  request->set_addr(target_addr);
   m_from_crossbar_queue[cid].push(request);
 }
 
