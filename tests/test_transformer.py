@@ -29,15 +29,6 @@ class my_MultiheadAttention(torch.nn.Module):
         self.linears = clones(torch.nn.Linear(d_model, d_model), 4)
         self.attn = None
 
-    def attention(self, query, key, value):
-        d_k = query.size(-1)
-        print(torch.matmul(query, key.transpose(-2, -1)))
-
-        scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
-        p_attn = scores.softmax(dim=-1)
-        print(p_attn)
-        return torch.matmul(p_attn, value), p_attn
-
     def forward(self, query, key, value):
         # 1) Do all the linear projections in batch from d_model => h x d_k
         query, key, value = [
@@ -46,9 +37,6 @@ class my_MultiheadAttention(torch.nn.Module):
         ]
 
         # 2) Apply attention on all the projected vectors in batch.
-        # x, self.attn = self.attention(query, key, value)
-        # d_k = query.size(-1)
-
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.d_k)
         p_attn = scores.softmax(dim=-1)
         x = torch.matmul(p_attn, value)
