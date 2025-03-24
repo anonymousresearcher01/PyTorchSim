@@ -62,25 +62,42 @@ class MLIRMaxPoolTemplate(MLIRTemplate):
         W = Y.get_size()[3]
         BCH = B * C * H
         kernel.loop_size = None
-        options = {
-          "KERNEL_NAME" : self.name,
-          "kernel" : kernel,
-          "IN" : X.get_numel(),
-          "OUT" : Y.get_numel(),
-          "X" : X,
-          "Y" : Y,
-          "BCH" : BCH,
-          "W" : W,
-          "in_tile" : in_tile,
-          "out_tile" : out_tile,
-        }
-        code = self._template_from_string(TEMPLATE).render(**options)
+        kernel.render_options = dict(
+            KERNEL_NAME=self.name,
+            kernel=kernel,
+            IN=X.get_numel(),
+            OUT=Y.get_numel(),
+            X=X,
+            Y=Y,
+            BCH=BCH,
+            W=W,
+            in_tile=in_tile,
+            out_tile=out_tile,
+            DATA_STYPE="f32",
+        )
+        kernel.store_info = dict(
+            output_node = self.output_node.name,
+            dependent_buf = [],
+            sram_var = "Y_buffer",
+            dram_var = "Y",
+            index_var = "index0",
+            tag_var = "tag",
+            vlane_split_axis = 1,
+            vlane_stride = 1,
+            mlir_dtype = kernel.render_options['DATA_STYPE'],
+            tile_nr_dim = 2,
+            dram_shape = f"memref<{kernel.render_options['OUT']}x{kernel.render_options['DATA_STYPE']}>",
+            tile_shape = f"memref<{out_tile}x{out_tile}x{kernel.render_options['DATA_STYPE']}, 1>",
+            tile_size = (out_tile, out_tile),
+            tile_stride = [1, out_tile]
+        )
+        code = self._template_from_string(TEMPLATE).render(**kernel.render_options)
         self.header = f"float X_spad[{in_tile * in_tile // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
         self.header += f"float Y_spad[{out_tile * out_tile // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
         self.gem5_header = f"float X_spad[{in_tile * in_tile // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
         self.gem5_header += f"float Y_spad[{out_tile * out_tile // kernel.vector_lane}] __attribute__ ((section(\".spad\")));\n"
 
-        kernel.add_loop_info([options["IN"]], [kernel.vector_lane, kernel.vector_lane])
+        kernel.add_loop_info([kernel.render_options["IN"]], [kernel.vector_lane, kernel.vector_lane])
         return code
 
     def codegen_header(self, code, extra_headers):
