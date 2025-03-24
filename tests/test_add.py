@@ -37,7 +37,7 @@ def test_vector_tensor_add(device, size=(128, 128)):
     def vectoradd(a, b):
         return a + b
     x = torch.randn(size).to(device=device)
-    y = torch.randn(size[0]).to(device=device)
+    y = torch.randn(size[-1]).to(device=device)
     opt_fn = torch.compile(dynamic=False)(vectoradd)
     res = opt_fn(x, y)
     out = vectoradd(x.cpu(), y.cpu())

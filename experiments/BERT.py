@@ -95,7 +95,7 @@ if __name__ == "__main__":
     import sys
     base_dir = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
     config = os.environ.get('TORCHSIM_CONFIG', default=f'{base_dir}/PyTorchSimBackend/configs/systolic_ws_128x128_c1_simple_noc_tpuv2.json')
-    config = config.split('/')[-1].split('.')[0] # extract config name from config path
+    config = config.split('/')[-1].split('.')[0][9:] # extract config name from config path FIXME: gem5 result is different as directoy name
     sys.path.append(base_dir)
     args = argparse.ArgumentParser()
     args.add_argument('--size', type=str, default='base')
