@@ -148,6 +148,13 @@ class ExtensionOverrides(common.OpOverrides):
             elif op_type1[1][0] == "f" and op_type2[1][0] == "i":
                 operand2 = ops.to_dtype(operand2, op_type1[1], var_info)
                 op_type2 = var_info[operand2]
+            elif op_type1[1][0] == op_type2[1][0]:
+                if int(op_type1[1][1:]) > int(op_type2[1][1:]):
+                   operand2 = ops.ext(operand2, op_type1[1])
+                   op_type2 = var_info[operand2]
+                elif int(op_type1[1][1:]) < int(op_type2[1][1:]):
+                   operand1 = ops.ext(operand1, op_type2[1])
+                   op_type1 = var_info[operand1]
             else:
                 raise NotImplementedError("Unsupported type converting")
 
@@ -368,6 +375,17 @@ class ExtensionOverrides(common.OpOverrides):
             var_info[operand] = dtype
 
         return ops.div(ops.constant(1.0, dtype), operand), [tile_size, dtype]
+
+    @staticmethod
+    def ext(operand, dtype, *args, var_info=None, **kwargs):
+        op_type = var_info[operand]
+        shape = f"vector<{op_type[0]}x{op_type[1]}>" if op_type[0] > 1 else f"{op_type[1]}"
+        target_type = f"vector<{op_type[0]}x{dtype}>" if op_type[0] > 1 else f"{dtype}"
+        if op_type[0] == "f":
+            opcode = f'arith.extf'
+        else:
+            opcode = f'arith.extui'
+        return f'{opcode} %{operand} : {shape} to {target_type}', [op_type[0], dtype]
 
     # Logical operations
     @staticmethod
@@ -668,29 +686,37 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         super().__init__(kernel_group)
         self.const_buffer = IndentedBuffer()
         self.alloc_buffer = IndentedBuffer()
+        self.spad_buffer = IndentedBuffer()
         self.reduction_prefix = IndentedBuffer()
         self.reduction_suffix = IndentedBuffer()
+        self.applys = IndentedBuffer()
         self.body = IndentedBuffer()
+        self.dma_loads = IndentedBuffer()
+        self.dma_stores = IndentedBuffer()
+        self.indexed_buffer = IndentedBuffer()
         self.global_vars = IndentedBuffer()
-        self.global_vars_dict = dict()
         self.header = IndentedBuffer()
+        self.gem5_header = IndentedBuffer()
         self.header.writeline("#include <unistd.h>")
         self.header.writeline("#include <stdlib.h>")
         self.header.writeline("void* __wrap_malloc(size_t size) { return sbrk(size); }")
         self.header.writeline("void __wrap_free(void *ptr) { return; }")
-        self.gem5_header = IndentedBuffer()
-        self.reduction_vars = {}
         self.reduction_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_acc")
+        self.spad_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="spad")
+        self.apply_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="apply")
         self.iterator_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="iter")
         self.init_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="init")
         self.init_vec_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="init_vec")
         self.const_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="const")
         self.alloc_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="alloc")
+        self.indexed_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="indexed_op")
         self.map_cse = common.CSE("#", self.suffix, name_prefix="map")
+        self.global_vars_dict = dict()
+        self.reduction_vars = dict()
         self.consts = dict()
         self.tags = dict()
-        self.dma_read_cache = {}
-        self.dma_write_cache = {}
+        self.dma_read_cache = dict()
+        self.dma_write_cache = dict()
         self.dma_read_counter = 1
         self.dma_write_counter = 1
         self.affine_yield = {}
@@ -698,6 +724,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.reduce_iterator = {}
         self.is_template_kernel = False
         self.index_set = set()
+        self.spad_buffer_dict = dict()
+
     # padding type 0: zero-padding 1: negative-padding(-inf) ...
     def get_padding_type(self):
         ops = self.current_node.node.origins
@@ -730,12 +758,13 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         args = ", ".join(map(str, indices))
         map_var = self.map_cse.generate(self.global_vars, f"affine_map<({args}) -> ({expr_str})>")
         args = ", ".join([f"%{i}" for i in indices])
-        index = self.cse.generate(buffer, f"affine.apply #{map_var}({args})")
+        index = self.apply_cse.generate(buffer, f"affine.apply #{map_var}({args})")
         return index
 
     def parse_indices(self, expr, buffer=None) -> common.CSEVariable:
         if buffer is None:
-            buffer = self.loads
+            buffer = self.applys
+
         # Constant case
         if expr.is_number:
             return self.get_const_cse(int(expr))
@@ -744,8 +773,12 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if len(expr.args) == 0:
             return expr
 
+        args = list(expr.args)
+        # Sort index variable.. ex) (%index1, %index0)
+        args_dict = {term: list(term.free_symbols)[0] for term in args if term.free_symbols}
+        sorted_args = sorted(args_dict.keys(), key=lambda term: str(args_dict[term]))
         indices = []
-        for arg in expr.args:
+        for arg in sorted_args:
             if arg.is_Mul and arg.args[0].is_number:
                 new_arg = sympy.Symbol(str(self.convert_index(arg.args[1], buffer)))
                 expr = expr.replace(arg.args[1], new_arg)
@@ -754,24 +787,23 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 new_arg = sympy.Symbol(str(self.convert_index(arg, buffer)))
                 expr = expr.replace(arg, new_arg)
                 indices.append(str(new_arg))
-        indices.sort()
 
         # Extract index var
         expr_str = str(expr)
         args = ", ".join(map(str, indices))
-        map_var = self.map_cse.generate(self.global_vars, f"affine_map<({args}) -> ({expr_str})>")
+        map_var = self.map_cse.generate(self.global_vars, f"affine_map<({args})[] -> ({expr_str})>")
         args = ", ".join([f"%{i}" for i in indices])
-        index = self.cse.generate(buffer, f"affine.apply #{map_var}({args})")
+        index = self.apply_cse.generate(buffer, f"affine.apply #{map_var}({args})[]")
         return index
 
     def load(self, name: str, index: sympy.Expr):
         index = self.rename_indexing(index)
+        index = self.convert_indirect_indexing(index)
         padding = self.get_padding_type()
-        index_var = self.parse_indices(index)
         dram_var = self.kernel_group.args.input(name)
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
-        local_tile_desc, index_var = self.get_dma_info(name, index, index_var)
+        local_tile_desc, index_var = self.get_dma_info(name, index)
         vlane_split_axis = local_tile_desc.vlane_split_axis
         vlane_stride = local_tile_desc.vlane_stride
         tile_numel_per_lane = local_tile_desc.get_numel_per_lane()
@@ -779,32 +811,36 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         tile_shape = local_tile_desc.get_mlir_shape(mlir_dtype)
         tile_stride = local_tile_desc.get_tile_stride()
+        vshape = local_tile_desc.get_mlir_vshape(mlir_dtype)
 
         # Define scratch pad buffer
-        sram_var, index_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, tile_numel_per_lane, tile_shape, self.loads, index_var, index)
+        sram_var, index_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, tile_numel_per_lane, tile_shape, index_var, index)
 
         # MVIN Encoding
         code = self.get_dma_code("MVIN", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
                                  f"{name}_tag", dram_shape, tile_shape, tile_stride, padding)
-        self.cse.generate(self.loads, code, assignment = False) # FIXME: assignment = False does not support caching
+        self.cse.generate(self.dma_loads, code, assignment = False) # FIXME: assignment = False does not support caching
 
         # Generate vector load instruction
-        operation = "affine.vector_load" if tile_numel_per_lane > 1 else "affine.load"
-        shape = f", vector<{tile_numel_per_lane}x{mlir_dtype}>" if tile_numel_per_lane > 1 else ""
-        line = f"{operation} %{sram_var}[{sram_index_var}] : {tile_shape}{shape}"
-        out = self.cse.generate(self.compute, line)
+        if tile_numel_per_lane > 1:
+            operation = "affine.vector_load"
+            line = f"{operation} %{sram_var}[{sram_index_var}] : {tile_shape}, {vshape}"
+        else:
+            operation = "affine.load"
+            line = f"{operation} %{sram_var}[{sram_index_var}] : {tile_shape}"
+        out = self.cse.generate(self.loads, line)
         self.register_var_info(out, [tile_numel_per_lane, mlir_dtype])
+        self.spad_buffer_dict[str(out)] = [sram_var, local_tile_desc.get_tile_size(), tile_numel_per_lane, sram_index_var, tile_shape, vshape]
         return out
 
     def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
         index = self.rename_indexing(index)
-        index_var = self.parse_indices(index)
         dram_var = self.kernel_group.args.output(name)
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
 
         # Prepare dma instruction
-        local_tile_desc, index_var = self.get_dma_info(name, index, index_var)
+        local_tile_desc, index_var = self.get_dma_info(name, index)
         vlane_split_axis = local_tile_desc.vlane_split_axis
         vlane_stride = local_tile_desc.vlane_stride
         tile_numel_per_lane = local_tile_desc.get_numel_per_lane()
@@ -812,24 +848,28 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         tile_shape = local_tile_desc.get_mlir_shape(mlir_dtype)
         tile_stride = local_tile_desc.get_tile_stride()
+        vshape = local_tile_desc.get_mlir_vshape(mlir_dtype)
 
         # Define scratch pad buffer
-        sram_var, index_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, tile_numel_per_lane, tile_shape, self.stores, index_var, index)
+        sram_var, index_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, tile_numel_per_lane, tile_shape, index_var, index)
 
         # Generate vector store instruction
         store_size, operand_type = self.var_info[value]
-        operation = "affine.vector_store" if tile_numel_per_lane > 1 and store_size > 1 else "affine.store"
-        shape = f", vector<{tile_numel_per_lane}x{mlir_dtype}>" if tile_numel_per_lane > 1 and store_size > 1 else ""
         if mlir_dtype != operand_type:
             value = ops.to_dtype(value, mlir_dtype, var_info=self.var_info)
 
-        line = f"{operation} %{value}, %{sram_var}[{sram_index_var}] : {tile_shape}{shape}"
+        if tile_numel_per_lane > 1 and store_size > 1:
+            operation = "affine.vector_store"
+            line = f"{operation} %{value}, %{sram_var}[{sram_index_var}] : {tile_shape}, {vshape}"
+        else:
+            operation = "affine.store"
+            line = f"{operation} %{value}, %{sram_var}[{sram_index_var}] : {tile_shape}"
         self.stores.writeline(common.DeferredLine(name, line)) # TODO: Should be changed to self.compute?
 
         # Generate DMA instruction
         code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
                                  f"{name}_tag", dram_shape, tile_shape, tile_stride)
-        self.stores.writeline(common.DeferredLine(name, code))
+        self.dma_stores.writeline(common.DeferredLine(name, code))
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
         argmax_or_argmin = reduction_type in {"argmax", "argmin"}
@@ -940,10 +980,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
         index = self.rename_indexing(index)
-        index_var = self.parse_indices(index, buffer=self.reductions_suffix)
 
         # Tile is always reuduced in inner loop
-        local_tile_desc, index_var = self.get_dma_info(name, index, index_var, broadcast=False, store_reduction=True, buffer=self.reductions_suffix)
+        local_tile_desc, index_var = self.get_dma_info(name, index, broadcast=False, store_reduction=True, buffer=self.reductions_suffix)
         vlane_split_axis = local_tile_desc.vlane_split_axis
         vlane_stride = local_tile_desc.vlane_stride
         tile_numel_per_lane = local_tile_desc.get_numel_per_lane()
@@ -952,12 +991,12 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         tile_shape = local_tile_desc.get_mlir_shape(mlir_dtype)
         tile_stride = local_tile_desc.get_tile_stride()
 
-        sram_var, index_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, tile_numel_per_lane, tile_shape, self.reductions_suffix,
-                                                                         index_var, index, buffer=self.reduction_suffix)
+        sram_var, index_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, tile_numel_per_lane, tile_shape, index_var,
+                                                                         index, buffer=self.reduction_suffix)
         if self.welford_reduce_out is not None:
             # raise NotImplementedError()
             sum, sqr_sum, _ = self.welford_reduce_out
-            shape = f"vector<{tile_numel_per_lane}x{mlir_dtype}>" if self.buffer_types[name][1] > 1 else mlir_dtype
+            shape = local_tile_desc.get_mlir_vshape(mlir_dtype) if self.buffer_types[name][1] > 1 else mlir_dtype
             # mean
             divider = self.cse.generate(self.reductions_suffix, f"arith.constant {float(self.ranges[self.reduction_depth])} : f32")
             if self.buffer_types[name][1] > 1:
@@ -987,8 +1026,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if tile_numel_per_lane == 1:
             shape = ""
         else:
-            shape = f"vector<{tile_numel_per_lane}x{mlir_dtype}>"
-            shape = f", {shape}" if self.buffer_types[name][1] > 1 else ""
+            shape = f", {local_tile_desc.get_mlir_vshape(mlir_dtype)}" if self.buffer_types[name][1] > 1 else ""
 
         line = f"{operation} %{value}, %{sram_var}[{sram_index_var}] : {tile_shape}{shape}"
         self.reductions_suffix.writeline(common.DeferredLine(name, line))
@@ -1002,6 +1040,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         # Restore origin cse
         self.cse = tmp_cse
+
+    def indirect_indexing(self, index_var, size, check=True):
+        return str(index_var)
 
     def _index_expr(self, tile_size, buffer, renamed_expression, index):
         str_tile_size = [str(dim) for dim in tile_size]
@@ -1018,21 +1059,21 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         affine_offset_map = "(d0, d1) -> (d0 + d1)"
         offset_vars = dim.copy()
         parallel_map = f"affine.parallel ({','.join(dim)}) = ({','.join(start_dim)}) to ({','.join(end_dim)}) {{"
-        self.loads.writeline(parallel_map)
-        with self.loads.indent():
+        self.indexed_buffer.writeline(parallel_map)
+        with self.indexed_buffer.indent():
             for idx in indices:
                 i = int(idx[5:])
-                self.loads.writeline(f"%offset{i} = affine.apply affine_map<{affine_offset_map}>(%{idx}, {dim[i]})")
+                self.indexed_buffer.writeline(f"%offset{i} = affine.apply affine_map<{affine_offset_map}>(%{idx}, {dim[i]})")
                 offset_vars[i] = f"%offset{i}"
             apply_map = f"affine.apply affine_map<{affine_map_str}>({', '.join(offset_vars)}) {{global_idx=1}}"
-            apply_map_var = self.cse.generate(self.loads, apply_map)
+            apply_map_var = self.indexed_cse.generate(self.indexed_buffer, apply_map)
             broadcast = f"vector.broadcast %{apply_map_var} : index to vector<2xindex>"
-            broadcast_var = self.cse.generate(self.loads, broadcast)
+            broadcast_var = self.indexed_cse.generate(self.indexed_buffer, broadcast)
             cast_i64 = f"arith.index_cast %{broadcast_var} : vector<2xindex> to vector<2xi64>"
-            cast_i64_var = self.cse.generate(self.loads, cast_i64)
+            cast_i64_var = self.indexed_cse.generate(self.indexed_buffer, cast_i64)
             affine_store = f"affine.vector_store %{cast_i64_var}, %{buffer}[{','.join(dim)}] : memref<{shape}xi64, 1>, vector<2xi64>"
-            self.cse.generate(self.loads, affine_store, assignment=False)
-        self.loads.writeline("}")
+            self.cse.generate(self.indexed_buffer, affine_store, assignment=False)
+        self.indexed_buffer.writeline("}")
         return buffer
 
     def index_expr(self, index, dtype):
@@ -1041,11 +1082,11 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
         tile_numel_per_lane = tile_desc.get_numel_per_lane()
         str_tile_size = [str(dim) for dim in tile_size]
-        shape = "x".join(str_tile_size)
-        tile_shape = f"memref<{shape}xi64, 1>"
+        tile_shape = f"memref<{'x'.join(str_tile_size)}xi64, 1>"
+        vshape = tile_desc.get_mlir_vshape(mlir_dtype)
 
         # Define scratch pad buffer
-        sram_var, _, _ = self.get_scratchpad_buffer(dtype, "index_buffer", tile_numel_per_lane, tile_shape, self.loads, None, index)
+        sram_var, _, _ = self.get_scratchpad_buffer(dtype, "index_buffer", tile_numel_per_lane, tile_shape, None, index)
 
         renamed_symbols = {symbol: "d"+str(symbol)[5:] for symbol in index.free_symbols}
         renamed_expression = index.subs(renamed_symbols)
@@ -1054,7 +1095,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             self.index_set.add(index)
             ops._index_expr(tile_size, sram_var, renamed_expression, index)
 
-        line = f"affine.vector_load %{sram_var}[0, 0, 0] : {tile_shape}, vector<{tile_numel_per_lane}x{mlir_dtype}> // {renamed_expression}"
+        line = f"affine.vector_load %{sram_var}[0, 0, 0] : {tile_shape}, {vshape} // {renamed_expression}"
         out = self.cse.generate(self.compute, line)
         self.register_var_info(out, [tile_numel_per_lane, mlir_dtype])
         return out
@@ -1077,9 +1118,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             vars = ', '.join([f"%{name}" for name, _ in self.affine_yield.items()])
             reduced_shapes = ', '.join([f"{shape}" for _, shape in self.affine_yield.items()])
             self.stores.writeline(f"affine.yield {vars} : {reduced_shapes}")
-
         code.splice(self.const_buffer)
         code.splice(self.alloc_buffer)
+        code.splice(self.spad_buffer)
         with contextlib.ExitStack() as stack:
             for loop in loops.loops:
                 loop_lines = loop.lines()
@@ -1096,9 +1137,13 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                             return
                         code.writelines(reduction_lines)
                         stack.enter_context(code.indent(outer_loop=False))
+                    code.splice(self.applys)
+                    code.splice(self.indexed_buffer)
+                    code.splice(self.dma_loads)
                     code.splice(self.loads)
                     code.splice(self.compute)
                     code.splice(self.stores)
+                    code.splice(self.dma_stores)
                 code.splice(self.reductions_suffix)
         code.writeline(f"return")
         return code
@@ -1119,7 +1164,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             write_atomic(gem5_write_path, self.gem5_header.getvalue())
         return src_code
 
-    def get_dma_info(self, name, index, index_var, broadcast=True, store_reduction=False, buffer=None): # Need more argument?
+    def get_dma_info(self, name, index, broadcast=True, store_reduction=False, buffer=None): # Need more argument?
         """
         A tile descriptor exists that is configured on a kernel group
         DMA desc should be adjusted according to buffer.
@@ -1128,7 +1173,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         """
         # Use loads as default
         if buffer is None:
-            buffer = self.loads
+            buffer = self.applys if "tmp" not in str(index) else self.dma_loads
 
         # TODO.
         kg_tile_desc = self.kernel_group.tile_desc
@@ -1140,6 +1185,10 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         total_dims =  [int(str(i)[5:]) for i in self.itervars]
         local_tile_desc = mlir_common.MLIRMultiDimTile([1], self.vector_lane)
         local_dims.sort() # Assume that smaller index is placed in the outer loop
+        indirect_dims = [f"{i}" for i in index.free_symbols if "tmp" in str(i)]
+        indirect_arg_dims = [f"%{i}" for i in index.free_symbols if "tmp" in str(i)]
+        for indirect_dim in indirect_dims:
+            index = index.replace(sympy.Symbol(indirect_dim), 0)
 
         # Reduction can have two type of tile size
         if broadcast and (total_dims != local_dims or (self.reduction_depth!=len(total_dims) and total_dims[:self.reduction_depth] == local_dims)):
@@ -1149,9 +1198,11 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             input_expr = ",".join(["d"+str(i) for i in total_dims])
             output_expr = str(index).replace('index', 'd')
             input_argument = ",".join(["%index" + str(i) if i in local_dims else f"%{fake_dim}" for i in total_dims])
-            map_var = self.map_cse.generate(self.global_vars, f"affine_map<({input_expr}) -> ({output_expr})>")
-            index_var = self.cse.generate(buffer, f"affine.apply #{map_var}({input_argument})")
+            map_var = self.map_cse.generate(self.global_vars, f"affine_map<({input_expr})[{','.join(indirect_dims)}] -> ({output_expr})>")
+            index_var = self.apply_cse.generate(buffer, f"affine.apply #{map_var}({input_argument})[{','.join(indirect_arg_dims)}]")
             local_dims = total_dims # Brodatcast tile shape
+        else:
+            index_var = self.parse_indices(index, buffer=buffer)
 
         if kg_tile_desc.vlane_split_axis in local_dims:
             local_vlane_split_axis = local_dims.index(kg_tile_desc.vlane_split_axis)
@@ -1302,7 +1353,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if len(self.itervars) >= 3 and self.reduction_depth < len(self.itervars):
             raise NotImplementedError()
 
-    def get_scratchpad_buffer(self, dtype, name, tile_size_per_lane, dram_tile_shape, code_buffer, indices, raw_index, is_template=False, buffer=None):
+    def get_scratchpad_buffer(self, dtype, name, tile_size_per_lane, dram_tile_shape, indices, raw_index, is_template=False, buffer=None):
         c_type = mlir_common.DTYPE_TO_C[dtype]
         # Make sure each lane's buffer has at least two element
         tile_size = max(tile_size_per_lane, 2) * self.vector_lane
@@ -1322,7 +1373,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             self.global_vars_dict[name].append(str(raw_index))
         else:
             new_name = f"{name}_{self.global_vars_dict[name].index(str(raw_index))}"
-        sram_var = self.cse.generate(code_buffer, f"memref.get_global @{new_name}_spad : {dram_tile_shape}")
+        sram_var = self.spad_cse.generate(self.spad_buffer, f"memref.get_global @{new_name}_spad : {dram_tile_shape}")
 
         zero_cse = self.get_const_cse(0)
         sram_dims = len(dram_tile_shape.split("x")) - 1
@@ -1345,6 +1396,68 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if value not in self.tags:
             self.tags[value] = self.alloc_cse.generate(self.alloc_buffer, f"memref.alloc() : {shape}")
         return self.tags[value]
+
+    def convert_indirect_indexing(self, index :sympy.Expr):
+        if "tmp" not in str(index):
+            return index
+
+        # Process start
+        indirect_dims = [str(dim) for dim in index.free_symbols if "tmp" in str(dim)]
+        indirect_dims.sort()
+        first_dim = indirect_dims[0]
+        spad_vars = dict()
+        tmp_comp, self.compute = self.compute, self.dma_loads
+
+        # Load indirect operands
+        for target_dim in indirect_dims:
+            sram_var, _, tile_numel_per_lane, sram_index_var, tile_shape, vshape = self.spad_buffer_dict[target_dim]
+            mlir_dtype = vshape.split("x")[1][:-1]
+            if tile_numel_per_lane > 1:
+                operation = "affine.vector_load"
+                line = f"{operation} %{sram_var}[{sram_index_var}] : {tile_shape}, {vshape} // For indirect access"
+            else:
+                operation = "affine.load"
+                line = f"{operation} %{sram_var}[{sram_index_var}] : {tile_shape} // For indirect access"
+            out = self.cse.generate(self.dma_loads, line)
+            self.register_var_info(out, [tile_numel_per_lane, mlir_dtype])
+            spad_vars[target_dim] = out
+
+        # Apply stride
+        for arg in index.args:
+            if "tmp" not in str(arg):
+                continue
+            if arg.is_Mul and arg.args[0].is_number:
+                coeff_dtype = self.var_info[spad_vars[str(arg.args[1])]][1]
+                coeff = ops.constant(int(arg.args[0]), coeff_dtype)
+                spad_vars[str(arg.args[1])] = ops.mul(spad_vars[str(arg.args[1])], coeff)
+            index = index.replace(arg, 0)
+
+        # Sum
+        for dim, var in spad_vars.items():
+            if dim == first_dim:
+                continue
+            spad_vars[first_dim] = ops.add(spad_vars[first_dim], var)
+
+        # Store index var
+        sram_var, _, tile_numel_per_lane, sram_index_var, tile_shape, vshape = self.spad_buffer_dict[first_dim]
+        if tile_numel_per_lane > 1:
+            operation = "affine.vector_store"
+            line = f"{operation} %{spad_vars[first_dim]}, %{sram_var}[{sram_index_var}] : {tile_shape}, {vshape}"
+        else:
+            operation = "affine.store"
+            line = f"{operation} %{spad_vars[first_dim]}, %{sram_var}[{sram_index_var}] : {tile_shape}"
+        out = self.cse.generate(self.dma_loads, line, assignment=False)
+
+        # Conversion
+        mlir_dtype = self.var_info[spad_vars[first_dim]][1]
+        line = f"affine.load %{sram_var}[{sram_index_var}] : {tile_shape}"
+        out = self.cse.generate(self.dma_loads, line)
+        if mlir_dtype != "index":
+            line = f"arith.index_cast %{out} : {mlir_dtype} to {'index'}"
+            out = self.cse.generate(self.dma_loads, line)
+        self.register_var_info(out, [1, "index", [1]])
+        self.compute = tmp_comp
+        return index + sympy.Symbol(str(out))
 
 @dataclasses.dataclass
 class LoopLevel:
