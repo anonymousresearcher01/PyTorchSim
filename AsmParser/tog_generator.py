@@ -153,8 +153,6 @@ class tog_generator:
                 connect_nodes(prev_node[-1].get_parent()[-1], new_node)
             elif isinstance(prev_node[-1], memory_wait_node) and isinstance(new_node, memory_wait_node):
                 connect_nodes(prev_node[-1].get_parent()[-1], new_node)
-            elif isinstance(prev_node[-1], store_node) and isinstance(new_node, store_node):
-                connect_nodes(prev_node[-1].get_parent()[-1], new_node)
             elif isinstance(prev_node[-1], load_node) and isinstance(new_node, compute_node) or \
                  isinstance(prev_node[-1], memory_wait_node) and isinstance(new_node, compute_node):
                 for pn in prev_node:
@@ -233,5 +231,5 @@ class tog_generator:
 
 if __name__ == "__main__":
     t = tog_generator()
-    t.load_file("/workspace/llvm-project/build/tile_operation_graph.py")
-    t.generate_tile_graph("./tile_graph.onnx", cycle_list=[1,1,1,1,1], offset=0, vector_lane=128)
+    t.load_file("/tmp/torchinductor/tmp/sz6qi7bqkxn/csz6qi7bqkxnam5sxok4l4sppddjkijq5rd55s4qvdutd5ni73fc_tog.py")
+    t.generate_tile_graph("./tile_graph.onnx", cycle_list=[1,1,1,1,1], x_offset=0, w_offset=0, vector_lane=128)
