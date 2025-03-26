@@ -1,5 +1,18 @@
 #include "TileGraphParser.h"
 
+bool loadConfig(const std::string& config_path, json& config_json) {
+  std::ifstream config_file(config_path);
+  if (config_file.is_open()) {
+      config_file >> config_json;
+      config_file.close();
+      spdlog::info("[LoadConfig] Success to open \"{}\"", config_path);
+      return true;
+  } else {
+    spdlog::error("[LoadConfig] Failed to open \"{}\"", config_path);
+    return false;
+  }
+}
+
 void printIndexMap(std::string prefix, const std::map<std::string, int>& indexMap) {
     std::ostringstream oss;
     for (const auto& [key, value] : indexMap) {
@@ -201,6 +214,10 @@ TileMemoryNode::TileMemoryNode(onnx::NodeProto& node) : TileNode(node) {
         _loop_idx_list.push_back(attribute.strings(i));
     } else if (attribute.name() == "torchsim_is_async") {
       _is_async = attribute.i();
+    } else if (attribute.name() == "torchsim_indirect_mode") {
+      _is_indirect = attribute.i();
+    } else {
+      spdlog::info("Unknown attribute: {}", attribute.name());
     }
   }
 }
@@ -215,6 +232,7 @@ void TileMemoryNode::print_node() {
   spdlog::debug("{} tag_list: {}", spaces, fmt::join(_tag_idx_list, ", "));
   spdlog::debug("{} tag_stride_list: {}", spaces, fmt::join(_tag_stride_list, ", "));
   spdlog::debug("{} index_list: {}", spaces, fmt::join(_loop_idx_list, ", "));
+  spdlog::debug("{} indirect mode: {}", spaces, _is_indirect);
 }
 
 TileMemoryWaitNode::TileMemoryWaitNode(onnx::NodeProto& node) : TileNode(node) {
@@ -402,6 +420,10 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       inst->adjust_dram_address();
       inst->set_is_async(mem_node->is_async_node());
       inst->set_numa_id(numa_id);
+      if (mem_node->is_indirect()) {
+        inst->set_indirect_index_path(tog_parser->get_indirect_path());
+        tog_parser->inc_indirect_counter();
+      }
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
     } else if (tile_node->get_type() == TileType::STORE_NODE) {
@@ -452,6 +474,10 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       inst->adjust_dram_address();
       inst->set_is_async(mem_node->is_async_node());
       inst->set_numa_id(numa_id);
+      if (mem_node->is_indirect()) {
+        inst->set_indirect_index_path(tog_parser->get_indirect_path());
+        tog_parser->inc_indirect_counter();
+      }
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
     } else if (tile_node->get_type() == TileType::MEMORY_WAIT_NODE) {
@@ -696,14 +722,16 @@ void TileLoopNode::print_node() {
   spdlog::debug("{} stride: {} ", spaces, _stride);
 }
 
-TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
+TileGraphParser::TileGraphParser(std::string onnx_path, std::string attribute_path) {
+  loadConfig(attribute_path, _attribute_json);
+  _attribute_path = attribute_path;
+
   /* Note: this parsing algorithm assume that all node are sorted in topological-order */
   std::ifstream model_istream(onnx_path);
   google::protobuf::io::IstreamInputStream zero_copy_input(&model_istream);
   onnx::ModelProto model_proto;
 
   /* Attribute parsing */
-  _attribute_json = attribute_json;
   if (_attribute_json.contains("address_info")) {
     auto address_info = _attribute_json["address_info"];
     for (auto it = address_info.begin(); it != address_info.end(); ++it) {
@@ -823,7 +851,7 @@ TileGraphParser::TileGraphParser(std::string onnx_path, json& attribute_json) {
   /* Iterate outer loop and initialize inner loop */
   for (auto iter=_tile_graph->begin(); iter!=_tile_graph->end(); ++iter) {
     std::shared_ptr<TileSubGraph> subgraph = std::make_shared<TileSubGraph>();
-    subgraph->set_core_id(getCoreIdFromJson(attribute_json, subgraph->get_id()));
+    subgraph->set_core_id(getCoreIdFromJson(_attribute_json, subgraph->get_id()));
     auto indices = iter.get_indices();
     for (auto loop : _loop_nodes.at(last_outer_idx)) {
       std::shared_ptr<TileLoopNode> outer_loop = std::static_pointer_cast<TileLoopNode>(loop);

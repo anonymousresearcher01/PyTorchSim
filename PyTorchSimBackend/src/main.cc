@@ -12,24 +12,8 @@ namespace po = boost::program_options;
 const char* env_value = std::getenv("BACKENDSIM_DRYRUN");
 bool isDryRun = (env_value != nullptr && std::string(env_value) == "1");
 
-bool loadConfig(const std::string& config_path, json& config_json) {
-  std::ifstream config_file(config_path);
-  if (config_file.is_open()) {
-      config_file >> config_json;
-      config_file.close();
-      spdlog::info("[LoadConfig] Success to open \"{}\"", config_path);
-      return true;
-  } else {
-    spdlog::error("[LoadConfig] Failed to open \"{}\"", config_path);
-    return false;
-  }
-}
-
 void launchKernel(Simulator* simulator, std::string onnx_path, std::string attribute_path, cycle_type request_time=0, int partiton_id=0) {
-  json attribute_json;
-  loadConfig(attribute_path, attribute_json);
-
-  auto graph_praser = TileGraphParser(onnx_path, attribute_json);
+  auto graph_praser = TileGraphParser(onnx_path, attribute_path);
   std::unique_ptr<TileGraph>& tile_graph = graph_praser.get_tile_graph();
   tile_graph->set_arrival_time(request_time ? request_time : simulator->get_core_cycle());
   spdlog::info("[Scheduler {}] Register graph path: {} operation: {} at {}", partiton_id, onnx_path, tile_graph->get_name(), simulator->get_core_cycle());

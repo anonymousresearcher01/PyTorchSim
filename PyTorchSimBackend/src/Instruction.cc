@@ -60,3 +60,70 @@ void Instruction::dec_waiting_request() {
 void Instruction::print() {
   spdlog::info("{}", opcode_to_string(opcode));
 }
+
+std::set<addr_type> Instruction::get_dram_address(addr_type dram_req_size) {
+  std::set<addr_type> address_set;
+  uint64_t* indirect_index = NULL;
+  size_t index_count = 0;
+  /* Set 4D shape*/
+  while (tile_size.size() < 4)
+    tile_size.insert(tile_size.begin(), 1);
+
+  while (_stride_list.size() < 4)
+    _stride_list.insert(_stride_list.begin(), 1);
+  if (_is_indirect_mode) {
+    spdlog::trace("[Indirect Access] Indirect mode, dump_path: {}", _indirect_index_path);
+    load_indirect_index(_indirect_index_path, indirect_index, tile_size);
+  }
+
+  /* Iterate tile_size */
+  for (int dim0=0; dim0<tile_size.at(0); dim0++) {
+    for (int dim1=0; dim1<tile_size.at(1); dim1++) {
+      for (int dim2=0; dim2<tile_size.at(2); dim2++) {
+        for (int dim3=0; dim3<tile_size.at(3); dim3++) {
+          addr_type address = dim0*_stride_list.at(_stride_list.size() - 4) + \
+                              dim1*_stride_list.at(_stride_list.size() - 3) + \
+                              dim2*_stride_list.at(_stride_list.size() - 2) + \
+                              dim3*_stride_list.at(_stride_list.size() - 1);
+          address = dram_addr + address * _precision;
+          if (indirect_index != NULL) {
+            uint64_t index_val = indirect_index[index_count++];
+            address += index_val * _precision;
+          }
+          address_set.insert(address - (address & dram_req_size-1));
+        }
+      }
+    }
+  }
+  return address_set;
+}
+
+bool Instruction::load_indirect_index(const std::string& path, uint64_t*& indirect_index, const std::vector<uint64_t>& tile_size) {
+  size_t count;
+  std::ifstream ifs(path, std::ios::binary | std::ios::ate);
+  if (!ifs) {
+    spdlog::warn("[Indirect Access] Failed to open index file(\'{}\')", path);
+    return false;
+  }
+
+  std::streamsize size = ifs.tellg();
+  ifs.seekg(0, std::ios::beg);
+  count = size / sizeof(uint64_t);
+
+  uint64_t expected_count = tile_size[0] * tile_size[1] * tile_size[2] * tile_size[3];
+  if (size % sizeof(uint64_t) != 0 || count != expected_count) {
+    spdlog::warn("[Indirect Access] Invalid file size ({} Bytes) at \'{}\'", size, path);
+    return false;
+  }
+
+  indirect_index = new uint64_t[count];
+
+  if (!ifs.read(reinterpret_cast<char*>(indirect_index), size)) {
+    spdlog::warn("[Indirect Access] Failed to read data from file (\'{}\')", path);
+    delete[] indirect_index;
+    indirect_index = NULL;
+    count = 0;
+    return false;
+  }
+  return true;
+}

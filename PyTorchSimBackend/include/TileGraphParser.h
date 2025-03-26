@@ -1,6 +1,7 @@
 #pragma once
 #include <fstream>
 #include <algorithm>
+#include <filesystem>
 #include <nlohmann/json.hpp>
 #include <fmt/ranges.h>
 #include <google/protobuf/io/zero_copy_stream_impl.h>
@@ -33,6 +34,8 @@ enum class LoopType {
   INNER_LOOP
 };
 
+bool loadConfig(const std::string& config_path, json& config_json);
+
 class TileNode {
  public:
   TileNode(onnx::NodeProto& node);
@@ -64,7 +67,7 @@ class TileNode {
 
 class TileGraphParser {
  public:
-  TileGraphParser(std::string onnx_path, json& attribute_json);
+  TileGraphParser(std::string onnx_path, std::string attribute_path);
   std::shared_ptr<TileNode> get_top_loop();
   std::unique_ptr<TileGraph>& get_tile_graph() { return _tile_graph; }
   addr_type lookup(std::string key);
@@ -83,6 +86,15 @@ class TileGraphParser {
   void register_memory_tag(std::string name, std::vector<int>& tag_key);
   bool check_memory_tag(std::string name, std::vector<int>& tag_key);
   void clear_tag_table() { _tag_table.clear(); }
+  std::string get_indirect_path() {
+    namespace fs = std::filesystem;
+    fs::path original(_attribute_path);
+    fs::path base_folder = original.parent_path().parent_path();
+    fs::path new_path = base_folder / "indirect_access" / (std::string("indirect_index") + std::to_string(indirect_counter) + ".raw");
+    return new_path.string();
+  }
+  void inc_indirect_counter() { indirect_counter++; }
+
  private:
   void register_tile(std::shared_ptr<TileNode> tile_node);
   void _tile_generate() {}
@@ -92,6 +104,8 @@ class TileGraphParser {
 
   json _attribute_json;
   std::string _tog_path;
+  std::string _attribute_path;
+  uint64_t indirect_counter = 0;
   std::map<std::string, std::shared_ptr<TileNode>> _output_map;
   std::vector<std::vector<std::shared_ptr<TileNode>>> _loop_nodes;
   std::vector<std::shared_ptr<TileNode>> _tile_vec;
@@ -129,6 +143,7 @@ class TileMemoryNode : public TileNode {
   std::vector<int>& get_tag_stride_list() { return _tag_stride_list; }
   std::vector<std::string>& get_loop_idx_list() { return _loop_idx_list; }
   bool is_async_node() { return _is_async; }
+  bool is_indirect() { return _is_indirect; }
   void print_node() override;
 
  private:
@@ -136,6 +151,7 @@ class TileMemoryNode : public TileNode {
   std::vector<int> _stride_list;
   size_t _element_size;
   bool _is_async;
+  bool _is_indirect;
   std::string _base_addr_name;
   std::vector<std::string> _tag_idx_list;
   std::vector<int> _tag_stride_list;

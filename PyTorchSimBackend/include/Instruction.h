@@ -1,5 +1,5 @@
 #pragma once
-
+#include <fstream>
 #include <robin_hood.h>
 #include <spdlog/fmt/ranges.h>
 #include <spdlog/spdlog.h>
@@ -31,6 +31,8 @@ class Instruction {
   bool is_dma_read() { return opcode == Opcode::MOVIN; }
   bool is_dma_write() { return opcode == Opcode::MOVOUT; }
   bool is_async_dma() { return _is_async_dma; }
+  bool is_indirect_mode() { return _is_indirect_mode; }
+  std::string get_indirect_index_path() { return _indirect_index_path; }
   bool is_ready() { return ready_counter == 0; }
   void inc_ready_counter() { ready_counter++; }
   void dec_ready_counter() {
@@ -47,35 +49,11 @@ class Instruction {
   cycle_type get_overlapping_cycle() { return overlapping_cycle; }
   cycle_type get_compute_cycle() { return compute_cycle; }
   void set_compute_cycle(cycle_type cycle) { compute_cycle = cycle; }
+  void set_indirect_index_path(std::string indirect_path) { _is_indirect_mode=true; _indirect_index_path=indirect_path; }
   void print();
-  std::set<addr_type> get_dram_address(addr_type dram_req_size) {
-    std::set<addr_type> address_set;
-
-    /* Set 4D shape*/
-    while (tile_size.size() < 4)
-      tile_size.insert(tile_size.begin(), 1);
-
-    while (_stride_list.size() < 4)
-      _stride_list.insert(_stride_list.begin(), 1);
-
-    /* Iterate tile_size */
-    for (int dim0=0; dim0<tile_size.at(0); dim0++) {
-      for (int dim1=0; dim1<tile_size.at(1); dim1++) {
-        for (int dim2=0; dim2<tile_size.at(2); dim2++) {
-          for (int dim3=0; dim3<tile_size.at(3); dim3++) {
-            addr_type address = dim0*_stride_list.at(_stride_list.size() - 4) + \
-                                dim1*_stride_list.at(_stride_list.size() - 3) + \
-                                dim2*_stride_list.at(_stride_list.size() - 2) + \
-                                dim3*_stride_list.at(_stride_list.size() - 1);
-            address = dram_addr + address * _precision;
-            address_set.insert(address - (address & dram_req_size-1));
-          }
-        }
-      }
-    }
-    return address_set;
-  }
+  std::set<addr_type> get_dram_address(addr_type dram_req_size);
   std::vector<addr_type> get_trace_address() { return _trace_address; }
+  bool load_indirect_index(const std::string& path, uint64_t*& indirect_index, const std::vector<uint64_t>& tile_size);
   void set_trace_address(std::vector<addr_type>& trace_address) { _trace_address = trace_address; }
   size_t get_free_sram_size() { return _free_sram_size; }
   void adjust_dram_address() {
@@ -131,4 +109,6 @@ class Instruction {
   std::string _addr_name;
   int _nr_inner_loop = 0;
   bool _is_async_dma=false;
+  bool _is_indirect_mode=false;
+  std::string _indirect_index_path="";
 };
