@@ -48,7 +48,7 @@ class FunctionalSimulator():
 
         if (isinstance(arg, torch.Tensor)):
             data_path = os.path.join(dump_path, f'{index}.raw')
-            tensor = arg.cpu()
+            tensor = arg.cpu().detach()
             t_arr = tensor.numpy().flatten()
             t_arr.tofile(data_path)
         else:
@@ -71,28 +71,18 @@ class FunctionalSimulator():
 
         return array_size, file_path
 
-    def run_spike(self, args, arg_attributes, path, binary, intermediate_op=None, vectorlane_size=4, spad_info=None, cleanup=False):
-        load_path = self.path
-        dump_path = self.path
+    def run_spike(self, args, arg_attributes, runtime_path, binary, vectorlane_size=4, spad_info=None, cleanup=False):
+        load_path = runtime_path
+        dump_path = runtime_path
 
-        target_binary = os.path.join(path, binary)
-        objdump = f"riscv64-unknown-elf-objdump -d {target_binary} > {os.path.join(path, 'binary.dump')}"
+        target_binary = os.path.join(self.path, binary)
+        objdump = f"riscv64-unknown-elf-objdump -d {target_binary} > {os.path.join(self.path, 'binary.dump')}"
         kernel_start = f"nm {target_binary} | grep 'kernel' | awk 'NR==1 {{print $1}}'"
-        kernel_end = f"nm {target_binary} | grep 'kernel' | awk 'NR==1 {{print $1}}' | xargs -I {{}} awk '/{{}}/,0' {os.path.join(path, 'binary.dump')} | grep ret | awk 'NR==1 {{print $1}}' | awk '{{gsub(/:$/, \"\"); print}}'"
+        kernel_end = f"nm {target_binary} | grep 'kernel' | awk 'NR==1 {{print $1}}' | xargs -I {{}} awk '/{{}}/,0' {os.path.join(self.path, 'binary.dump')} | grep ret | awk 'NR==1 {{print $1}}' | awk '{{gsub(/:$/, \"\"); print}}'"
 
         subprocess.run(objdump, shell=True)
         kernel_start_addr = subprocess.run(kernel_start, shell=True, stdout=subprocess.PIPE).stdout.strip().decode('utf-8')
         kernel_end_addr = subprocess.run(kernel_end, shell=True, stdout=subprocess.PIPE).stdout.strip().decode('utf-8')
-
-        if intermediate_op is not None:
-            os.makedirs(os.path.join(self.path, "intermediate"), exist_ok=True)
-            if intermediate_op & 0b10: # input comes from intermediate
-                load_path = os.path.join(self.path, "intermediate")
-            if intermediate_op & 0b01: # output dumps to intermediate
-                dump_path = os.path.join(self.path, "intermediate")
-                for name, attr in arg_attributes:
-                    if attr[0] == 2:
-                        os.makedirs(os.path.join(dump_path, name), exist_ok=True)
 
         _, file_path = self.dump_args(args, arg_attributes, load_path, dump_path)
         file_path_str = ' '.join(file_path)
@@ -104,8 +94,9 @@ class FunctionalSimulator():
             f"--scratchpad-size={spad_info['spad_size']} "
         vectorlane_option = f"--vectorlane-size={vectorlane_size}"
         kernel_address = f"--kernel-addr={kernel_start_addr}:{kernel_end_addr}"
-        base_addr = f"--base-path={path}"
-        run = f'spike --isa rv64gcv --varch=vlen:256,elen:64 {vectorlane_option} {spad_option} {kernel_address} {base_addr} /workspace/riscv-pk/build/pk {target_binary} {file_path_str}'
+        base_path= f"--base-path={runtime_path}"
+        os.makedirs(os.path.join(base_path, "indirect_access"), exist_ok=True)
+        run = f'spike --isa rv64gcv --varch=vlen:256,elen:64 {vectorlane_option} {spad_option} {kernel_address} {base_path} /workspace/riscv-pk/build/pk {target_binary} {file_path_str}'
 
         print("[SpikeSimulator] cmd> ", run)
         run_cmd = shlex.split(run)
@@ -124,6 +115,22 @@ class FunctionalSimulator():
             for path in file_path:
                 if os.path.exists(path):
                     os.remove(path)
+
+    @staticmethod
+    def get_runtime_dump_path(base_path, prefix="runtime", zfill=4):
+        indices = [
+            int(match.group(1))
+            for d in os.listdir(base_path)
+            if (match := re.fullmatch(rf"{prefix}_(\d{{{zfill}}})", d))
+        ]
+
+        max_index = max(indices, default=-1)
+        next_index = max_index + 1
+        folder_name = f"{prefix}_{str(next_index).zfill(zfill)}"
+        full_path = os.path.join(base_path, folder_name)
+
+        os.makedirs(full_path)
+        return full_path
 
 class CycleSimulator():
     def __init__(self) -> None:

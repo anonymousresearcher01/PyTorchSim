@@ -239,11 +239,10 @@ class ExecutionEngine:
             self.finish_req_dict[req] = RequestReturn(RequestReturn.FINISHED)
 
     def prepare_launch_kernel(self, kernel, inputs):
-        key = kernel.future.result() if hasattr(kernel.future, "result") else kernel.future
-        result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
+        result_path, runtime_path = kernel(*inputs)
         onnx_path = os.path.join(result_path, "tile_graph.onnx")
 
-        attribute_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
+        attribute_path = os.path.join(runtime_path, "attribute")
         attribute_path = self.backend_simulator.create_attribute_file(attribute_path, inputs)
         return onnx_path, attribute_path
 
