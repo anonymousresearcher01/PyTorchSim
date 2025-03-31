@@ -16,6 +16,7 @@ parser.add_argument("--cpu", choices=["RiscvAtomicSimpleCPU", "RiscvTimingSimple
 parser.add_argument("--mem", choices=["SimpleMemory", "ScratchpadMemory", "DDR3_1600_8x8"], default="ScratchpadMemory")
 parser.add_argument("--sparse", type=bool, default=False)
 parser.add_argument("--vlane", type=int, default=128)
+parser.add_argument("--vlen", type=int, default=256)
 args = parser.parse_args()
 
 
@@ -513,6 +514,7 @@ fast_clk.voltage_domain = VoltageDomain()
 system.mem_mode = "timing"
 system.cache_line_size = 64
 system.cpu = valid_cpu[args.cpu]()
+system.cpu.ArchISA.vlen = args.vlen
 
 # Memory range
 granule_sz = 64
