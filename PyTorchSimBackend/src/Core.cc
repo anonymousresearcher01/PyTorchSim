@@ -255,16 +255,17 @@ void Core::cycle() {
         case Opcode::COMP:
           {
             auto& target_pipeline = get_compute_pipeline(inst->get_compute_type());
-            if (target_pipeline.empty())
+            if (target_pipeline.empty()) {
               inst->finish_cycle = _core_cycle + inst->get_compute_cycle();
-            else {
+              inst->bubble_cycle = inst->get_overlapping_cycle();
+            } else {
               int overlapped_cycle = std::min(target_pipeline.back()->finish_cycle - _core_cycle, inst->get_overlapping_cycle());
               int bubble_cycle = inst->get_overlapping_cycle() - overlapped_cycle;
               inst->finish_cycle = target_pipeline.back()->finish_cycle + inst->get_compute_cycle() - overlapped_cycle;
               inst->bubble_cycle = bubble_cycle;
             }
             if (inst->get_compute_cycle() == 0) {
-              spdlog::trace("[Core {}][{}] {} SKIPPED", _id, _core_cycle,
+              spdlog::trace("[Core {}][SA {}][{}] {} SKIPPED", _id, _systolic_array_rr, _core_cycle,
                             opcode_to_string(inst->get_opcode()));
               inst->finish_instruction();
               static_cast<Tile*>(inst->get_owner())->inc_finished_inst();
@@ -272,7 +273,7 @@ void Core::cycle() {
               auto it = instructions.begin() + j; // Position 2 is the third element
               instructions.erase(it);
             } else {
-              spdlog::trace("[Core {}][{}] {}-{} ISSUED, finsh at {}", _id, _core_cycle,
+              spdlog::trace("[Core {}][SA {}][{}] {}-{} ISSUED, finsh at {}", _id, _systolic_array_rr, _core_cycle,
                             opcode_to_string(inst->get_opcode()), inst->get_compute_type(), inst->finish_cycle);
               target_pipeline.push(inst);
               issued = true;
