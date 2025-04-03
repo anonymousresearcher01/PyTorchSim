@@ -11,6 +11,15 @@ import PyTorchSimFrontend.extension_codecache as extension_codecache
 from PyTorchSimFrontend import extension_config
 
 GEMM_TEMPLATE = r"""
+// GEMM kernel
+// M = {{ M }}
+// N = {{ N }}
+// K = {{ K }}
+// TILE_M = {{ TILE_M }}
+// TILE_N = {{ TILE_N }}
+// TILE_K = {{ TILE_K }}
+// SUB_TILE_M = {{ SUB_TILE_M }}
+// SUB_TILE_N = {{ SUB_TILE_N }}
 {% if X_transposed %}#map0 = affine_map<(d0, d1) -> (d1 * {{ M }} + d0)>{% else %}#map0 = affine_map<(d0, d1) -> (d0 * {{ K }} + d1)>{% endif %}
 {% if W_transposed %}#map1 = affine_map<(d0, d1) -> (d1 * {{ K }} + d0)>{% else %}#map1 = affine_map<(d0, d1) -> (d0 * {{ N }} + d1)>{% endif %}
 #map2 = affine_map<(d0, d1) -> (d0 * {{ N }} + d1)>
@@ -119,7 +128,7 @@ class MLIRGemmTemplate(MLIRTemplate):
         M, N, K = X.get_size()[0], W.get_size()[1], X.get_size()[1]
         n_extra_node = len(epilogue_nodes) if epilogue_nodes is not None else 0
         if (M == 0) or (N == 0) or (K == 0):
-            TILE_M, TILE_N, TILE_K = 0, 0, 0
+            TILE_M, TILE_N, TILE_K = 1, 1, 1
             template = EMPTY_TEMPLATE
         else:
             TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K, n_extra_node)
@@ -155,8 +164,8 @@ class MLIRGemmTemplate(MLIRTemplate):
             Y = Y,
             Bias = Bias,
             Bias_rank = len(Bias.data.get_size()) if Bias is not None else 0,
-            W_transposed = W_transposed,
             X_transposed = X_transposed,
+            W_transposed = W_transposed,
             Y_numel = M * N,
             epilogue_nodes = epilogue_nodes,
             input_reorder = self.input_reorder
@@ -172,13 +181,12 @@ class MLIRGemmTemplate(MLIRTemplate):
             vlane_split_axis = 1,
             vlane_stride = 1,
             mlir_dtype = kernel.render_options['DATA_STYPE'],
-            tile_nr_dim = 2,
             dram_shape = f"memref<{kernel.render_options['Y_numel']}x{kernel.render_options['DATA_STYPE']}>",
-            tile_shape = f"memref<{TILE_M}x{TILE_N}x{kernel.render_options['DATA_STYPE']}, 1>",
             tile_size = (TILE_M, TILE_N),
             tile_stride = [1, TILE_M]
         )
         code = self._template_from_string(template).render(**kernel.render_options)
+        kernel.add_loop_info([kernel.render_options["M"], kernel.render_options["N"], kernel.render_options["K"]], [kernel.render_options["TILE_M"], kernel.render_options["TILE_N"], kernel.render_options["TILE_K"]])
 
         self.header = f"float X_spad[{kernel.get_spad_size_per_lane(TILE_M, TILE_K)}] __attribute__ ((section(\".spad\")));\n"
         self.header += f"float W_spad[{kernel.get_spad_size_per_lane(TILE_K, TILE_N)}] __attribute__ ((section(\".spad\")));\n"

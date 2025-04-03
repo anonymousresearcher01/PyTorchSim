@@ -144,19 +144,18 @@ class MLIRScheduling(BaseScheduling):
             for node in [template_node, *epilogue_nodes]:
                 node.mark_run()
             partial_code = render()
+            tile_desc = kernel.set_tile_size(kernel.store_info)
+            kernel.kernel_group.set_tile_info(tile_desc)
             if epilogue_nodes:
                 _, (group, reduction_group) = max(
                     epilogue_nodes, key=lambda x: int(x.is_reduction())
                 ).group
-                vars, reduction_vars = kernel.set_ranges(group, reduction_group)    # Do we need this?
-                tile_desc = kernel.set_tile_size(kernel.store_info)
-                kernel.kernel_group.set_tile_info(tile_desc)
+                vars, reduction_vars = kernel.set_ranges(group, reduction_group)
             # Flush created varaibles, since template fusion doen't share variable
             kernel.cse.cache.clear()
             for node in epilogue_nodes:
                 if template_node.node.name in [dep[0] for dep in list(node.read_writes.reads)]:
                     kernel.store_info['dependent_buf'].append(node.node.name)
-                kernel.store_info
                 node.codegen((vars, reduction_vars))
         with V.set_kernel_handler(kernel):
             src_code = (

@@ -249,26 +249,62 @@ class ExtensionOverrides(common.OpOverrides):
     def alloc(size, src_type, *args, var_info=None, **kwargs):
         return f"memref.alloc() : memref<{size}x{src_type}>", [size, src_type]
 
-    # transcendental functions
     @staticmethod
-    def exp(operand, *args, var_info=None, **kwargs):
+    def extractelement(operand, idx, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
+        shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
+        return f"vector.extract %{operand}[{idx}]: {dtype} from {shape}", [1, dtype]
 
+    # transcendental functions
+    @staticmethod
+    def exp(operand, *args, var_info=None, **kwargs):
+        # Check scalar
+        op_type = var_info[operand]
+        if op_type[0] == 1:
+            val = ops.constant(0, op_type[1])
+            var_info[val][0] = 4
+            operand = ops.broadcast(operand, val)
+            val = ops.exp(operand)
+            result = ops.extractelement(val, 0)
+            return result, var_info[result]
+        op_type = var_info[operand]
+        tile_size = op_type[0]
+        dtype = op_type[1]
         shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
         return f'math.exp %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
-    def erf(x, *args, var_info=None, **kwargs):
-        op_type = var_info[x]
+    def erf(operand, *args, var_info=None, **kwargs):
+        # Check scalar
+        op_type = var_info[operand]
+        if op_type[0] == 1:
+            val = ops.constant(0, op_type[1])
+            var_info[val][0] = 4
+            operand = ops.broadcast(operand, val)
+            val = ops.exp(operand)
+            result = ops.extractelement(val, 0)
+            return result, var_info[result]
+        op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
         shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
-        return f'math.erf %{x} : {shape}', [tile_size, dtype]
+        return f'math.erf %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
     def tanh(operand, *args, var_info=None, **kwargs):
+        op_type = var_info[operand]
+
+        # Check scalar
+        op_type = var_info[operand]
+        if op_type[0] == 1:
+            val = ops.constant(0, op_type[1])
+            var_info[val][0] = 4
+            operand = ops.broadcast(operand, val)
+            val = ops.exp(operand)
+            result = ops.extractelement(val, 0)
+            return result, var_info[result]
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
@@ -277,7 +313,6 @@ class ExtensionOverrides(common.OpOverrides):
         if dtype[0] != "f":
             operand, dtype = ops.to_dtype(operand, "f32", var_info=var_info)
             var_info[operand] = dtype
-
         shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
         return f'math.tanh %{operand} : {shape}', [tile_size, dtype]
 
@@ -952,6 +987,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         tile_shape = local_tile_desc.get_mlir_shape(mlir_dtype)
         tile_stride = local_tile_desc.get_tile_stride()
         vshape = self.kernel_group.tile_desc.get_mlir_vshape(mlir_dtype)
+        compute_vec_size = self.kernel_group.tile_desc.get_compute_vec_size()
 
         sram_var, index_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, tile_numel_per_lane, tile_shape, index_var,
                                                                          index, buffer=self.reduction_suffix)
@@ -977,7 +1013,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 value = m2
 
         # Select src type
-        if tile_numel_per_lane == 1:
+        if compute_vec_size == 1:
             operation = "affine.store"
             line = f"{operation} %{value}, %{sram_var}[{sram_index_var}] : {tile_shape}"
         else:
@@ -1034,10 +1070,10 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         tile_size = tile_desc.get_tile_size_per_lane()
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
         tile_numel_per_lane = tile_desc.get_numel_per_lane()
-        vlane_stride = tile_desc.vlane_stride
         str_tile_size = [str(dim) for dim in tile_size]
         tile_shape = f"memref<{'x'.join(str_tile_size)}xi64, 1>"
         vshape = tile_desc.get_mlir_vshape(mlir_dtype)
+        compute_vec_size = tile_desc.get_compute_vec_size()
 
         # Define scratch pad buffer
         sram_var, _, _ = self.get_scratchpad_buffer(dtype, "index_buffer", tile_numel_per_lane, tile_shape, None, index)
@@ -1049,9 +1085,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             self.index_set.add(index)
             ops._index_expr(tile_size, sram_var, renamed_expression, index)
 
-        line = f"affine.vector_load %{sram_var}[0, 0, 0] : {tile_shape}, {vshape} // {renamed_expression}"
+        line = f"affine.vector_load %{sram_var}[0, 0, %{self.compute_idx}] : {tile_shape}, {vshape} // {renamed_expression}"
         out = self.cse.generate(self.compute, line)
-        self.register_var_info(out, [vlane_stride, mlir_dtype])
+        self.register_var_info(out, [compute_vec_size, mlir_dtype])
         return out
 
     def codegen_global_init(self):
@@ -1181,8 +1217,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         # Case 2. Tile is 1-D vector type with reduction
         elif len(local_dims) == 1 and len(local_dims) == self.reduction_depth + 1:
             local_tile_desc.set_tile_size([1, kg_tile_desc.get_dim_size(local_dims[0])])
-            local_tile_desc.vlane_split_axis = 0
-            local_tile_desc.vlane_stride = 1
+            local_tile_desc.vlane_split_axis = local_vlane_split_axis
+            local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
         # Case 3. Tile is 2-D tile
         elif len(local_dims) == 2:
             is_reduction = self.reduction_depth == 1 and not store_reduction
@@ -1371,6 +1407,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         for target_dim in indirect_dims:
             sram_var, _, tile_numel_per_lane, sram_index_var, tile_shape, vshape = self.spad_buffer_dict[target_dim]
             mlir_dtype = vshape.split("x")[1][:-1]
+            vshape = f"vector<{tile_numel_per_lane}x{mlir_dtype}>" # FIXME. Maybe require fine grain compute...
             if tile_numel_per_lane > 1:
                 operation = "affine.vector_load"
                 line = f"{operation} %{sram_var}[{sram_index_var}] : {tile_shape}, {vshape} // For indirect access"
@@ -1399,6 +1436,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         # Store index var
         sram_var, _, tile_numel_per_lane, sram_index_var, tile_shape, vshape = self.spad_buffer_dict[first_dim]
+        mlir_dtype = vshape.split("x")[1][:-1]
+        vshape = f"vector<{tile_numel_per_lane}x{mlir_dtype}>" # FIXME. Maybe require fine grain compute...
         if tile_numel_per_lane > 1:
             operation = "affine.vector_store"
             line = f"{operation} %{spad_vars[first_dim]}, %{sram_var}[{sram_index_var}] : {tile_shape}, {vshape}"

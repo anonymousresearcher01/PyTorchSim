@@ -1,4 +1,5 @@
 import dataclasses
+import math
 from typing import Dict
 from typing import List
 from collections import defaultdict
@@ -253,7 +254,7 @@ class MLIRMultiDimTile():
         return f"memref<{shape}x{dtype}, 1>"
 
     def get_mlir_vshape(self, mlir_dtype):
-        return f"vector<{self.get_compute_vec_size()}x{mlir_dtype}>" if self.vlane_stride > 1 else f"{mlir_dtype}"
+        return f"vector<{self.get_compute_vec_size()}x{mlir_dtype}>" if self.get_compute_vec_size() > 1 else f"{mlir_dtype}"
 
     def get_used_vlane(self):
         """
@@ -271,6 +272,8 @@ class MLIRMultiDimTile():
         if self.nr_rdim:
             assert self.nr_rdim==1
             return self.get_numel_per_lane() // self._tile_size[-1]
+        if self.vlane_stride < 16 and (self.get_numel_per_lane() // 16 >= 1):
+            return 16
         return self.vlane_stride
 
     @staticmethod
@@ -438,34 +441,68 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
 
         vlane_split_axis = len(vars) - 1 # Set split_axis as a last normal loop not reduction loop
         vlane_stride = 8 # TODO: VCIX widening is not implemented
-        # Adjust tile size to avoid too much paddings
-        for i in range(1, len(tile_size)+1):
-            target_range = self.ranges[-i]
-            if implicit_ranges:
-                target_range = implicit_dim_size[len(tile_size)-i][-1]
 
-            if tile_size[-i] > target_range:
-                remains = (target_range % vlane_stride)
-                tile_size[-i] = target_range
-                if remains:
-                    tile_size[-i] += vlane_stride - remains
+        # FIXME: Naive tile size decrement
+        def decrease_tile_size(tile_size):
+            for i in range(len(tile_size)):
+                if tile_size[i] > 1:
+                    tile_size[i] = int(tile_size[i] // 2)
+                    break
+            return tile_size
 
-        # Adjust tile size
-        for i in range(len(vars)):
-            if tile_size[i] >= self.vector_lane: # maximize used vector lane
-                vlane_split_axis = i
-        used_vlane = min((tile_size[vlane_split_axis] + vlane_stride - 1) // vlane_stride, self.vector_lane)
-        padded_size = used_vlane * vlane_stride
-        tile_size[vlane_split_axis] = ((tile_size[vlane_split_axis] + padded_size - 1) // padded_size) * padded_size
+        # FIXME: Not considering removed buffers
+        n_buffer = sum(
+            len(node.read_writes.reads) + len(node.read_writes.writes)
+            for node in nodes
+        )
+
+        spad_overflow = True
+        # Find proper tile size
+        while spad_overflow:
+            # Adjust tile size to avoid too much paddings
+            for i in range(1, len(tile_size)+1):
+                target_range = self.ranges[-i]
+                if implicit_ranges:
+                    target_range = implicit_dim_size[len(tile_size)-i][-1]
+
+                if tile_size[-i] > target_range:
+                    remains = (target_range % vlane_stride)
+                    tile_size[-i] = target_range
+                    if remains:
+                        tile_size[-i] += vlane_stride - remains
+
+            # Adjust tile size
+            for i in range(len(vars)):
+                if tile_size[i] >= self.vector_lane: # maximize used vector lane
+                    vlane_split_axis = i
+            used_vlane = min((tile_size[vlane_split_axis] + vlane_stride - 1) // vlane_stride, self.vector_lane)
+            padded_size = used_vlane * vlane_stride
+            tile_size[vlane_split_axis] = ((tile_size[vlane_split_axis] + padded_size - 1) // padded_size) * padded_size
+
+            used_vlane = min((tile_size[vlane_split_axis] + vlane_stride - 1) // vlane_stride, self.vector_lane)
+            padded_size = used_vlane * vlane_stride
+            tile_size[vlane_split_axis] = ((tile_size[vlane_split_axis] + padded_size - 1) // padded_size) * padded_size
+
+            # Check spad overflow
+            spad_usage_per_vlane = n_buffer * math.prod(tile_size) * self.precision // used_vlane
+            if spad_usage_per_vlane >= self.spad_info["spad_size"]:
+                new_tile_size = decrease_tile_size(tile_size.copy())
+                if new_tile_size == tile_size:
+                    raise NotImplementedError("Error: Cannot find proper tile size")
+                tile_size = new_tile_size
+                spad_overflow = True
+                continue
+            else:
+                spad_overflow = False
 
         # Handle scalar case
-        if len(tile_size)==1 and tile_size[0] == 1:
+        if len(self.ranges)==1 and self.ranges[0] == 1:
             vlane_stride = 1
+            vlane_split_axis = 0
             tile_size[0] = 1
         elif vlane_split_axis == -1:
-            tile_size = [1] + tile_size
             vlane_split_axis = 0
-            vlane_stride = 1
+            vlane_stride = tile_size[0]
 
         # Select tile info.
         # Note: Kernel Group have to share same tile desc for fusion
@@ -474,13 +511,6 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         tile_desc.vlane_stride = vlane_stride
         tile_desc.implicit_dim_size = implicit_dim_size
         tile_desc.nr_rdim = len(reduction_vars)
-        return tile_desc
-
-    def set_tile_size(self, template_store_info):
-        tile_desc = MLIRMultiDimTile(template_store_info['tile_size'],
-            self.vector_lane,
-            vlane_split_axis=template_store_info['vlane_split_axis'],
-            vlane_stride=template_store_info['vlane_stride'])
         return tile_desc
 
     def codegen_nodes(self, nodes, kernel_name):
