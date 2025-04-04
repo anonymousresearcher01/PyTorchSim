@@ -10,12 +10,22 @@ from torch._inductor.codecache import write_atomic
 import PyTorchSimFrontend.extension_codecache as extension_codecache
 
 BMM_TEMPLATE = r"""
+// BMM kernel
+// BATCH = {{ B }}
+// M = {{ M }}
+// N = {{ N }}
+// K = {{ K }}
+// TILE_M = {{ TILE_M }}
+// TILE_N = {{ TILE_N }}
+// TILE_K = {{ TILE_K }}
+// SUB_TILE_M = {{ SUB_TILE_M }}
+// SUB_TILE_N = {{ SUB_TILE_N }}
 {% if X_transposed %}#map0 = affine_map<(d0, d1, d2) -> (d0 * {{ K * M }} + d2 * {{ M }} + d1)>{% else %}#map0 = affine_map<(d0, d1, d2) -> (d0 * {{ M * K }} + d1 * {{ K }} + d2)>{% endif %}
 {% if W_transposed %}#map1 = affine_map<(d0, d1, d2) -> (d0 * {{ N * K }} + d2 * {{ K }} + d1)>{% else %}#map1 = affine_map<(d0, d1, d2) -> (d0 * {{ K * N }} + d1 * {{ N }} + d2)>{% endif %}
 #map2 = affine_map<(d0, d1, d2) -> (d0 * {{ M * N }} + d1 * {{ N }} + d2)>
-memref.global @X_spad : memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>
-memref.global @W_spad : memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>
-memref.global @Y_spad : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>
+memref.global @X_spad : memref<1x{{ TILE_M }}x{{ TILE_K }}xf32, 1>
+memref.global @W_spad : memref<1x{{ TILE_K }}x{{ TILE_N }}xf32, 1>
+memref.global @Y_spad : memref<1x{{ TILE_M }}x{{ TILE_N }}xf32, 1>
 {{kernel.def_global_vars()}}
 
 func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y], names_str="X, W, Bias, Y", input_reorder=input_reorder)}} {
@@ -25,9 +35,9 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
   %c_mvout = arith.constant 3 : index
   %vstride = arith.constant 1 : index
   %axis = arith.constant 2 : index
-  %X_buffer = memref.get_global @X_spad : memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>
-  %W_buffer = memref.get_global @W_spad : memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>
-  %Y_buffer = memref.get_global @Y_spad : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>
+  %X_buffer = memref.get_global @X_spad : memref<1x{{ TILE_M }}x{{ TILE_K }}xf32, 1>
+  %W_buffer = memref.get_global @W_spad : memref<1x{{ TILE_K }}x{{ TILE_N }}xf32, 1>
+  %Y_buffer = memref.get_global @Y_spad : memref<1x{{ TILE_M }}x{{ TILE_N }}xf32, 1>
   %tag = memref.alloc() : memref<1xi32>
   %tag0 = memref.alloc() : memref<1xi32>
   %tag1 = memref.alloc() : memref<1xi32>
@@ -38,26 +48,31 @@ func.func @{{ KERNEL_NAME }}{{kernel.def_kernel(inputs=[X, W, Bias], outputs=[Y]
   affine.for %b=0 to {{ B }} {
     affine.for %t_m = 0 to {{ M }} step {{ TILE_M }} {
       affine.for %t_n = 0 to {{ N }} step {{ TILE_N }} {
+        %X_buffer2D = memref.reinterpret_cast %X_buffer to offset: [0], sizes: [{{ TILE_M }}, {{ TILE_K }}], strides: [{{ TILE_K }}, 1] : memref<1x{{ TILE_M }}x{{ TILE_K }}xf32, 1> to memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>
+        %W_buffer2D = memref.reinterpret_cast %W_buffer to offset: [0], sizes: [{{ TILE_K }}, {{ TILE_N }}], strides: [{{ TILE_N }}, 1] : memref<1x{{ TILE_K }}x{{ TILE_N }}xf32, 1> to memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>
+        %Y_buffer2D = memref.reinterpret_cast %Y_buffer to offset: [0], sizes: [{{ TILE_M }}, {{ TILE_N }}], strides: [{{ TILE_N }}, 1] : memref<1x{{ TILE_M }}x{{ TILE_N }}xf32, 1> to memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>
+
         %index2 = affine.apply #map2(%b, %t_m, %t_n)
         {% if Bias -%}
         memref.dma_start %Bias[
         {%- if Bias_rank == 2 -%} %index2 {%- else -%} %t_n {%- endif -%}
-          ], %Y_buffer[0, 0], %c_mvin3, %tag0[%c0], %
+          ], %Y_buffer2D[0, 0], %c_mvin3, %tag0[%c0], %
         {%- if Bias_rank == 2 -%} axis {%- else -%} c0 {%- endif -%}
           , %vstride : memref<
         {%- if Bias_rank == 2 -%} {{ M * N }} {%- else -%} {{ N }} {%- endif -%}
           xf32>, memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ SUB_TILE_M }}, {{ SUB_TILE_N }}], async=1, sram_stride=[1 , {{ TILE_M }}] }
         {%- else -%}
-        affine.vector_store %v0, %Y_buffer[0, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ kernel.get_spad_size_per_lane(TILE_M, TILE_N) }}xf32>{% endif %}
+        affine.vector_store %v0, %Y_buffer2D[0, 0] : memref<{{ TILE_M }}x{{ TILE_N }}xf32, 1>, vector<{{ kernel.get_spad_size_per_lane(TILE_M, TILE_N) }}xf32>{% endif %}
         affine.for %t_k = 0 to {{ K }} step {{ TILE_K }} {
           %index0 = affine.apply #map0(%b, %t_m, %t_k)
           %index1 = affine.apply #map1(%b, %t_k, %t_n)
-          memref.dma_start %X[%index0], %X_buffer[%c0, %c0], %c_mvin, %tag1[%c0], %axis, %vstride
+          memref.dma_start %X[%index0], %X_buffer2D[%c0, %c0], %c_mvin, %tag1[%c0], %axis, %vstride
              : memref<{{ B * M * K }}xf32>, memref<{{ TILE_M }}x{{ TILE_K }}xf32, 1>, memref<1xi32> { subtile_size=[{{ SUB_TILE_M }}, {{ SUB_TILE_K }}], async=1, sram_stride=[1, {{ TILE_M }}]}
-          memref.dma_start %W[%index1], %W_buffer[%c0, %c0], %c_mvin2, %tag2[%c0], %axis, %vstride
+          memref.dma_start %W[%index1], %W_buffer2D[%c0, %c0], %c_mvin2, %tag2[%c0], %axis, %vstride
              : memref<{{ B * K * N }}xf32>, memref<{{ TILE_K }}x{{ TILE_N }}xf32, 1>, memref<1xi32> { subtile_size=[{{ SUB_TILE_K }}, {{ SUB_TILE_N }}], async=1, sram_stride=[1, {{ TILE_K }}]}
-          linalg.matmul ins(%X_buffer, %W_buffer : memref<{{ TILE_M }}x{{ TILE_K }}x{{ DATA_STYPE }}, 1>, memref<{{ TILE_K }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
-                  outs(%Y_buffer : memref<{{ TILE_M }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
+
+          linalg.matmul ins(%X_buffer2D, %W_buffer2D : memref<{{ TILE_M }}x{{ TILE_K }}x{{ DATA_STYPE }}, 1>, memref<{{ TILE_K }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
+                  outs(%Y_buffer2D : memref<{{ TILE_M }}x{{ TILE_N }}x{{ DATA_STYPE }}, 1>)
         } { accumulation_loop=true }
         {{kernel.store_output(indent_size=8)}}
       } { outer_loop=true }
@@ -73,15 +88,26 @@ class MLIRBMMTemplate(MLIRTemplate):
 
     def is_transposed(self, node):
         if isinstance(node, ReinterpretView):
-            # if node.layout.stride != node.data.layout.stride:
-            if node.layout.stride[-1] != node.data.layout.stride[-1] or node.layout.stride[-2] != node.data.layout.stride[-2]:
-                squeezed_layout = [s for s in node.layout.stride if s]
+            unsqueezed_layout_stride = [s for s, size in zip(node.layout.stride, node.layout.size) if size > 1]
+            unsqueezed_data_stride = [s for s, size in zip(node.data.layout.stride, node.data.layout.size) if size > 1]
+
+            if 0 in node.layout.stride: # [MoE] Temporary solution
+                if node.layout.stride[1] == 0:
+                    return True
+            if len(node.layout.stride) == len(node.data.layout.stride):
                 if node.layout.stride[-2] == node.data.layout.stride[-1] and node.layout.stride[-1] == node.data.layout.stride[-2]:
                     return True
-                elif squeezed_layout == node.data.layout.stride[len(node.data.layout.stride)-len(squeezed_layout):]:
-                    return False
                 else:
                     raise NotImplementedError("If the stride is not equal to the original stride, it should have been transposed.")
+            elif len(node.layout.stride) < len(node.data.layout.stride):
+                # Squeezed case
+                if node.layout.stride == node.data.layout.stride[-len(node.layout.stride):]:
+                    return False
+                if len(unsqueezed_layout_stride) < len(unsqueezed_data_stride):
+                    if unsqueezed_layout_stride == unsqueezed_data_stride[-len(unsqueezed_layout_stride):]:
+                        return False
+                raise NotImplementedError("If the stride is not equal to the original stride, it should have been transposed.")
+
         return False
 
     def render(self,
@@ -91,8 +117,8 @@ class MLIRBMMTemplate(MLIRTemplate):
                **kwargs):
         if template_buffer_node is not None:
             self.output_node = template_buffer_node
-        if epilogue_nodes is not None and len(epilogue_nodes) > 0:
-            self.output_node = cast(Buffer, epilogue_nodes[-1])
+        #if epilogue_nodes is not None and len(epilogue_nodes) > 0:
+        #    self.output_node = cast(Buffer, epilogue_nodes[-1])
 
         X, W = self.input_nodes[0], self.input_nodes[1]
         Y = self.output_node
@@ -100,7 +126,8 @@ class MLIRBMMTemplate(MLIRTemplate):
 
         B, M, N, K = X.get_size()[0], X.get_size()[1], W.get_size()[2], X.get_size()[2]
         TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K)
-        kernel.loop_size = [TILE_M, TILE_N, TILE_K]
+        TOG_latency = M if TILE_M > M else TILE_M
+        kernel.loop_size = [TOG_latency, TILE_N, TILE_K]
         SUB_TILE_M = TILE_M if TILE_M < kernel.vector_lane else kernel.vector_lane
         SUB_TILE_N = TILE_N if TILE_N < kernel.vector_lane else kernel.vector_lane
         SUB_TILE_K = TILE_K if TILE_K < kernel.vector_lane else kernel.vector_lane
@@ -128,8 +155,8 @@ class MLIRBMMTemplate(MLIRTemplate):
             Y = Y,
             Bias = Bias,
             Bias_rank = len(Bias.data.get_size()) if Bias is not None else 0,
-            W_transposed = W_transposed,
             X_transposed = X_transposed,
+            W_transposed = W_transposed,
             Y_numel = B * M * N,
             input_reorder = self.input_reorder
         )
@@ -144,11 +171,9 @@ class MLIRBMMTemplate(MLIRTemplate):
             vlane_split_axis = 2,
             vlane_stride = 1,
             mlir_dtype = kernel.render_options['DATA_STYPE'],
-            tile_nr_dim = 2,
             dram_shape = f"memref<{kernel.render_options['Y_numel']}x{kernel.render_options['DATA_STYPE']}>",
-            tile_shape = f"memref<{TILE_M}x{TILE_N}x{kernel.render_options['DATA_STYPE']}, 1>",
-            tile_size = (TILE_M, TILE_N),
-            tile_stride = [1, TILE_M]
+            tile_size = (1, TILE_M, TILE_N),
+            tile_stride = [1, 1, TILE_M]
         )
         code = self._template_from_string(BMM_TEMPLATE).render(**kernel.render_options)
         kernel.add_loop_info([kernel.render_options["M"], kernel.render_options["N"], kernel.render_options["K"]], [kernel.render_options["TILE_M"], kernel.render_options["TILE_N"], kernel.render_options["TILE_K"]])

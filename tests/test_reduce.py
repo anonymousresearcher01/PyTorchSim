@@ -23,10 +23,25 @@ def test_reduce_sum(device, size, dim, keepdim=False):
     out = reduce_sum(x.cpu(), y.cpu(), dim, keepdim)
     test_result("ReduceSum", res, out)
 
+def test_reduce_sum2(device, size, dim, keepdim=False):
+    def reduce_sum(a, dim, keepdim):
+        return torch.sum(a, axis=dim, keepdim=keepdim)
+    x = torch.randn(size).to(device=device)
+    opt_fn = torch.compile(dynamic=False)(reduce_sum)
+    res = opt_fn(x, dim, keepdim)
+    out = reduce_sum(x.cpu(), dim, keepdim)
+    test_result("ReduceMax", res, out)
+
 if __name__ == "__main__":
     import os
     import sys
+    import argparse
     sys.path.append(os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim'))
+
+    parser = argparse.ArgumentParser(description="Run LayerNorm test with dynamic shape")
+    parser.add_argument('--shape', type=str, default="(512,768)")
+    args = parser.parse_args()
+    shape = tuple(map(int, args.shape.strip('()').split(',')))
 
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()
