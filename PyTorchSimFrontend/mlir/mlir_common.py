@@ -271,9 +271,20 @@ class MLIRMultiDimTile():
         # Granule size used in compute loop
         if self.nr_rdim:
             assert self.nr_rdim==1
-            return self.get_numel_per_lane() // self._tile_size[-1]
-        if self.vlane_stride < 16 and (self.get_numel_per_lane() // 16 >= 1):
-            return 16
+            val = self.get_numel_per_lane() // self._tile_size[-1]
+            if self.get_numel_per_lane() >= val * 8:
+                return val*8
+            elif self.get_numel_per_lane() >= val * 4:
+                return val*4
+            elif self.get_numel_per_lane() >= val * 2:
+                return val*2
+            return val
+        if (self.get_numel_per_lane() // self.vlane_stride) >= 8:
+            return self.vlane_stride * 8
+        if (self.get_numel_per_lane() // self.vlane_stride) >= 4:
+            return self.vlane_stride * 4
+        if (self.get_numel_per_lane() // self.vlane_stride) >= 2:
+            return self.vlane_stride * 2
         return self.vlane_stride
 
     @staticmethod
@@ -425,8 +436,8 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         # Dummy tile size
         tile_size = [1] * (len(vars) + len(reduction_vars))
         if len(tile_size) == 2:
-            tile_size[-1] = 512
-            tile_size[-2] = 512
+            tile_size[-1] = 1024
+            tile_size[-2] = 2048
         elif len(tile_size) == 0: # Scalar
             tile_size = [1]
             self.ranges = [1]
@@ -440,7 +451,7 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
             raise NotImplementedError("dummy tile size fail!")
 
         vlane_split_axis = len(vars) - 1 # Set split_axis as a last normal loop not reduction loop
-        vlane_stride = 8 # TODO: VCIX widening is not implemented
+        vlane_stride = 8
 
         # FIXME: Naive tile size decrement
         def decrease_tile_size(tile_size):
@@ -494,6 +505,11 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
                 continue
             else:
                 spad_overflow = False
+
+        # Maximize the utilizaiotn of vectorlane
+        if len(reduction_vars):
+            minimum_stride = max(self.roundup_vectorlane(tile_size[vlane_split_axis]) // self.vector_lane, 2)
+            vlane_stride = min(minimum_stride, 8)
 
         # Handle scalar case
         if len(self.ranges)==1 and self.ranges[0] == 1:

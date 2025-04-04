@@ -19,5 +19,18 @@ while IFS= read -r line; do
             echo "File not found: $file_path"
         fi
     fi
+    # Check if the line ends with "Test passed|"
+    if [[ "$line" == *"Test Passed|" ]]; then
+        echo "$line"
+        echo "Accumulated Total Cycle: $total_cycles"
+        total_cycles=0
+    fi
+    if [[ "$line" == *"Test Failed|" ]]; then
+        echo "$line"
+        echo "Accumulated Total Cycle: $total_cycles"
+        total_cycles=0
+    fi
+    if [[ "$line" == *"[log]"* ]]; then
+        echo "$line"
+    fi
 done
-echo "Accumulated Total Cycle: $total_cycles"
