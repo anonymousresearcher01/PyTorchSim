@@ -18,7 +18,7 @@
  
   "icnt_type" : "booksim2",
   "icnt_latency" : 1,
-  "icnt_freq" : 5000,
+  "icnt_freq" : 1000,
   "icnt_node_per_core" : 16,
   "icnt_config_path" : "../configs/booksim2_configs/chiplet_32_32_2.icnt",
  
