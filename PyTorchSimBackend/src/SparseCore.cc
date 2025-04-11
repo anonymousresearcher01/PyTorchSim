@@ -168,6 +168,7 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
     /* Finish stonne core */
     if (coreBusy.at(subcore_id) && stonneCore->isFinished()) {
       stonneCore->finish();
+      spdlog::info("[SparseCore][{}] Operation finished at {}", _id, _core_cycle);
       std::shared_ptr<Tile> target_tile = percore_tiles.at(subcore_id).front();
       SST_STONNE::StonneOpDesc *opDesc = static_cast<SST_STONNE::StonneOpDesc*>(target_tile->get_custom_data());
       if (opDesc->trace_path != "")

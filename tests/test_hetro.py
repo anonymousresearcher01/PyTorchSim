@@ -45,14 +45,14 @@ if __name__ == "__main__":
         SchedulerDNNModel.register_model("spmm", opt_model2)
 
         # Init input data
-        for i in range(4):
+        for i in range(1):
             dense_input1 = torch.randn(M, K)
             dense_input2 = torch.randn(K, N)
 
             sparse_input1 = torch.randn(128, 128)
             sparse_input2 = torch.randn(128, 128)
-            mask1 = torch.randn(sparse_input1.shape) > sparsity
-            mask2 = torch.randn(sparse_input2.shape) > sparsity
+            mask1 = torch.rand(sparse_input1.shape) > sparsity
+            mask2 = torch.rand(sparse_input2.shape) > sparsity
 
             sparse_input1 = sparse_input1 * mask1
             sparse_input2 = sparse_input2 * mask2
