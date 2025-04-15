@@ -185,17 +185,30 @@ int Simulator::until(cycle_type until_cycle) {
 
     // Check if core status has changed
     if (_core_cycles % 10 == 0) {
+      int bitmap = 0;
       for (int i=0; i<_partition_scheduler.size(); i++) {
         /* Skip this */
         if (partition_scheudler_status.at(i))
           continue;
 
-        if (_partition_scheduler.at(i)->empty())
-          return i;
+        if (_partition_scheduler.at(i)->empty()) {
+          bitmap |= (1 << i);
+        }
       }
+      if (bitmap)
+        return bitmap;
     }
   }
-  return -1;
+  int bitmap = 0;
+  for (int i=0; i<_partition_scheduler.size(); i++) {
+    /* Skip this */
+    if (partition_scheudler_status.at(i))
+      continue;
+
+    if (_partition_scheduler.at(i)->empty())
+      bitmap |= (1ULL << i);
+  }
+  return bitmap;
 }
 
 void Simulator::cycle() {
