@@ -454,11 +454,19 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         vlane_stride = 8
 
         # FIXME: Naive tile size decrement
-        def decrease_tile_size(tile_size):
+        def decrease_tile_size(tile_size, vlane_split_axis):
+            is_decreased = False
+            # Decrease tile size
             for i in range(len(tile_size)):
+                if i == vlane_split_axis:
+                    continue
                 if tile_size[i] > 1:
                     tile_size[i] = int(tile_size[i] // 2)
+                    is_decreased = True
                     break
+            if not is_decreased:
+                if tile_size[vlane_split_axis] > 1:
+                    tile_size[vlane_split_axis] = int(tile_size[vlane_split_axis] // 2)
             return tile_size
 
         # FIXME: Not considering removed buffers
@@ -490,14 +498,10 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
             padded_size = used_vlane * vlane_stride
             tile_size[vlane_split_axis] = ((tile_size[vlane_split_axis] + padded_size - 1) // padded_size) * padded_size
 
-            used_vlane = min((tile_size[vlane_split_axis] + vlane_stride - 1) // vlane_stride, self.vector_lane)
-            padded_size = used_vlane * vlane_stride
-            tile_size[vlane_split_axis] = ((tile_size[vlane_split_axis] + padded_size - 1) // padded_size) * padded_size
-
             # Check spad overflow
             spad_usage_per_vlane = n_buffer * math.prod(tile_size) * self.precision // used_vlane
             if spad_usage_per_vlane >= self.spad_info["spad_size"]:
-                new_tile_size = decrease_tile_size(tile_size.copy())
+                new_tile_size = decrease_tile_size(tile_size.copy(), vlane_split_axis)
                 if new_tile_size == tile_size:
                     raise NotImplementedError("Error: Cannot find proper tile size")
                 tile_size = new_tile_size
