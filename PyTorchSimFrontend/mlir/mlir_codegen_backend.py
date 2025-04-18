@@ -27,9 +27,19 @@ def reduction_init(reduction_type, dtype):
     if reduction_type == "prod":
         return float(1) if dtype.is_floating_point else int(1)
     if reduction_type in {"max", "argmax"}:
-        return "0.0"
+        if dtype == torch.float32:
+            return f"0x{mlir_common.MLIR_INF['-inf']['f32']:x}"
+        elif dtype == torch.float64:
+            return f"0x{mlir_common.MLIR_INF['-inf']['f64']:x}"
+        else:
+            return "0.0"
     if reduction_type in {"min", "argmin"}:
-        return "0.0"
+        if dtype == torch.float32:
+            return f"0x{mlir_common.MLIR_INF['inf']['f32']:x}"
+        elif dtype == torch.float64:
+            return f"0x{mlir_common.MLIR_INF['inf']['f64']:x}"
+        else:
+            return "0.0"
     if reduction_type in {"welford_reduce"}:
         return f"0.0"
     raise AssertionError(reduction_type)
@@ -964,7 +974,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             # Adjust shape and inital value
             init_vec = self.cse.generate(self.reduction_prefix, f"vector.broadcast %{init} : {type_name} to {reduced_shape}")
         acc_var = init_vec
-
 
         # Reduction body prepare
         body_acc = self.reduction_cse.generate(
