@@ -999,7 +999,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         reduction_size = self.kernel_group.tile_desc.get_numel_per_lane() // self.kernel_group.tile_desc.get_tile_size()[-1]
         assert(vec_len % reduction_size==0)
         if vec_len > reduction_size:
-            init = self.cse.generate(self.reductions_suffix, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
+            init = self.const_cse.generate(self.reductions_suffix, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
             if reduction_size == 1:
                 final_reduced_shape = f"{type_name}"
                 out = self.cse.generate(self.reductions_suffix, reduction_combine_vec(reduction_type, acc, init, axis=0, shape=reduced_shape, reduced_shape=final_reduced_shape))
@@ -1154,6 +1154,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 arg_lists.append(dim_list[int(str(arg)[1:])])
             else:
                 raise NotImplementedError("Not supporting format")
+        if isinstance(renamed_expression, sympy.Symbol):
+            arg_lists.append(dim_list[int(str(renamed_expression)[1:])])
         accum = arg_lists[0]
         for arg in arg_lists[1:]:
             accum = ops.add(accum, arg)
