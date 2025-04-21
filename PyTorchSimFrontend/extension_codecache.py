@@ -156,6 +156,8 @@ class MLIRCodeCache:
              cycle_binary_name="cycle_bin",
              arg_attributes=[], vectorlane_size=16,
              spad_info=None, origins=None, **kwargs):
+        vlen = kwargs['vlen']
+        vlenb = vlen // 8
         write_path = get_write_path(source_code)
         key, input_path = write(source_code, "mlir", specified_dir=write_path)
         new_input_path = os.path.splitext(input_path)[0]
@@ -175,7 +177,7 @@ class MLIRCodeCache:
         if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE:
             # Use custom malloc to avoid size error
             new_link_option = link_option + " -Wl,--wrap=malloc -Wl,--wrap=free"
-            cmds = mlir_compile_command(new_input_path, vectorlane_size, vlen=256)
+            cmds = mlir_compile_command(new_input_path, vectorlane_size, vlen=vlen)
             opt_cmd = shlex.split(cmds[0])
             translate_cmd = shlex.split(cmds[1])
             llc_cmd = shlex.split(cmds[2])
@@ -194,7 +196,7 @@ class MLIRCodeCache:
                 val_llvm_caller.compile_wih_kernel(write_path, key, validation_wrapper_name,
                                                    validation_binary_name, new_link_option)
                 target = os.path.join(write_path, validation_binary_name)
-                stack_size = val_llvm_caller.parse_stack_sizes(target)
+                stack_size = val_llvm_caller.parse_stack_sizes(f"{write_path}/{key}.s", vlenb=vlenb)
                 spad_size =  val_llvm_caller.get_spad_size(target)
                 spad_usage = stack_size + spad_size # Spad usage per lane
                 if extension_config.CONFIG_SPAD_INFO["spad_size"] < spad_usage:

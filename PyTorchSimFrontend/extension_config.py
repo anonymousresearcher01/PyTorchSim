@@ -11,7 +11,7 @@ CONFIG_SPAD_INFO = {
 }
 CONFIG_PRECISION = 4 # 32bit
 CONFIG_NUM_CORES = 1
-CONFIG_VLEN = 32 // CONFIG_PRECISION # 256bits / 32bits = 8 [elements]
+CONFIG_VLEN = 256 # 256bits / 32bits = 8 [elements]
 
 # Tile size config
 CONFIG_TORCHSIM_DIR = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')

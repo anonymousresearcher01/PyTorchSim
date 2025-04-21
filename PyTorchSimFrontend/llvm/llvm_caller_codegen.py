@@ -176,31 +176,42 @@ class LLVMKernelCallerCodeGen():
             print("Error output:", e.output)
             assert(0)
 
-    def parse_stack_sizes(self, file_path):
-        meta_path = file_path.split(".")[0]+".meta"
-        cmd = ["riscv64-unknown-elf-objcopy", "--dump-section", f".stack_sizes={meta_path}", file_path, "/dev/null"]
-        subprocess.run(cmd, check=True)
+    def parse_stack_sizes(self, file_path, vlenb=256):
+        with open(file_path, 'r') as f:
+            stack_sizes_data = f.readlines()
 
-        with open(meta_path, 'rb') as f:
-            stack_sizes_data = bytearray(list(f.read()))
-        # Wrapper kernel serach
-        cmd = ["riscv64-unknown-elf-readelf", "-s", file_path]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"Readelf error: {result.stderr}")
-        output = result.stdout
-        for line in output.splitlines():
-            if 'wrapper_kernel' in line:
-                sym_addr = int(line.split()[1], 16)
-                byte_array = sym_addr.to_bytes(8, byteorder='little')
-                break
-        wrapper_pos = stack_sizes_data.find(byte_array)
+        in_proc = False
+        stack_base = None
+        dynamic_expr = None
+        max_offset = 0
 
-        if len(stack_sizes_data) <= 17:
-            raise ValueError("Invalid .stack_sizes section size")
-        stack_size_bytes = stack_sizes_data[8:wrapper_pos]
-        stack_size = int.from_bytes(stack_size_bytes, byteorder='little')
-        return stack_size
+        for line in stack_sizes_data:
+            line = line.strip()
+            if line.startswith(".cfi_startproc"):
+                in_proc = True
+                continue
+            elif line.startswith(".cfi_endproc") and in_proc:
+                if dynamic_expr:
+                    total_stack = eval(dynamic_expr, {"vlenb": vlenb})
+                    return total_stack
+                elif stack_base:
+                    return stack_base
+                else:
+                    return max_offset
+
+            # Skip outer function
+            if not in_proc:
+                continue
+
+            if line.startswith(".cfi_def_cfa_offset"):
+                stack_base = int(line.split()[-1])
+
+            if ".cfi_escape" in line and "#" in line:
+                comment = line.split("#")[-1].strip()
+                m = re.search(r"sp \+ (\d+)\s*\+\s*(\d+)\s*\*\s*vlenb", comment)
+                if m:
+                    base, scale = int(m.group(1)), int(m.group(2))
+                    dynamic_expr = f"{base} + {scale} * vlenb"
 
     def get_spad_size(self, binary_path):
         cmd = ["riscv64-unknown-elf-readelf", "-s", binary_path]
