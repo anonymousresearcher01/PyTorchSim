@@ -428,6 +428,12 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       if (mem_node->is_indirect()) {
         inst->set_indirect_index_path(tog_parser->get_indirect_path());
         tog_parser->inc_indirect_counter();
+      } else {
+        bool is_sparse_tile = tog_parser->is_sparse_tile(tog_parser->get_dma_counter());
+        tog_parser->inc_dma_counter();
+        if (is_sparse_tile) {
+          inst->set_sparse_state(is_sparse_tile);
+        }
       }
       link_map[tile_node] = inst;
       tile_vec.back()->append_instuction(inst);
@@ -760,6 +766,7 @@ TileGraphParser::TileGraphParser(std::string onnx_path, std::string attribute_pa
       spdlog::info("[TOGParser/Attribute] Address numa info key: {} numa stride : {}", it.key(), fmt::join(_arg_numa_stride[it.key()], ", "));
     }
   }
+  load_sparse_meta_data();
 
   /* ONNX file parsing */
   _tog_path = onnx_path;
