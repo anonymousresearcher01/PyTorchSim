@@ -320,62 +320,6 @@ class BackendSimulator():
             address_info[f"arg{idx}"] = tensor.data_ptr()
         json_content["address_info"] = address_info
 
-        if extension_config.CONFIG_BLOCK_SPARSE and "loop_size" in kwargs and len(kwargs['loop_size'])==3 and kwargs['loop_size'][0] != 1:
-            # GEMM
-            import copy
-            zero_skip = {}
-            input, weight = inputs[:2]
-            M, N, K = kwargs['loop_size']
-
-            padded_input = copy.deepcopy(input.cpu())
-            padded_weight = copy.deepcopy(weight.cpu())
-
-            original_input_shape = input.shape
-            original_weight_shape = weight.shape
-
-            # Initialize padding for all dimensions
-            pad_input = [(0, 0)] * input.ndim
-            pad_weight = [(0, 0)] * weight.ndim
-
-            if input.ndim == 2:
-                # 2D tensor: (Height, Width)
-                pad_input[0] = (0, M - original_input_shape[0] if original_input_shape[0] < M else 0)
-                pad_input[1] = (0, K - original_input_shape[1] if original_input_shape[1] < K else 0)
-            elif input.ndim == 3:
-                # 3D tensor: (Depth, Height, Width)
-                pad_input[1] = (0, M - original_input_shape[1] if original_input_shape[1] < M else 0)
-                pad_input[2] = (0, K - original_input_shape[2] if original_input_shape[2] < K else 0)
-
-            if weight.ndim == 2:
-                # 2D tensor: (Height, Width)
-                pad_weight[0] = (0, K - original_weight_shape[0] if original_weight_shape[0] < K else 0)
-                pad_weight[1] = (0, N - original_weight_shape[1] if original_weight_shape[1] < N else 0)
-            elif weight.ndim == 3:
-                # 3D tensor: (Depth, Height, Width)
-                pad_weight[1] = (0, K - original_weight_shape[1] if original_weight_shape[1] < K else 0)
-                pad_weight[2] = (0, N - original_weight_shape[2] if original_weight_shape[2] < N else 0)
-
-            # Apply padding
-            padded_input = np.pad(
-                padded_input,
-                pad_width=pad_input,
-                mode='constant',
-                constant_values=0
-            )
-
-            padded_weight = np.pad(
-                padded_weight,
-                pad_width=pad_weight,
-                mode='constant',
-                constant_values=0
-            )
-
-            #input_zero_pos = self.find_zero_sub_tensors(padded_input)
-            weight_zero_pos = self.find_zero_sub_tensors(padded_weight)
-            #zero_skip["arg0"] = input_zero_pos
-            zero_skip["arg1"] = weight_zero_pos
-            json_content["zero_skip"] = zero_skip
-
         with open(attribute_path, "w") as f:
             json.dump(json_content, f, indent=4)
         return attribute_path
