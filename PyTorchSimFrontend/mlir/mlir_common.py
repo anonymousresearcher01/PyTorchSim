@@ -439,27 +439,15 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         vlane_split_axis = len(vars) - 1 # Set split_axis as a last normal loop not reduction loop
         vlane_stride = 8
 
-        # Dummy tile size
-        tile_size = [1] * (len(vars) + len(reduction_vars))
-        if len(tile_size) == 2:
-            tile_size[-1] = vlane_stride * self.vector_lane
-            tile_size[-2] = 2 * vlane_stride * self.vector_lane
-        elif len(tile_size) == 0: # Scalar
-            tile_size = [1]
-            self.ranges = [1]
-        elif len(tile_size) == 1:
-            tile_size[0] = 2 * vlane_stride * self.vector_lane
-        elif len(tile_size) == 3:
-            tile_size[-1] = self.vector_lane
-            tile_size[-2] = self.vector_lane
-            tile_size[-3] = 2
-        else:
-            raise NotImplementedError("dummy tile size fail!")
-
-        # FIXME: Naive tile size decrement
+        # FIXME: Naive decrease tile size
         def decrease_tile_size(tile_size, vlane_split_axis):
             is_decreased = False
-            # Decrease tile size
+
+            # Decrease vlane_split_axis when it is too large
+            if tile_size[vlane_split_axis] > vlane_stride * self.vector_lane:
+                tile_size[vlane_split_axis] = int(tile_size[vlane_split_axis] // 2)
+                return tile_size
+
             for i in range(len(tile_size)):
                 if i == vlane_split_axis:
                     continue
@@ -467,10 +455,33 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
                     tile_size[i] = int(tile_size[i] // 2)
                     is_decreased = True
                     break
+
+            # Decrease vlane_split_axis at the end to maximize the vlane usage
             if not is_decreased:
                 if tile_size[vlane_split_axis] > 1:
                     tile_size[vlane_split_axis] = int(tile_size[vlane_split_axis] // 2)
             return tile_size
+
+        # Dummy tile size
+        if self.kernel_group.tile_desc:
+            tile_size = self.kernel_group.tile_desc.get_tile_size()
+            decrease_tile_size(tile_size, vlane_split_axis)
+        else:
+            tile_size = [1] * (len(vars) + len(reduction_vars))
+            if len(tile_size) == 2:
+                tile_size[-1] = vlane_stride * self.vector_lane
+                tile_size[-2] = 2 * vlane_stride * self.vector_lane
+            elif len(tile_size) == 0: # Scalar
+                tile_size = [1]
+                self.ranges = [1]
+            elif len(tile_size) == 1:
+                tile_size[0] = 2 * vlane_stride * self.vector_lane
+            elif len(tile_size) == 3:
+                tile_size[-1] = self.vector_lane
+                tile_size[-2] = self.vector_lane
+                tile_size[-3] = 2
+            else:
+                raise NotImplementedError("dummy tile size fail!")
 
         # FIXME: Not considering removed buffers
         n_buffer = sum(
