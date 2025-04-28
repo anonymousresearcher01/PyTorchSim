@@ -400,7 +400,7 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
                     break
 
         if implicit_ranges:
-            print("This operation contina implicit dimension space!")
+            #print("This operation contain implicit dimension space!")
             linearized_stride = [1] * len(target_operand.var_names)
             for i in range(len(target_operand[3])-2, -1, -1):
                 linearized_stride[i] = linearized_stride[i+1] * target_operand[3][i+1]
