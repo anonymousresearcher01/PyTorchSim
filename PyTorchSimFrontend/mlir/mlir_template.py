@@ -185,11 +185,11 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
 
         return mapping
 
-    def pseudo_auto_tune(self, mapping, stride, dilation, n_extra_node=0):
+    def pseudo_auto_tune(self, mapping, stride, dilation, O_H, O_W, n_extra_node=0):
         # pseudo auto-tune
-        if mapping[2] == 1:
+        if mapping[2] == 1 and not (O_H == 1):
             mapping = self.search_mapping_space(mapping, 2, 1, stride, dilation, n_extra_node=n_extra_node)
-        if mapping[3] == 1:
+        if mapping[3] == 1 and not (O_W == 1):
             mapping = self.search_mapping_space(mapping, 3, 1, stride, dilation, n_extra_node=n_extra_node)
         return mapping
 
@@ -227,7 +227,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             raise RuntimeError("Cannot find a valid mapping")
 
         # FIXME: this should be implemented with auto-tuning
-        mapping = self.pseudo_auto_tune(mapping, stride, dilation, n_extra_node=n_extra_node)
+        mapping = self.pseudo_auto_tune(mapping, stride, dilation, O_H, O_W, n_extra_node=n_extra_node)
 
         return mapping
 
