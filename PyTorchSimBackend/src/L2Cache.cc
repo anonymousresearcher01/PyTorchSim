@@ -16,7 +16,7 @@ L2DataCache::L2DataCache(std::string name,  CacheConfig &cache_config, uint32_t 
   cycle_type *core_cycle, uint32_t l2d_hit_latency,
   std::queue<mem_fetch*> *to_xbar_queue, std::queue<mem_fetch*> *from_xbar_queue) :
   L2CacheBase(name, cache_config, id, core_cycle, l2d_hit_latency, to_xbar_queue, from_xbar_queue) {
-  l_cache = std::make_unique<ReadOnlyCache>(name, cache_config, id, 0, &l_to_mem_queue);
+  l_cache = std::make_unique<DataCache>(name, cache_config, id, 0, &l_to_mem_queue);
   l_from_cache_queue = DelayQueue<mem_fetch*>(l_name + "_latency_queue", true, 0);
 }
 
@@ -26,7 +26,8 @@ bool L2DataCache::push(mem_fetch* req) {
       return false;
     l_cache->fill(req, *l_core_cycle);
   } else {
-    l_to_xbar_queue->push(req);
+    if (req->get_access_type() == GLOBAL_ACC_R || req->get_access_type() == GLOBAL_ACC_W)
+      l_to_xbar_queue->push(req);
   }
   return true;
 }
@@ -91,7 +92,8 @@ void L2DataCache::cycle() {
 
   if (l_from_cache_queue.arrived()) {
     mem_fetch* req = l_from_cache_queue.top();
-    l_to_xbar_queue->push(req);
+    if (req->get_access_type() == GLOBAL_ACC_R || req->get_access_type() == GLOBAL_ACC_W)
+      l_to_xbar_queue->push(req);
     l_from_cache_queue.pop();
   }
 }

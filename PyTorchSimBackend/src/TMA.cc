@@ -23,10 +23,9 @@ std::shared_ptr<std::vector<mem_fetch*>> TMA::get_memory_access() {
   auto access_vec = std::make_shared<std::vector<mem_fetch *>>();
   Tile* owner = (Tile*)_current_inst->get_owner();
   std::shared_ptr<TileSubGraph> owner_subgraph = owner->get_owner();
-  TileGraph* owner_graph = static_cast<TileGraph*>(owner_subgraph->get_owner());
   unsigned long long base_daddr = _current_inst->get_base_dram_address();
   // Todo. We use a ternsor level buffer allocation, so we don't need to check all memfetch
-  bool is_cacheable = owner_graph->is_cacheable(base_daddr, base_daddr + _dram_req_size);
+  bool is_cacheable = owner_subgraph->is_cacheable(base_daddr, base_daddr + _dram_req_size);
   spdlog::trace("[SRAM Trace] Core-{}, Address: 0x{:016x}, Is_cacheable: {}", _id, base_daddr, is_cacheable);
   spdlog::trace("[NUMA Trace] Core-{}, Subgraph id: {} , Numa id: {}, Arg: {} is_write: {}",
     _id, owner_subgraph->get_core_id(), _current_inst->get_numa_id(), _current_inst->get_addr_name(), _current_inst->is_dma_write());

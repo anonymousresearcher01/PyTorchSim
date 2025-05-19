@@ -18,8 +18,8 @@ class TileSubGraph {
   int get_id() { return _id; }
   void set_core_id(int core_id) { _core_id = core_id; }
   int get_core_id() { return _core_id; }
-  void set_owner(void* owner) { _owner = owner; }
-  void* get_owner() { return _owner; }
+  void init_cache_plan(std::shared_ptr<IntervalTree<unsigned long long,int>> plan) { _cache_plan = plan; }
+  bool is_cacheable(unsigned long long start, unsigned long long end) { return _cache_plan->findOverlapping(start, end).size() != 0; }
   struct CompareReadyTile {
     bool operator()(const std::shared_ptr<Tile>& a, const std::shared_ptr<Tile>& b) const {
       return a->get_required_sram_size() > b->get_required_sram_size();
@@ -32,7 +32,7 @@ class TileSubGraph {
   int _id;
   int _core_id = -1;
   static int _next_id;
-  void* _owner=NULL;
+  std::shared_ptr<IntervalTree<unsigned long long, int>> _cache_plan;
 };
 
 class TileGraph {
@@ -67,8 +67,9 @@ class TileGraph {
   std::string get_name() { return _name; }
   void set_arrival_time(cycle_type arrival_time) { _arrival_time = arrival_time; }
   cycle_type get_arrival_time() { return _arrival_time; }
-  void init_cache_plan(IntervalTree<unsigned long long, int>::interval_vector it) { _cache_plan = IntervalTree<unsigned long long, int>(std::move(it)); }
-  bool is_cacheable(unsigned long long start, unsigned long long end);
+  void init_cache_plan(IntervalTree<unsigned long long, int>::interval_vector it) {
+    _cache_plan = std::make_shared<IntervalTree<unsigned long long, int>>(std::move(it));
+  }
   bool StonneGraph = false;
 
   class Iterator {
@@ -134,7 +135,7 @@ class TileGraph {
   std::vector<std::shared_ptr<TileSubGraph>> _subgraph_vec;
   std::vector<std::shared_ptr<TileSubGraph>> _finished_subgraph_vec;
   std::map<int, std::map<int, std::shared_ptr<TileSubGraph>>> _cpu_graph_map;
-  IntervalTree<unsigned long long, int> _cache_plan;
+  std::shared_ptr<IntervalTree<unsigned long long, int>> _cache_plan;
   cycle_type _arrival_time;
   static std::shared_ptr<Tile> null_tile;
 };

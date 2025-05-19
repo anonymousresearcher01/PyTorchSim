@@ -53,6 +53,7 @@ class mem_fetch {
   void set_request_id(unsigned id) { m_request_id = id; }
   unsigned get_request_id() { return m_request_id; }
   void set_access_sector_mask(uint32_t line_size, uint32_t sector_size) { m_sector_mask.set((m_addr % line_size) / sector_size); }
+  void set_access_sector_mask(SectorMask mask) { m_sector_mask = mask; }
   SectorMask get_access_sector_mask() { return m_sector_mask; }
   void set_dirty_mask(SectorMask dirty_mask) { m_dirty_mask = dirty_mask; }
   SectorMask get_dirty_mask() { return m_dirty_mask; }

@@ -891,6 +891,8 @@ CacheRequestStatus DataCache::wr_miss_wa_naive(uint64_t addr,
   send_write_request(mf, CacheEvent(WRITE_REQUEST_SENT), time, events);
   mem_fetch *new_mf = new mem_fetch(
       mf->get_addr(), m_write_alloc_type, READ_REQUEST, m_config.get_atom_size());
+  new_mf->set_access_sector_mask(mf->get_access_sector_mask());
+  new_mf->set_core_id(mf->get_core_id());
   bool do_miss = false;
   bool wb = false;
   EvictedBlockInfo evicted;
