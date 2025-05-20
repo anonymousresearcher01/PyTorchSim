@@ -53,12 +53,15 @@ class mem_fetch {
   void set_request_id(unsigned id) { m_request_id = id; }
   unsigned get_request_id() { return m_request_id; }
   void set_access_sector_mask(uint32_t line_size, uint32_t sector_size) { m_sector_mask.set((m_addr % line_size) / sector_size); }
+  void set_access_sector_mask(SectorMask mask) { m_sector_mask = mask; }
   SectorMask get_access_sector_mask() { return m_sector_mask; }
   void set_dirty_mask(SectorMask dirty_mask) { m_dirty_mask = dirty_mask; }
   SectorMask get_dirty_mask() { return m_dirty_mask; }
   mem_fetch* get_original_mf() { return m_original_mf; }
   bool is_atomic() { return false; }
   bool is_request() { return m_type == mf_type::READ_REQUEST || m_type == mf_type::WRITE_REQUEST; }
+  void set_cacheable(bool cacheable) { m_cacheable = cacheable; }
+  bool is_cacheable() { return m_cacheable; }
   void set_reply() {
     if (m_type == mf_type::READ_REQUEST)
       m_type = mf_type::READ_REPLY;
@@ -91,6 +94,7 @@ class mem_fetch {
   mem_fetch* m_original_mf;
   void* m_custom_data = NULL;
   uint64_t m_start_cycle = 0ULL;
+  bool m_cacheable = true;
 };
 
 #endif

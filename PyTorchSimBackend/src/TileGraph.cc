@@ -47,6 +47,7 @@ std::shared_ptr<Tile> TileSubGraph::get_tile() {
 
 
 void TileGraph::append_subgraph(std::shared_ptr<TileSubGraph> subgraph) {
+  subgraph->init_cache_plan(_cache_plan);
   _subgraph_vec.push_back(std::move(subgraph));
 }
 
@@ -62,7 +63,6 @@ bool TileGraph::is_finished() {
       if (tile_pair.second != nullptr)
         finished &= tile_pair.second->is_finished();
   }
-
   return finished;
 }
 

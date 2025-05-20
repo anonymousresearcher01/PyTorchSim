@@ -4,12 +4,14 @@ import re
 import os
 import math
 import torch
-from torch._inductor.codegen import cpp, wrapper, common
+from torch._dynamo.utils import dynamo_timed
+from torch._inductor.codegen import cpp, wrapper, common, memory_planning
 from torch._inductor.virtualized import V, _ops as ops
 from torch._inductor.codecache import write_atomic, write
 from torch._inductor.utils import (
     IndentedBuffer,
     is_welford_reduction,
+    sympy_product
 )
 from torch.utils._sympy.functions import ModularIndexing
 import PyTorchSimFrontend.extension_codecache as extension_codecache
@@ -91,6 +93,8 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
 
                 from torch import device, empty, empty_strided
                 from {extension_codecache.__name__} import CustomAsyncCompile
+                from PyTorchSimFrontend.extension_config import CONFIG_SRAM_BUFFER_PLAN, CONFIG_BACKENDSIM_EAGER_MODE
+                from Simulator.simulator import BackendSimulator
                 from PyTorchSimFrontend.extension_op import sparse_mm_dummy_stonne_outer
                 from torch._inductor.select_algorithm import extern_kernels
 
@@ -99,11 +103,116 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
                 assert_size_stride = torch._C._dynamo.guards.assert_size_stride
                 alloc_from_pool = torch.ops.inductor._alloc_from_pool
                 reinterpret_tensor = torch.ops.aten._reinterpret_tensor
-                async_compile = CustomAsyncCompile()
+                custom_async_compile = CustomAsyncCompile()
                 os.environ["TORCHSIM_LAST_COMPILED_MODULE"] = __file__
             """
         )
+        self.header.splice(
+            f"""
+            def sram_plan_prefix(buffer_name, buffer):
+                #if CONFIG_SRAM_BUFFER_PLAN is None:
+                #    return
+                #elif buffer_name not in CONFIG_SRAM_BUFFER_PLAN:
+                #    return
+                buffer_size = buffer.element_size() * buffer.untyped_storage().size()
+                start = buffer.data_ptr()
+                end = start + buffer_size
+                # print(f'Alloc {{buffer_name}}(0x{{start:x}} ~ 0x{{end:x}})')
+                BackendSimulator.sram_alloc(buffer_name, [start, end])
 
+            def sram_plan_postfix(buffer_name, buffer):
+                #if CONFIG_SRAM_BUFFER_PLAN is None:
+                #    return
+                #elif buffer_name not in CONFIG_SRAM_BUFFER_PLAN:
+                #    return
+                buffer_size = buffer.element_size() * buffer.untyped_storage().size()
+                start = buffer.data_ptr()
+                end = start + buffer_size
+                # print(f'Dealloc {{buffer_name}}(0x{{start:x}} ~ 0x{{end:x}})')
+                BackendSimulator.sram_dealloc(buffer_name, [start, end])
+
+            def host2device_memcopy(buffer):
+                pass
+
+            def device2host_memcpy(buffer):
+                pass
+            """
+        )
+
+    def write_prefix(self):
+        self.prefix.splice(
+            """
+            def call(args):
+            """
+        )
+        with self.prefix.indent():
+            inp_len = len(V.graph.graph_inputs.keys())
+            if inp_len != 0:
+                lhs = f"{', '.join(V.graph.graph_inputs.keys())}{'' if inp_len != 1 else ','}"
+                self.prefix.writeline(f"{lhs} = args")
+                self.prefix.writeline("args.clear()")
+
+            self.codegen_inputs(self.prefix, V.graph.graph_inputs)
+            self.codegen_input_size_asserts()
+            self.codegen_sram_plan_prefix()
+
+    def codegen_sram_plan_prefix(self):
+        for name, buf in V.graph.graph_inputs.items():
+            if isinstance(buf, sympy.Expr):
+                continue
+            if sympy_product(buf.get_size()) == 0:
+                continue
+            if buf is None:
+                continue
+            self.prefix.writeline(f"sram_plan_prefix('{name}', {name})")
+
+    def codegen_sram_plan_postfix(self, outputs):
+        for name in outputs:
+            if name is None or name == "None":
+                continue
+            self.wrapper_call.writeline(f"sram_plan_postfix('{name}', {name})")
+
+    @dynamo_timed
+    def generate(self, is_inference):
+        result = IndentedBuffer()
+        result.splice(self.header)
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(self.wrapper_call.indent())
+            self.memory_plan_reuse()
+            for line in self.lines:
+                # Add buffer plan hook for dealloc
+                if isinstance(line, memory_planning.DeallocFromPoolLine):
+                    self.wrapper_call.writeline(f"sram_plan_postfix('{line.node.get_name()}', {line.node.get_name()})")
+                elif isinstance(line, str) and "del" in line:
+                    name = line.split(" ")[1]
+                    self.wrapper_call.writeline(f"sram_plan_postfix('{name}', {name})")
+
+                if isinstance(line, wrapper.MemoryPlanningLine):
+                    line.codegen(self.wrapper_call)
+                else:
+                    self.wrapper_call.writeline(line)
+                # Add buffer plan hook for alloc
+                if isinstance(line, memory_planning.AllocFromPoolLine) or isinstance(line, wrapper.AllocateLine):
+                    self.wrapper_call.writeline(f"sram_plan_prefix('{line.node.get_name()}', {line.node.get_name()})")
+            output_refs = self.get_output_refs()
+            self.codegen_sram_plan_postfix(output_refs)
+            self.mark_output_type()
+            self.generate_return(output_refs)
+
+        self.append_precomputed_sizes_to_prefix()
+        self.finalize_prefix()
+        result.splice(self.prefix)
+
+        with result.indent():
+            result.splice(self.wrapper_call)
+
+        self.generate_end(result)
+        self.add_benchmark_harness(result)
+        return result.getvaluewithlinemap()
+
+    def memory_plan(self):
+        self.lines = memory_planning.MemoryPlanner(self).plan(self.lines)
 class ExtensionOverrides(common.OpOverrides):
     # Binary element wise operations
     @staticmethod
