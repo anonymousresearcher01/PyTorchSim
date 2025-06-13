@@ -28,7 +28,7 @@ class MLIRScheduling(BaseScheduling):
         if node1.get_device() == node2.get_device():
             from PyTorchSimFrontend.mlir.mlir_gemm_template import MLIRGemmTemplate
             # For matmul+reduction case
-            if node1.is_template() and isinstance(node1.node.template, MLIRGemmTemplate) and node2.is_reduction():
+            if node1.is_template() and len(node1.get_nodes())==1 and isinstance(node1.node.template, MLIRGemmTemplate) and node2.is_reduction():
                 possible = node1.node.get_size()[:-1] == node2.node.get_size()
                 return True
         return self.scheduler.can_fuse_origin(node1, node2)
@@ -62,8 +62,8 @@ class MLIRScheduling(BaseScheduling):
         if node1.is_template() or node2.is_template():
             # Don't fuse maxpool template code
             from PyTorchSimFrontend.mlir.mlir_maxpool_template import MLIRMaxPoolTemplate
-            if node1.is_template() and isinstance(node1.node.template, MLIRMaxPoolTemplate) or \
-                node2.is_template() and isinstance(node2.node.template, MLIRMaxPoolTemplate):
+            if node1.is_template() and len(node1.get_nodes())==1 and isinstance(node1.node.template, MLIRMaxPoolTemplate) or \
+                node2.is_template() and len(node1.get_nodes())==1 and isinstance(node2.node.template, MLIRMaxPoolTemplate):
                 return False
 
             # Different layout is not supported
