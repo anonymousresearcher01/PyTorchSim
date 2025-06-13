@@ -16,6 +16,7 @@ class MLIRScheduling(BaseScheduling):
     target_kernel = MLIRKernel
     def __init__(self, scheduler):
         self.scheduler = scheduler
+        self.scheduler.can_fuse_origin = self.scheduler.can_fuse
         self.scheduler.can_fuse = self.can_fuse_with_exceptions
         self.kernel_group = mlir_common.MLIRWrapperKenrelGroup()
         self._ready_to_flush = False
@@ -30,7 +31,7 @@ class MLIRScheduling(BaseScheduling):
             if node1.is_template() and isinstance(node1.node.template, MLIRGemmTemplate) and node2.is_reduction():
                 possible = node1.node.get_size()[:-1] == node2.node.get_size()
                 return True
-        return self.scheduler.can_fuse(node1, node2)
+        return self.scheduler.can_fuse_origin(node1, node2)
 
     def _set_flush_status(self, status: bool):
         self._ready_to_flush = status

@@ -604,15 +604,22 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         if self.reduction_body_loop is None:
             compute_index_var = ",".join([f"%{zero_var}"] * (self.kernel_group.tile_desc.get_nr_dim()-1) + [f"%{self.compute_idx}"])
         else:
+            reduce_size = self.reduction_body_loop.size
             compute_index_var = ",".join([f"%{zero_var}"] * (self.kernel_group.tile_desc.get_nr_dim()-2) + [f"%{self.reduction_idx}"] + [f"%{self.compute_idx}"])
+            vshape = f"vector<{reduce_size}x{compute_vec_size//reduce_size}x{mlir_dtype}>"
+
         if compute_vec_size > 1:
-            operation = "affine.vector_load"
-            line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}, {vshape}"
+            pad = self.const_cse.generate(self.const_buffer, f"arith.constant 0.0 : {mlir_dtype}")
+            operation = "vector.transfer_read"
+            line = f"{operation} %{sram_var}[{compute_index_var}], %{pad} : {tile_shape}, {vshape}"
         else:
             operation = "affine.load"
             line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}"
 
         out = self.cse.generate(self.loads, line)
+        if self.reduction_body_loop is not None:
+            new_vshape = self.kernel_group.tile_desc.get_mlir_vshape(mlir_dtype)
+            out = self.cse.generate(self.loads, f"vector.shape_cast %{out} : {vshape} to {new_vshape}")
         self.register_var_info(out, [compute_vec_size, mlir_dtype])
         return out
 
@@ -718,7 +725,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         reduction_size = self.kernel_group.tile_desc.get_numel_per_lane() // self.kernel_group.tile_desc.get_tile_size()[-1]
         assert(vec_len % reduction_size==0)
         if vec_len > reduction_size:
-            init = self.const_cse.generate(self.reductions_suffix, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
+            init = self.const_cse.generate(self.const_buffer, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
             if reduction_size == 1:
                 final_reduced_shape = f"{type_name}"
                 out = self.cse.generate(self.reductions_suffix, reduction_combine_vec(reduction_type, acc, init, axis=0, shape=reduced_shape, reduced_shape=final_reduced_shape))
@@ -726,8 +733,14 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
                 final_reduced_shape = f"vector<{reduction_size}x{type_name}>"
                 init_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %{init} : {type_name} to {final_reduced_shape}")
                 new_vshape= f"vector<{reduction_size}x{vec_len//reduction_size}x{type_name}>"
+                partial_vshape= f"vector<{vec_len//reduction_size}x{type_name}>"
                 value = self.cse.generate(self.reductions_suffix, f"vector.shape_cast %{acc} : {reduced_shape} to {new_vshape}")
-                out = self.cse.generate(self.reductions_suffix, reduction_combine_vec(reduction_type, value, init_vec, axis=1, shape=new_vshape, reduced_shape=final_reduced_shape))
+                # FIXME. I want to use N-Rank multi-reduciton, but we can't use it. It lowerd to scalar operations now...
+                for i in range(reduction_size):
+                    partial_value = self.cse.generate(self.reductions_suffix, f"vector.extract %{value}[{i}] : {partial_vshape} from {new_vshape}")
+                    out = self.cse.generate(self.reductions_suffix, reduction_combine_vec(reduction_type, partial_value, init, axis=0, shape=partial_vshape, reduced_shape=type_name))
+                    init_vec = self.cse.generate(self.reductions_suffix, f"vector.insert %{out}, %{init_vec}[{i}] : {type_name} into {final_reduced_shape}")
+                out = init_vec
             acc = out
 
         # reigster reduction output

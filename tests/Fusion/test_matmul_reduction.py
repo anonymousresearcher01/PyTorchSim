@@ -20,10 +20,13 @@ def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
 def test_matmul_reduce(device):
     def matmul_fused(a, b, c):
         result = torch.matmul(a, b)
-        return result, result.max(dim=-1).values
+        return result, result.max(dim=-2).values
     torch.manual_seed(0)
-    input = torch.randn(512, 128)
-    weight = torch.randn(128, 512)
+    input = torch.randn(512, 256)
+    weight = torch.randn(256, 512)
+    #N = 256
+    #input = torch.arange(1, N * N + 1, dtype=torch.float32).reshape(N, N).to(dtype=torch.float32)
+    #weight = torch.eye(256, dtype=torch.float32)
     x1 = input.to(device=device)
     w1 = weight.to(device=device)
     x2 = input.to("cpu")
