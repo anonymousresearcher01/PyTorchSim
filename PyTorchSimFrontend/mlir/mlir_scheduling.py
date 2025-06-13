@@ -4,7 +4,7 @@ from PyTorchSimFrontend import extension_config
 from PyTorchSimFrontend.mlir.mlir_codegen_backend import MLIRKernel
 
 from torch._inductor import config
-from torch._inductor.scheduler import BaseScheduling, FusedSchedulerNode, SchedulerNode
+from torch._inductor.scheduler import BaseScheduling, FusedSchedulerNode, SchedulerNode, BaseSchedulerNode
 from torch._inductor.utils import IndentedBuffer
 from torch._inductor.virtualized import V
 
@@ -16,11 +16,21 @@ class MLIRScheduling(BaseScheduling):
     target_kernel = MLIRKernel
     def __init__(self, scheduler):
         self.scheduler = scheduler
+        self.scheduler.can_fuse = self.can_fuse_with_exceptions
         self.kernel_group = mlir_common.MLIRWrapperKenrelGroup()
         self._ready_to_flush = False
         self.outer_function = set()
         config.inplace_buffers = False # FIXME. inout kernel makes trouble.. So disabled it!
         self.max_fusion_size = 5
+
+    def can_fuse_with_exceptions(self, node1: BaseSchedulerNode, node2: BaseSchedulerNode) -> bool:
+        if node1.get_device() == node2.get_device():
+            from PyTorchSimFrontend.mlir.mlir_gemm_template import MLIRGemmTemplate
+            # For matmul+reduction case
+            if node1.is_template() and isinstance(node1.node.template, MLIRGemmTemplate) and node2.is_reduction():
+                possible = node1.node.get_size()[:-1] == node2.node.get_size()
+                return True
+        return self.scheduler.can_fuse(node1, node2)
 
     def _set_flush_status(self, status: bool):
         self._ready_to_flush = status
