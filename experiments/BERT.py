@@ -15,7 +15,7 @@ def run_BERT(size, input_seq, config):
     embedding_size = {'base': 768, 'large': 1024, 'xlarge': 2048}
     heads = {'base': 12, 'large': 16, 'xlarge': 32} # hidden/64 https://arxiv.org/pdf/1909.11942
     cpu_query = torch.randn(input_seq, hidden_dim[size])
-    decoder_block = DecoderBlock(embedding_size[size], heads[size])
+    decoder_block = DecoderBlock(embedding_size[size], heads[size]).eval()
 
     query = cpu_query.clone().to(device=device)
     opt_fn = torch.compile(dynamic=False)(decoder_block.to(device=device))
@@ -26,7 +26,8 @@ def run_BERT(size, input_seq, config):
 
     # Run scheduler
     while not scheduler.is_finished():
-        scheduler.schedule()
+        with torch.no_grad():
+            scheduler.schedule()
 
     print(f"BERT-{size} Simulation Done")
 

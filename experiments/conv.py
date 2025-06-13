@@ -28,7 +28,8 @@ def run_conv2d(batch_size, i_h, i_w, i_c, o_c, kernel_size, stride, padding, con
 
     # Run scheduler
     while not scheduler.is_finished():
-        scheduler.schedule()
+        with torch.no_grad():
+            scheduler.schedule()
 
     print(f"CONV {batch_size}_{i_h}_{i_w}_{i_c}_{o_c}_{kernel_size}_{stride}_{padding} (B_H_W_I_C_O_C_K_S_P) Simulation Done")
 
