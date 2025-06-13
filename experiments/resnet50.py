@@ -20,7 +20,8 @@ def run_resnet(batch, config):
 
     # Run scheduler
     while not scheduler.is_finished():
-        scheduler.schedule()
+        with torch.no_grad():
+            scheduler.schedule()
 
     print("ResNet50 Simulation Done")
 
