@@ -181,12 +181,14 @@ class MLIRGemmTemplate(MLIRTemplate):
 
         M, N, K = X_tensor.size()[0], W_tensor.size()[1], X_tensor.size()[1]
         n_extra_node = len(epilogue_nodes) if epilogue_nodes is not None else 0
+        nr_rdim = 0
         if (M == 0) or (N == 0) or (K == 0):
             TILE_M, TILE_N, TILE_K = 1, 1, 1
             template = EMPTY_TEMPLATE
         elif n_extra_node==1 and epilogue_nodes[0].is_reduction():
             TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K, n_extra_node, min_tile=True)
             template = GEMM_REDUCTION_TEMPLATE
+            nr_rdim = 1
         else:
             TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K, n_extra_node, min_tile=True)
             template = GEMM_TEMPLATE
@@ -242,7 +244,7 @@ class MLIRGemmTemplate(MLIRTemplate):
             dram_shape = f"memref<{kernel.render_options['Y_numel']}x{kernel.render_options['DATA_STYPE']}>",
             tile_size = (TILE_M, TILE_N),
             tile_stride = [1, TILE_M],
-            nr_rdim = '1'
+            nr_rdim = nr_rdim
         )
         code = self._template_from_string(template).render(**kernel.render_options)
         kernel.add_loop_info([kernel.render_options["M"], kernel.render_options["N"], kernel.render_options["K"]], [kernel.render_options["TILE_M"], kernel.render_options["TILE_N"], kernel.render_options["TILE_K"]])

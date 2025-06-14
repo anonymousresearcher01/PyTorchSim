@@ -28,9 +28,9 @@ class MLIRScheduling(BaseScheduling):
         if node1.get_device() == node2.get_device():
             from PyTorchSimFrontend.mlir.mlir_gemm_template import MLIRGemmTemplate
             # For matmul+reduction case
-            if node1.is_template() and len(node1.get_nodes())==1 and isinstance(node1.node.template, MLIRGemmTemplate) and node2.is_reduction():
+            if node1.is_template() and len(node1.get_nodes())==1 and isinstance(node1.node.template, MLIRGemmTemplate) and node2.is_reduction() and len(node2.get_nodes())==1:
                 possible = node1.node.get_size()[:-1] == node2.node.get_size()
-                return True
+                return possible
         return self.scheduler.can_fuse_origin(node1, node2)
 
     def _set_flush_status(self, status: bool):

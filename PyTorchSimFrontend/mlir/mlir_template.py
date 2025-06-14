@@ -348,17 +348,23 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             if self.reduction_body_loop is not None:
                 compute_body.writelines(self.reduction_body_loop.lines())
                 stack.enter_context(compute_body.indent(attribute="{inner_loop=false}",suffix=self.reduction_body_loop.epilogue_line()))
+                if (self.compute.getvalue()==''):
+                    print('here')
             compute_body.splice(self.loads)
             compute_body.splice(self.compute)
             if len(self.stores._lines) == 0:
                 template_store()
             compute_body.splice(self.stores)
-        self.body.splice(compute_body)
+        if (compute_body.getvalue()):
+            self.body.splice(compute_body)
         self.body.splice(self.dma_stores)
         self.body.splice(self.reduction_epilogue_suffix)
+
+        # Clear buffers
         self.loads.clear()
         self.compute.clear()
         self.stores.clear()
+        self.reduction_body_loop = None
 
     def def_kernel(
         self,
@@ -829,11 +835,11 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             vlane_split_axis=template_store_info['vlane_split_axis'],
             vlane_stride=template_store_info['vlane_stride'])
 
-        if 'nr_rdim' in template_store_info:
+        if 'nr_rdim' in template_store_info and template_store_info['nr_rdim']==1:
             tile_desc.nr_rdim = 1
             numel_per_lane = tile_desc.get_numel_per_lane()
             reduction_axis_size = tile_desc.get_tile_size()[-1]
-            nr_outer_loop = numel_per_lane // reduction_axis_size
+            nr_outer_loop = (numel_per_lane + reduction_axis_size-1) // reduction_axis_size
 
             self.reduction_body_loop = mlir_common.LoopLevel(self.reduction_idx, nr_outer_loop, 0 , nr_outer_loop)
             self.compute_body_loop.size = reduction_axis_size
