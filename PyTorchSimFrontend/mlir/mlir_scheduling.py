@@ -33,7 +33,9 @@ class MLIRScheduling(BaseScheduling):
                 (isinstance(node1.node.template, MLIRGemmTemplate) or isinstance(node1.node.template, MLIRBMMTemplate)) and \
                 node2.is_reduction() and len(node2.get_nodes())==1):
                 # For matmul/bmm+reduction case
-                size_match =node1.node.get_size() == node2.node.get_size() + node2.node.get_reduction_size()
+                size_match = node1.node.get_size() == node2.node.get_size() + node2.node.get_reduction_size()
+                if len(node1.node.get_size()) == len(node2.node.get_size()):
+                    size_match = node1.node.get_size() == [dim for dim in node2.node.get_size() if dim!=1] + node2.node.get_reduction_size()
                 stride = [i.strip()[:-1].split(",")[-1].strip() for i in str(node2.node).split("\n") if "r0" in i][1]
                 target_symbol = symbols("r0")
                 # We can't fuse dim=-1

@@ -827,6 +827,8 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             numel_per_lane = tile_desc.get_numel_per_lane()
             reduction_axis_size = tile_desc.get_tile_size()[-2]
             nr_outer_loop = (numel_per_lane + reduction_axis_size-1) // reduction_axis_size
+            tile_desc.vec_size = nr_outer_loop * 2 # Why? Emprically selected, other option failed to functionality...
+
             self.reduction_fusion = True
             self.reduction_axis_size =  tile_desc.get_tile_size()[-2]
             self.reduction_nr_outer_loop = (numel_per_lane + reduction_axis_size-1) // reduction_axis_size
