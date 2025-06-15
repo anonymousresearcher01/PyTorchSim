@@ -982,9 +982,22 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.cse.generate(self.dma_loads, code, assignment = False) # FIXME: assignment = False does not support caching
         compute_index_var = ",".join(sram_index_var.split(",")[:-1] + [f"%{self.compute_idx}"])
         # Generate vector load instruction
+        needs_mask = self.compute_body_loop.size % self.compute_body_loop.step != 0
         if compute_vec_size > 1:
-            operation = "affine.vector_load"
-            line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}, {vshape}"
+            if needs_mask:
+                index_shape = f"vector<{self.compute_body_loop.step}xindex>"
+                mask_shape = f"vector<{compute_vec_size}xi1>"
+                step_vec = self.cse.generate(self.loads, f"vector.step : {index_shape}")
+                upper_bound = self.get_const_cse(self.compute_body_loop.size, "index")
+                gap = self.cse.generate(self.loads, f"arith.subi %{upper_bound}, %{self.compute_idx} : index")
+                gap_vec = self.cse.generate(self.loads, f"vector.broadcast %{gap} : index to {index_shape}")
+                mask_var = self.cse.generate(self.loads, f"arith.cmpi ult, %{step_vec}, %{gap_vec} : {index_shape}")
+                pad_val = self.get_const_cse(0, mlir_dtype)
+                pad_vec = self.const_cse.generate(self.const_buffer, f"vector.broadcast %{pad_val} : {mlir_dtype} to {vshape}")
+                line = f"vector.maskedload %{sram_var}[{compute_index_var}], %{mask_var}, %{pad_vec} : {tile_shape}, {mask_shape}, {vshape} into {vshape}"
+            else:
+                operation = "affine.vector_load"
+                line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}, {vshape}"
         else:
             operation = "affine.load"
             line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}"
