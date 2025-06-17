@@ -156,7 +156,7 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
       }
       req->request_time = _core_cycle;
       req->stonneId = subcore_id;
-      std::tuple<uint64_t, mem_access_type, mf_type> key = std::make_tuple(target_addr, acc_type, type);
+      std::tuple<uint64_t, mem_access_type, mf_type, int> key = std::make_tuple(target_addr, acc_type, type, allocTrafficID());
       registerMemfetch(key, [this, req, acc_type, type]() {
         spdlog::trace("[SparseCore][{}] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
               _core_cycle, _core_cycle - req->request_time, req->getAddress(), int(req->getcmd()), _config.dram_req_size);
@@ -202,22 +202,28 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
     }
 
     /* Check finished dma operation */
-    while(_dma_finished_queue.size()) {
-      std::shared_ptr<Instruction>& instruction = _dma_finished_queue.at(0);
-      /* Pass not finished instruction */
-      if (instruction->get_waiting_request())
-        continue;
+    bool retry=true;
+    while (retry) {
+      retry = false;
+      for (auto it=_dma_finished_queue.begin();it!=_dma_finished_queue.end();it++) {
+        std::shared_ptr<Instruction>& instruction = _dma_finished_queue.at(0);
+        /* Pass not finished instruction */
+        if (instruction->get_waiting_request())
+          continue;
 
-      /* Finish DMA read instruction */
-      if (instruction->is_dma_read())
-        finish_instruction(instruction);
-      /* Erase the instruction in DMA finished queue */
-      _dma_finished_queue.erase(_dma_finished_queue.begin());
+        /* Finish DMA read instruction */
+        if (instruction->is_dma_read())
+          finish_instruction(instruction);
+        /* Erase the instruction in DMA finished queue */
+        _dma_finished_queue.erase(_dma_finished_queue.begin());
+        retry = true;
+        break;
+      }
     }
 
     /* Peek instruction*/
     auto& inst = instructions.front();
-    if (!inst->is_ready())
+    if (instructions.empty() || !inst->is_ready())
       return;
 
     bool issued = false;
@@ -229,8 +235,9 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
           spdlog::trace("[StonneCore {}][{}][{}] {} ISSUED", _id, subcore_id, _core_cycle,
                         opcode_to_string(inst->get_opcode()));
           for (auto addr : inst->get_trace_address()) {
+            addr = addr - (addr & _config.dram_req_size-1);
             inst->inc_waiting_request();
-            std::tuple<uint64_t, mem_access_type, mf_type> key = std::make_tuple(addr, acc_type, type);
+            std::tuple<uint64_t, mem_access_type, mf_type, int> key = std::make_tuple(addr, acc_type, type, allocTrafficID());
             uint64_t current_time = _core_cycle;
             registerMemfetch(key, [this, inst, addr, current_time, type]() {
               spdlog::trace("[SparseCore][{}] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
@@ -239,7 +246,7 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
             });
           }
           issued = true;
-          _dma_waiting_queue[inst.get()] = std::move(inst);
+          _dma_finished_queue.push_back(std::move(inst));
         }
         break;
       case Opcode::MOVOUT:
@@ -249,8 +256,9 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
           spdlog::trace("[StonneCore {}][{}][{}] {} ISSUED", _id, subcore_id, _core_cycle,
                         opcode_to_string(inst->get_opcode()));
           for (auto addr : inst->get_trace_address()) {
+            addr = addr - (addr & _config.dram_req_size-1);
             inst->inc_waiting_request();
-            std::tuple<uint64_t, mem_access_type, mf_type> key = std::make_tuple(addr, acc_type, type);
+            std::tuple<uint64_t, mem_access_type, mf_type, int> key = std::make_tuple(addr, acc_type, type, allocTrafficID());
             uint64_t current_time = _core_cycle;
             registerMemfetch(key, [this, inst, addr, current_time, type]() {
               spdlog::trace("[SparseCore][{}] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
@@ -260,7 +268,7 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
           }
           issued = true;
           finish_instruction(inst);
-          _dma_waiting_queue[inst.get()] = std::move(inst);
+          _dma_finished_queue.push_back(std::move(inst));
         }
         break;
       case Opcode::COMP:
@@ -280,9 +288,8 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
         spdlog::error("Undefined instruction opcode type");
         exit(EXIT_FAILURE);
     }
-
     if (issued) {
-      instructions.erase(instructions.begin());
+      instructions.erase(std::find(instructions.begin(), instructions.end(), inst));
     }
   }
 }
@@ -400,7 +407,7 @@ void SparseCore::finish_instruction(std::shared_ptr<Instruction>& inst) {
   }
 }
 
-void SparseCore::registerMemfetch(const std::tuple<uint64_t, mem_access_type, mf_type>& key, std::function<void()> callback) {
+void SparseCore::registerMemfetch(const std::tuple<uint64_t, mem_access_type, mf_type, int>& key, std::function<void()> callback) {
   if (request_merge_table.find(key) == request_merge_table.end()) {
     mem_fetch* req_wrapper = new mem_fetch(std::get<0>(key), std::get<1>(key), std::get<2>(key), _config.dram_req_size, -1);
 

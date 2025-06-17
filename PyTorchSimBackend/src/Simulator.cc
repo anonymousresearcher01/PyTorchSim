@@ -35,7 +35,9 @@ Simulator::Simulator(SimulationConfig config)
     }
   }
 
-  if (config.dram_type == DramType::RAMULATOR2) {
+  if (config.dram_type == DramType::SIMPLE) {
+    _dram = std::make_unique<SimpleDRAM>(config, &_core_cycles);
+  } else if (config.dram_type == DramType::RAMULATOR2) {
     std::string ramulator_config = fs::path(onnxim_path)
                                        .append("configs")
                                        .append(config.dram_config_path)

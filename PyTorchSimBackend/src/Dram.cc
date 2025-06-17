@@ -129,3 +129,83 @@ void DramRamulator2::print_cache_stats() {
     _m_caches[ch]->print_stats();
   }
 }
+
+SimpleDRAM::SimpleDRAM(SimulationConfig config, cycle_type* core_cycle) : Dram(config, core_cycle) {
+  /* Initialize DRAM Channels */
+  spdlog::info("[SimpleDRAM] DRAM latecny: {}", config.dram_latency);
+  for (int ch = 0; ch < _n_ch; ch++) {
+    _mem.push_back(std::make_unique<DelayQueue<mem_fetch*>>("SimpleDRAM", true, -1));
+  }
+  _latency =  config.dram_latency;
+  _tx_log2 = log2(_req_size);
+  _tx_ch_log2 = log2(_n_ch_per_partition) + _tx_log2;
+}
+
+bool SimpleDRAM::running() {
+  for (int ch = 0; ch < _n_ch; ch++) {
+    if (!_mem[ch]->queue_empty())
+      return true;
+    if (mem_fetch* req = _m_caches[ch]->top())
+      return true;
+  }
+  return false;
+}
+
+void SimpleDRAM::cycle() {
+  for (int ch = 0; ch < _n_ch; ch++) {
+    _mem[ch]->cycle();
+
+    // From Cache to DRAM
+    if (mem_fetch* req = _m_caches[ch]->top()) {
+      //spdlog::info("[Cache->DRAM] mem_fetch: addr={:#x}", req->get_addr());
+
+      _mem[ch]->push(req, _latency);
+      _m_caches[ch]->pop();
+    }
+
+    // From DRAM to Cache
+    if (_mem[ch]->arrived()) {
+      mem_fetch* req = _mem[ch]->top();
+      req->set_reply();
+      //spdlog::info("[DRAM->Cache] mem_fetch: addr={:#x}", req->get_addr());
+      if(_m_caches[ch]->push(req))
+        _mem[ch]->pop();
+    }
+  }
+}
+
+void SimpleDRAM::cache_cycle()  {
+  for (int ch = 0; ch < _n_ch; ch++) {
+    _m_caches[ch]->cycle();
+  }
+}
+
+bool SimpleDRAM::is_full(uint32_t cid, mem_fetch* request) {
+  return false; //m_from_crossbar_queue[cid].full(); Infinite length
+}
+
+void SimpleDRAM::push(uint32_t cid, mem_fetch* request) {
+  m_from_crossbar_queue[cid].push(request);
+}
+
+bool SimpleDRAM::is_empty(uint32_t cid) {
+  return m_to_crossbar_queue[cid].empty();
+}
+
+mem_fetch* SimpleDRAM::top(uint32_t cid) {
+  assert(!is_empty(cid));
+  return m_to_crossbar_queue[cid].front();
+}
+
+void SimpleDRAM::pop(uint32_t cid) {
+  assert(!is_empty(cid));
+  m_to_crossbar_queue[cid].pop();
+}
+
+void SimpleDRAM::print_stat() {}
+
+void SimpleDRAM::print_cache_stats() {
+  for (int ch = 0; ch < _n_ch; ch++) {
+    _m_caches[ch]->print_stats();
+  }
+}

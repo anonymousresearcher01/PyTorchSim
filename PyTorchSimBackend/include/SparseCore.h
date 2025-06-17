@@ -63,7 +63,8 @@ public:
   bool isTraceMode(int stonne_core_id) { return traceMode.at(stonne_core_id); }
   void setTraceMode(int stonne_core_id, bool mode) { traceMode.at(stonne_core_id) = mode; }
   void checkStatus(uint32_t subcore_id);
-  void registerMemfetch(const std::tuple<uint64_t, mem_access_type, mf_type>& key, std::function<void()> callback);
+  void registerMemfetch(const std::tuple<uint64_t, mem_access_type, mf_type, int>& key, std::function<void()> callback);
+  int allocTrafficID() { int id = traffic_id; traffic_id++; return 0; }
   uint32_t num_ms = 1;
   uint32_t r_port_nr = 1;
   uint32_t w_port_nr = 1;
@@ -82,8 +83,9 @@ private:
   /* Interconnect queue */
   std::queue<mem_fetch*> _request_queue;
   std::queue<mem_fetch*> _response_queue;
-  std::map<std::tuple<uint64_t, mem_access_type, mf_type>, mem_fetch*> request_merge_table;
+  std::map<std::tuple<uint64_t, mem_access_type, mf_type, int>, mem_fetch*> request_merge_table;
   std::vector<MSwitchStats> percore_stat;
   std::vector<MSwitchStats> percore_total_stat;
+  int traffic_id=0;
 };
 

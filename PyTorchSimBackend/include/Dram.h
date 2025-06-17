@@ -67,4 +67,25 @@ class DramRamulator2 : public Dram {
   int _tx_log2;
 };
 
+class SimpleDRAM: public Dram {
+ public:
+  SimpleDRAM(SimulationConfig config, cycle_type *core_cycle);
+
+  virtual bool running() override;
+  virtual void cycle() override;
+  virtual void cache_cycle() override;
+  virtual bool is_full(uint32_t cid, mem_fetch* request) override;
+  virtual void push(uint32_t cid, mem_fetch* request) override;
+  virtual bool is_empty(uint32_t cid) override;
+  virtual mem_fetch* top(uint32_t cid) override;
+  virtual void pop(uint32_t cid) override;
+  virtual void print_stat() override;
+  void print_cache_stats() override;
+ private:
+  int _latency = 1;
+  int _tx_ch_log2;
+  int _tx_log2;
+  std::vector<std::unique_ptr<DelayQueue<mem_fetch*>>> _mem;
+};
+
 #endif
