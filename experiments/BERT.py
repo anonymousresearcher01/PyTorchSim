@@ -7,7 +7,8 @@ import datetime
 
 def run_BERT(size, input_seq, config):
     from Scheduler.scheduler import Scheduler, SchedulerDNNModel, Request
-    from tests.test_transformer import DecoderBlock
+    # from tests.test_transformer import DecoderBlock
+    from tests.Fusion.test_transformer_fusion import DecoderBlock
     scheduler = Scheduler(num_request_queue=1, engine_select=Scheduler.FIFO_ENGINE, backend_config=config)
     device = scheduler.execution_engine.module.custom_device()
 
@@ -35,7 +36,7 @@ if __name__ == "__main__":
     import os
     import sys
     base_dir = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
-    config = os.environ.get('TORCHSIM_CONFIG', default=f'{base_dir}/PyTorchSimBackend/configs/systolic_ws_128x128_c2_simple_noc_tpuv4.json')
+    config = os.environ.get('TORCHSIM_CONFIG', default=f'{base_dir}/PyTorchSimBackend/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json')
     config_prefix = config.split('/')[-1].split('.')[0][9:] # extract config name from config path FIXME: gem5 result is different as directoy name
     sys.path.append(base_dir)
     args = argparse.ArgumentParser()
