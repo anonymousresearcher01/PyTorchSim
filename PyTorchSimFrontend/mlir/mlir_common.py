@@ -180,8 +180,10 @@ class MLIRKernelArgs(common.KernelArgs):
 class MLIRMultiDimTile():
     def __init__(self, tile_size, vector_lane, vlane_split_axis=None, vlane_stride=None, vec_size=None):
         self._tile_size = list(tile_size)
+        self._tile_stride = None
         self.tile_axis_order = list(range(len(tile_size)))
         self.vec_size = vec_size
+        self.update_tile_stride()
 
         # Vector lane mapping config
         self.vector_lane = vector_lane
@@ -196,6 +198,11 @@ class MLIRMultiDimTile():
             self.tile_axis_order = list(range(len(tile_size)))
         else:
             self.tile_axis_order = tile_axis_order
+        self.update_tile_stride()
+
+    def set_tile_size_stride(self, tile_size, tile_stride):
+        self._tile_size = tile_size
+        self._tile_stride = tile_stride
 
     def get_tile_size(self):
         return self._tile_size
@@ -216,7 +223,7 @@ class MLIRMultiDimTile():
             size *= dim_size
         return size
 
-    def get_tile_stride(self):
+    def update_tile_stride(self):
         strides = [1] * len(self._tile_size)
         init = 1
 
@@ -228,7 +235,10 @@ class MLIRMultiDimTile():
         for _, size, original_indices in sorted_pairs:
             strides[original_indices] = init
             init *= size
-        return strides
+        self._tile_stride = strides
+
+    def get_tile_stride(self):
+        return self._tile_stride
 
     def get_tile_size_per_lane(self):
         tile_size_per_lane = list(self._tile_size)
