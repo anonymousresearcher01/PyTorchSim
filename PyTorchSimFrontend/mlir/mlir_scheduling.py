@@ -138,10 +138,10 @@ class MLIRScheduling(BaseScheduling):
         ex_kernel = self.target_kernel(kernel_group=self.kernel_group)
         ex_kernel.kernel_group = self.kernel_group
 
-        kernel_name = f"extension_kernel_{MLIRScheduling.count}"
+        kernel_name_candidate = f"extension_kernel_{MLIRScheduling.count}"
         MLIRScheduling.count += 1
-        src_code = ex_kernel.codegen_nodes(nodes, kernel_name)
-        self.define_kernel(src_code, kernel_name, ex_kernel.vector_lane,
+        src_code = ex_kernel.codegen_nodes(nodes, kernel_name_candidate)
+        kernel_name = self.define_kernel(src_code, kernel_name_candidate, ex_kernel.vector_lane,
                            ex_kernel.spad_info, origins= {str(i) for i in nodes[0].node.origins})
         ex_kernel.call_kernel(kernel_name)
         _, args, _, _ = ex_kernel.args.mlir_argdefs()
