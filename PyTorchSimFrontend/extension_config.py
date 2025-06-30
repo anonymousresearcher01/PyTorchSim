@@ -70,6 +70,10 @@ CONFIG_SUBTILE_M = int(os.environ.get('TORCHSIM_SUBTILE_M', default=CONFIG_VECTO
 CONFIG_SUBTILE_N = int(os.environ.get('TORCHSIM_SUBTILE_N', default=CONFIG_VECTOR_LANE))
 CONFIG_SUBTILE_K = int(os.environ.get('TORCHSIM_SUBTILE_K', default=CONFIG_VECTOR_LANE))
 
+# Advanced fusion options
+CONFIG_FUSION_REDUCTION = int(os.environ.get('TORCHSIM_FUSION_REDUCTION', default=False))
+CONFIG_FUSION_PROLOGUE = int(os.environ.get('TORCHSIM_FUSION_PROLOGUE', default=False))
+
 # SRAM Buffer allocation plan
 def load_plan_from_module(module_path):
     if module_path is None:

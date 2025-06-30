@@ -34,7 +34,7 @@ class MLIRScheduling(BaseScheduling):
         if node1.get_device() != node2.get_device():
             return False
 
-        if len(base_template_node1) == 1 and len(base_template_node2) == 0:
+        if len(base_template_node1) == 1 and len(base_template_node2) == 0 and extension_config.CONFIG_FUSION_REDUCTION:
             from PyTorchSimFrontend.mlir.mlir_gemm_template import MLIRGemmTemplate
             from PyTorchSimFrontend.mlir.mlir_bmm_template import MLIRBMMTemplate
             if (isinstance(base_template_node1[0].node.template, MLIRGemmTemplate) or isinstance(base_template_node1[0].node.template, MLIRBMMTemplate)) and node2.is_reduction() and len(node2.get_nodes())==1:
@@ -50,7 +50,7 @@ class MLIRScheduling(BaseScheduling):
                 return size_match and layout_possible and dependency_check & dependency_size
 
         # For prologue fusion case
-        if len(base_template_node1) == 0 and len(node1.get_nodes())==1 and len(base_template_node2) == 1:
+        if extension_config.CONFIG_FUSION_PROLOGUE and len(base_template_node1) == 0 and len(node1.get_nodes())==1 and len(base_template_node2) == 1:
             # Return false if node2 is Convolution template
             # if node2.get_nodes()[0].node.origin_node.target._name == 'aten::mm' or \
             #     node2.get_nodes()[0].node.origin_node.target._name == 'aten::addmm':
