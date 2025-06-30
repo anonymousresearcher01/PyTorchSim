@@ -20,7 +20,7 @@ Core::Core(uint32_t id, SimulationConfig config)
 
 bool Core::can_issue(const std::shared_ptr<Tile>& op) {
   /* Check SRAM is enough to run tile */
-  return _tiles.size() < 2  && !op->is_stonne_tile();
+  return _tiles.size() < 4  && !op->is_stonne_tile();
 }
 
 void Core::issue(std::shared_ptr<Tile> op) {
@@ -33,6 +33,10 @@ void Core::issue(std::shared_ptr<Tile> op) {
       _id, _core_cycle, _sram_size-_used_sram_size, op->get_required_sram_size());
   }
   //_used_sram_size += op->get_required_sram_size();
+  for (const auto& inst : op->get_instructions()) {
+    if (inst->is_ready())
+      op->enqueue_ready(inst);
+  }
   _tiles.push_back(std::move(op));
 }
 
@@ -201,12 +205,12 @@ void Core::cycle() {
   bool issued = false;
 
   for (int i=0; i<_tiles.size() && !issued; i++) {
-    auto& instructions = _tiles[i]->get_instructions();
-    for (int j=0; j<instructions.size(); j++) {
-      auto& inst = instructions.at(j);
+    auto& instructions = _tiles[i]->get_ready_instructions();
+    for (auto it=instructions.begin(); it!=instructions.end();) {
+      auto& inst = *it;
       /* Skip instruction is not ready  */
-      if (!inst->is_ready())
-        continue;
+      //if (!inst->is_ready())
+      //  continue;
 
       switch (inst->get_opcode()) {
         case Opcode::MOVIN:
@@ -269,7 +273,6 @@ void Core::cycle() {
               inst->finish_instruction();
               static_cast<Tile*>(inst->get_owner())->inc_finished_inst();
               _stat_tot_skipped_inst.at(static_cast<size_t>(inst->get_opcode()))++;
-              auto it = instructions.begin() + j; // Position 2 is the third element
               instructions.erase(it);
             } else {
               spdlog::trace("[Core {}][SA {}][{}] {}-{} ISSUED, finsh at {}", _id, _systolic_array_rr, _core_cycle,
@@ -314,10 +317,10 @@ void Core::cycle() {
 
       if (issued) {
         _stat_inst_count.at(static_cast<size_t>(inst->get_opcode()))++;
-        auto it = instructions.begin() + j; // Position 2 is the third element
         instructions.erase(it);
         break;
       }
+      it++;
     }
   }
 
@@ -404,6 +407,7 @@ void Core::push_memory_response(mem_fetch* response) {
       assert(true || "Can't happend...!");
     }
   }
+  _stat_mem_response++;
   delete response;
 }
 
@@ -427,7 +431,8 @@ void Core::print_stats() {
   for (int i=0; i<_num_systolic_array_per_core; i++)
     spdlog::info("Core [{}] : Systolic array [{}] Utilization(%) {:.2f}, active cycle {}, idle cycle {}", _id, i, sa_utilization.at(i),
       _stat_tot_sa_compute_cycle.at(i), _stat_tot_sa_compute_idle_cycle.at(i));
-  spdlog::info("Core [{}] : TMA active cycle {} TMA idle cycle {}", _id, _stat_tot_tma_cycle, _stat_tot_tma_idle_cycle);
+  float dram_bw = _config.dram_req_size * _stat_tot_mem_response * _config.core_freq / (_core_cycle * 1000); // B/cycle
+  spdlog::info("Core [{}] : TMA active cycle {} TMA idle cycle {} DRAM BW {:.3f} GB/s ({})", _id, _stat_tot_tma_cycle, _stat_tot_tma_idle_cycle, dram_bw, _stat_tot_mem_response);
   spdlog::info("Core [{}] : Vector Unit Utilization(%) {:.2f}, active cycle {}, idle_cycle {}", _id,
     static_cast<float>(_stat_tot_vu_compute_cycle * 100) / _core_cycle, _stat_tot_vu_compute_cycle, _stat_tot_vu_compute_idle_cycle);
   spdlog::info("Core [{}] : Numa hit count : {}, Numa miss count : {}", _id, _stat_numa_hit, _stat_numa_miss);
@@ -438,6 +443,7 @@ void Core::print_current_stats() {
   std::vector<float> sa_utilization;
   for (int i=0; i<_num_systolic_array_per_core; i++)
     sa_utilization.push_back(static_cast<float>(_stat_sa_compute_cycle.at(i) * 100) / _config.core_print_interval);
+  float dram_bw = _config.dram_req_size * _stat_mem_response * _config.core_freq / (_config.core_print_interval * 1000); // B/cycle
   auto level = spdlog::level::info;
   if(_id != 0)
     level = spdlog::level::debug;
@@ -446,7 +452,7 @@ void Core::print_current_stats() {
   for (int i=0; i<_num_systolic_array_per_core; i++)
     spdlog::info("Core [{}] : Systolic array [{}] Utilization(%) {:.2f}, active cycle {}, idle cycle {}", _id, i, sa_utilization.at(i),
       _stat_sa_compute_cycle.at(i), _stat_sa_compute_idle_cycle.at(i));
-  spdlog::info("Core [{}] : TMA active cycle {} TMA idle cycle {}", _id, _stat_tma_cycle, _stat_tma_idle_cycle);
+  spdlog::info("Core [{}] : TMA active cycle {} TMA idle cycle {} DRAM BW {:.3f} GB/s ({})", _id, _stat_tma_cycle, _stat_tma_idle_cycle, dram_bw, _stat_mem_response);
   spdlog::info("Core [{}] : Vector Unit Utilization(%) {:.2f}, active cycle {}, idle_cycle {}", _id,
     static_cast<float>(_stat_vu_compute_cycle * 100) / _config.core_print_interval, _stat_vu_compute_cycle, _stat_vu_compute_idle_cycle);
   spdlog::info("Core [{}] : Total cycle {}", _id, _core_cycle);
@@ -464,9 +470,11 @@ void Core::update_stats() {
   _stat_tot_vu_compute_cycle += _stat_vu_compute_cycle;
   _stat_tot_tma_cycle += _stat_tma_cycle;
   _stat_tot_tma_idle_cycle += _stat_tma_idle_cycle;
+  _stat_tot_mem_response += +_stat_mem_response;
 
   _stat_vu_compute_cycle = 0;
   _stat_tma_cycle = 0;
   _stat_tma_idle_cycle = 0;
   _stat_vu_compute_idle_cycle = 0;
+  _stat_mem_response = 0;
 }
