@@ -871,6 +871,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.tags = dict()
         self.dma_read_cache = dict()
         self.dma_write_cache = dict()
+        self.spadbuf_counter = 0
         self.dma_read_counter = 1
         self.dma_write_counter = 1
         self.affine_yield = {}
@@ -958,10 +959,11 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         index = self.convert_indirect_indexing(index)
         padding = self.get_padding_type()
         dram_var = self.kernel_group.args.input(name)
-
         dtype = V.graph.get_dtype(name)
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
+
         local_tile_desc, index_var = self.get_dma_info(name, index)
+
         vlane_split_axis = local_tile_desc.vlane_split_axis
         vlane_stride = local_tile_desc.vlane_stride
         tile_numel_per_lane = local_tile_desc.get_numel_per_lane()
@@ -1305,7 +1307,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             self.header.writeline(f"{c_type} {new_name}_spad[{compute_vec_size}] __attribute__ ((section(\".spad\")));")
             self.gem5_header.writeline(f"{c_type} {new_name}_spad[{compute_vec_size}] __attribute__((aligned(64)));")
             self.global_vars.writeline(f"memref.global @{new_name}_spad : {tile_shape}")
-            self.global_vars_dict[new_name] = []
+            self.global_vars_dict[new_name] = dict()
         sram_var = self.spad_cse.generate(self.spad_buffer, f"memref.get_global @{new_name}_spad : {tile_shape}")
         # Initialize base vector
         if not self.base_vector_initialized:
@@ -1673,17 +1675,18 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             buffer = self.spad_buffer
 
         if name not in self.global_vars_dict:
-            self.global_vars_dict[name] = list()
+            self.global_vars_dict[name] = dict()
 
         if str(raw_index) not in self.global_vars_dict[name]:
-            new_name = f"{name}_{len(self.global_vars_dict[name])}"
+            new_name = f"buf{self.spadbuf_counter}"
+            self.spadbuf_counter+=1
             # Add definition to header
             self.header.writeline(f"{c_type} {new_name}_spad[{tile_size // self.vector_lane}] __attribute__ ((section(\".spad\")));")
             self.gem5_header.writeline(f"{c_type} {new_name}_spad[{tile_size}] __attribute__((aligned(64)));")
             self.global_vars.writeline(f"memref.global @{new_name}_spad : {dram_tile_shape}")
-            self.global_vars_dict[name].append(str(raw_index))
+            self.global_vars_dict[name][str(raw_index)] = new_name
         else:
-            new_name = f"{name}_{self.global_vars_dict[name].index(str(raw_index))}"
+            new_name = self.global_vars_dict[name][str(raw_index)]
         sram_var = self.spad_cse.generate(buffer, f"memref.get_global @{new_name}_spad : {dram_tile_shape}")
 
         zero_cse = self.get_const_cse(0)
