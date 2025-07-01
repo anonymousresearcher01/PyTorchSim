@@ -1477,6 +1477,12 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         write_atomic(spike_write_path, self.header.getvalue() + spad_end_symbol + spad_section_end_symbol)
         write_atomic(gem5_write_path, self.gem5_header.getvalue())
 
+    def get_arg_info(self, name):
+        arg_info = dict()
+        arg_info.update(V.graph.graph_inputs)
+        arg_info.update({i.get_name(): i for i in V.graph.buffers})
+        return arg_info[name]
+
     def get_dma_info(self, name, index, broadcast=True, store_reduction=False, buffer=None): # Need more argument?
         """
         A tile descriptor exists that is configured on a kernel group
