@@ -143,6 +143,7 @@ class MLIRGemmTemplate(MLIRTemplate):
         if (M == 0) or (N == 0) or (K == 0): # exception for MoE
             template = EMPTY_TEMPLATE
             nr_rdim = 0
+            epilogue_dim_aliasing = {}
         elif n_epilogue_node>=1 and epilogue_nodes[0].is_reduction():
             template = GEMM_REDUCTION_TEMPLATE
             epilogue_dim_aliasing = {"index0":"index1", "index1":"index0"}
