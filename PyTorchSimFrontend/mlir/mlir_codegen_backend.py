@@ -1550,8 +1550,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             local_dims = total_dims # Brodatcast tile shape
 
         index_var = self.parse_indices(index, buffer=buffer)
-        input_argument = [f"index{str(i)}" for i in local_dims]
-        dram_stride = [index.coeff(sympy.Symbol(arg)) for arg in input_argument]
 
         if kg_tile_desc.vlane_split_axis in local_dims:
             local_vlane_split_axis = local_dims.index(kg_tile_desc.vlane_split_axis)
@@ -1619,6 +1617,16 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             # Update
             local_tile_desc.set_tile_size(new_tile_size)
             local_tile_desc.vlane_split_axis = new_vlane_split_axis
+
+        # Calculate dram stride
+        if index.is_Symbol:
+            dram_stride = [0] * local_tile_desc.get_nr_dim()
+            dim_idx = int(str(index)[5:])
+            dram_stride[dim_idx] = 1
+        elif index.is_Number:
+            dram_stride = [0] * local_tile_desc.get_nr_dim()
+        else:
+            dram_stride = [arg.as_coeff_mul()[0] for arg in index.as_ordered_terms()]
         return local_tile_desc, index_var, dram_stride
 
     def get_dma_code(self, dma_type_name, vlane_split_axis, vlane_stride, mlir_dtype, dram_var, dram_index_var, sram_var, sram_index_var,
