@@ -147,6 +147,15 @@ class MLIRScheduling(BaseScheduling):
         _, (group, reduction_group) = max(
             nodes, key=lambda x: int(x.is_reduction())
         ).group
+
+        # There is no normal loop, then revert simplified group
+        if len(group) == 0:
+            for idx, node in enumerate(nodes):
+                self.revert_group(node)
+            _, (group, reduction_group) = max(
+                nodes, key=lambda x: int(x.is_reduction())
+            ).group
+
         ex_kernel = self.target_kernel(kernel_group=self.kernel_group)
         ex_kernel.kernel_group = self.kernel_group
 
