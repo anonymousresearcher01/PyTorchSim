@@ -94,6 +94,8 @@ class MLIRScheduling(BaseScheduling):
         if node1.is_template() or node2.is_template():
             # Don't fuse maxpool template code
             from PyTorchSimFrontend.mlir.mlir_maxpool_template import MLIRMaxPoolTemplate
+            from PyTorchSimFrontend.mlir.mlir_bmm_template import MLIRBMMTemplate
+            from PyTorchSimFrontend.mlir.mlir_gemm_template import MLIRGemmTemplate
             if node1.is_template() and len(node1.get_nodes())==1 and isinstance(node1.node.template, MLIRMaxPoolTemplate) or \
                 node2.is_template() and len(node1.get_nodes())==1 and isinstance(node2.node.template, MLIRMaxPoolTemplate):
                 return False
@@ -112,12 +114,13 @@ class MLIRScheduling(BaseScheduling):
 
             # Revert act_node.group : simplify_and_reorder() modified _body, _size, group
             if template_node.group != act_node.group:
-                self.revert_group(act_node)
-                if template_node.group != act_node.group:
-                    return False
                 # We don't fuse this case...
-                if template_node.group[1][0][0] == 1:
+                if (isinstance(template_node, MLIRBMMTemplate) or isinstance(template_node, MLIRGemmTemplate)) and template_node.group[1][0][0] == 1:
                     return False
+
+                if template_node.group[1][0] != act_node.get_nodes()[0].node.data.get_size():
+                    return False
+                self.revert_group(act_node)
             return True
 
         # Check elementwise fusion
