@@ -493,12 +493,7 @@ jobs:
             -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
             -e TORCHSIM_DUMP_PATH=/dump -e TORCHSIM_VECTOR_LANE=8 -e TORCHSIM_SPAD_SIZE=32 \
             ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Fusion/test_addmm_residual.py
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GIT_ACCESS_TOKEN }}
+
       - name: Run test_matmul_activation.py
         env:
           GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
@@ -508,12 +503,7 @@ jobs:
             -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
             -e TORCHSIM_DUMP_PATH=/dump -e TORCHSIM_VECTOR_LANE=8 -e TORCHSIM_SPAD_SIZE=32 \
             ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Fusion/test_matmul_activation.py
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GIT_ACCESS_TOKEN }}
+
       - name: Run test_matmul_scalar.py
         env:
           GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
@@ -523,12 +513,7 @@ jobs:
             -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
             -e TORCHSIM_DUMP_PATH=/dump -e TORCHSIM_VECTOR_LANE=8 -e TORCHSIM_SPAD_SIZE=32 \
             ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Fusion/test_matmul_scalar.py
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GIT_ACCESS_TOKEN }}
+
       - name: Run test_conv_fusion.py
         env:
           GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
@@ -538,6 +523,56 @@ jobs:
             -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
             -e TORCHSIM_DUMP_PATH=/dump -e TORCHSIM_VECTOR_LANE=8 -e TORCHSIM_SPAD_SIZE=32 \
             ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Fusion/test_conv_fusion.py
+
+      - name: Run test_matmul_reduction.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
+        run: |
+          echo "Running test_matmul_reduction.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Fusion/test_matmul_reduction.py
+
+      - name: Run test_matmul_layernorm.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
+        run: |
+          echo "Running test_matmul_layernorm.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Fusion/test_matmul_layernorm.py
+
+      - name: Run test_bmm_reduction.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
+        run: |
+          echo "Running test_bmm_reduction.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Fusion/test_bmm_reduction.py
+
+      - name: Run test_prologue_fusion.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
+        run: |
+          echo "Running test_prologue_fusion.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Fusion/test_prologue_fusion.py
+
+      - name: Run test_transformer_fusion.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
+        run: |
+          echo "Running test_transformer_fusion.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Fusion/test_transformer_fusion.py
 
   test_moe:
     name: Run test_moe

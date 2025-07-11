@@ -53,13 +53,28 @@ def test_elem_fusion(device):
     y = matmul_fused(x2, w2, c2)
     test_result("Matmul Element-wise Fusion Forward", res, y)
 
-def test_elem_bmm_fusion(device, batch_size=1, m=512, n=512, k=64):
+def test_elem_bmm_weight_fusion(device, batch_size=1, m=512, n=512, k=64):
     def bmm(a, b, c, d):
-        return torch.bmm(a , (d - b)/c)
+        return torch.bmm(a , (d+b)*c)
     torch.manual_seed(0)
     a = torch.randn(batch_size, m, k).to(device=device)
     b = torch.randn(batch_size, 1, n).to(device=device)
-    c = torch.randn(batch_size, 1, n) * 1000
+    c = torch.randn(batch_size, 1, n)
+    c = c.to(device=device)
+    d = torch.randn(batch_size, k, n).to(device=device)
+    opt_fn = torch.compile(dynamic=False)(bmm)
+    res = opt_fn(a, b, c, d)
+    out = bmm(a.cpu(), b.cpu(), c.cpu(), d.cpu())
+    print(torch.max(torch.abs(res.cpu() - out)))
+    test_result("BMM Element-wise Fusion Forward", res, out)
+
+def test_elem_bmm_input_fusion(device, batch_size=1, m=512, n=512, k=64):
+    def bmm(a, b, c, d):
+        return torch.bmm((a+b)*c , d)
+    torch.manual_seed(0)
+    a = torch.randn(batch_size, m, k).to(device=device)
+    b = torch.randn(batch_size, 1, k).to(device=device)
+    c = torch.randn(batch_size, 1, k)
     c = c.to(device=device)
     d = torch.randn(batch_size, k, n).to(device=device)
     opt_fn = torch.compile(dynamic=False)(bmm)
@@ -76,6 +91,7 @@ if __name__ == "__main__":
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()
     device = module.custom_device()
-    test_elem_broadcast_fusion(device)
-    test_elem_fusion(device)
-    test_elem_bmm_fusion(device, batch_size=12, m=64, n=512, k=512)
+    #test_elem_broadcast_fusion(device)
+    #test_elem_fusion(device)
+    #test_elem_bmm_input_fusion(device, batch_size=4, m=512, n=512, k=64)
+    test_elem_bmm_weight_fusion(device, batch_size=12, m=512, n=512, k=64)
