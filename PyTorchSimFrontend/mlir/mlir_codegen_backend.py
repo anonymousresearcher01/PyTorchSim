@@ -957,7 +957,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
     def parse_index_list(self, expr_list:list, buffer=None) -> common.CSEVariable:
         if buffer is None:
             buffer = self.applys
-        expr_list = [arg for arg in expr_list if arg != sympy.Number(0)]
+        zero_var = self.get_const_cse(0)
+        expr_list = [arg if arg != sympy.Number(0) else sympy.Symbol(str(zero_var)) for arg in expr_list]
 
         if len(expr_list) == 1 and expr_list[0].is_number:
             # Constant case
