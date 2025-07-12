@@ -64,6 +64,8 @@ class MLIRScheduling(BaseScheduling):
                 return False
             if len(node1.read_writes.writes) != 1:
                 return False
+            if len(node1.users) != 1:
+                return False
             if list(node1.read_writes.writes)[0].name in [dep.name for dep in node2.read_writes.reads]:
                 node1 = self.revert_group(node1)
                 return True
