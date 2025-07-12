@@ -35,6 +35,8 @@ class MLIRScheduling(BaseScheduling):
         base_template_node2 = [node for node in node2.get_nodes() if node.is_template()]
         if node1.get_device() != node2.get_device():
             return False
+        if not (isinstance(node1, (SchedulerNode, FusedSchedulerNode)) and isinstance(node2, (SchedulerNode, FusedSchedulerNode))):
+            return False
 
         if len(base_template_node1) == 1 and len(base_template_node2) == 0 and extension_config.CONFIG_FUSION_REDUCTION:
             from PyTorchSimFrontend.mlir.mlir_gemm_template import MLIRGemmTemplate
