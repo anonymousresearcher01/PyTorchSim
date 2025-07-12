@@ -959,6 +959,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             buffer = self.applys
         zero_var = self.get_const_cse(0)
         expr_list = [arg if arg != sympy.Number(0) else sympy.Symbol(str(zero_var)) for arg in expr_list]
+        dim_list = [f"d{i}" for i in range(len(expr_list))]
 
         if len(expr_list) == 1 and expr_list[0].is_number:
             # Constant case
@@ -972,18 +973,18 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         for idx, arg in enumerate(expr_list):
             if arg.is_Mul and arg.args[0].is_number:
                 new_arg = sympy.Symbol(str(self.convert_index(arg.args[1], buffer)))
-                new_expr_list[idx] = arg.subs(arg.args[1], new_arg)
+                new_expr_list[idx] = arg.subs(arg.args[1], dim_list[idx])
                 indices.append(str(new_arg))
             elif not arg.is_number:
                 new_arg = sympy.Symbol(str(self.convert_index(arg, buffer)))
-                new_expr_list[idx] = new_arg
+                new_expr_list[idx] = new_arg.subs(new_arg, dim_list[idx])
                 indices.append(str(new_arg))
             else:
                 new_expr_list[idx] = arg
 
         # Extract index var
         expr_str = str(sum(new_expr_list))
-        args = ", ".join(map(str, indices))
+        args = ", ".join(map(str, dim_list))
         map_var = self.map_cse.generate(self.global_vars, f"affine_map<({args})[] -> ({expr_str})>")
         args = ", ".join([f"%{i}" for i in indices])
         index = self.apply_cse.generate(buffer, f"affine.apply #{map_var}({args})[]")

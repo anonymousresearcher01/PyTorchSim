@@ -231,6 +231,6 @@ class LLVMKernelCallerCodeGen():
                 spad_end = int(parts[1], 16)
 
         if spad_start is None or spad_end is None:
-            raise ValueError("Could not find .spad addresses")
+            return 0
         spad_size = spad_end - spad_start
         return spad_size
