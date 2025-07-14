@@ -958,7 +958,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if buffer is None:
             buffer = self.applys
         zero_var = self.get_const_cse(0)
-        expr_list = [arg if arg != sympy.Number(0) else sympy.Symbol(str(zero_var)) for arg in expr_list]
+        expr_list = [arg for arg in expr_list]
         dim_list = [f"d{i}" for i in range(len(expr_list))]
 
         if len(expr_list) == 1 and expr_list[0].is_number:
@@ -980,7 +980,10 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 new_expr_list[idx] = new_arg.subs(new_arg, dim_list[idx])
                 indices.append(str(new_arg))
             else:
+                const_var = self.get_const_cse(int(arg))
+                new_arg = sympy.Symbol(f"{const_var}")
                 new_expr_list[idx] = arg
+                indices.append(str(new_arg))
 
         # Extract index var
         expr_str = str(sum(new_expr_list))
