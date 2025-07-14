@@ -100,8 +100,11 @@ class MLIRScheduling(BaseScheduling):
             from PyTorchSimFrontend.mlir.mlir_maxpool_template import MLIRMaxPoolTemplate
             from PyTorchSimFrontend.mlir.mlir_bmm_template import MLIRBMMTemplate
             from PyTorchSimFrontend.mlir.mlir_gemm_template import MLIRGemmTemplate
-            if node1.is_template() and len(node1.get_nodes())==1 and isinstance(node1.node.template, MLIRMaxPoolTemplate) or \
-                node2.is_template() and len(node1.get_nodes())==1 and isinstance(node2.node.template, MLIRMaxPoolTemplate):
+            template_node1 = next((n for n in node1.get_nodes() if n.is_template()), None)
+            template_node2 = next((n for n in node2.get_nodes() if n.is_template()), None)
+
+            if template_node1 and len(node1.get_nodes()) == 1 and isinstance(template_node1.node.template, MLIRMaxPoolTemplate) or \
+               template_node2 and len(node2.get_nodes()) == 1 and isinstance(template_node2.node.template, MLIRMaxPoolTemplate):
                 return False
 
             # Pointwise check
@@ -111,7 +114,7 @@ class MLIRScheduling(BaseScheduling):
                 return False
 
             # Pattern check
-            template_node, act_node = (node1, node2) if node1.is_template() else (node2, node1)
+            template_node, act_node = (template_node1, node2) if template_node1 else (template_node2, node1)
             has_depedency = set(act_node.inverse_users) <= set(template_node.get_nodes())
             if not has_depedency:
                 return False
@@ -119,7 +122,7 @@ class MLIRScheduling(BaseScheduling):
             # Revert act_node.group : simplify_and_reorder() modified _body, _size, group
             if template_node.group != act_node.group:
                 # We don't fuse this case...
-                if (isinstance(template_node, MLIRBMMTemplate) or isinstance(template_node, MLIRGemmTemplate)) and template_node.group[1][0][0] == 1:
+                if (isinstance(template_node.node.template, MLIRBMMTemplate) or isinstance(template_node.node.template, MLIRGemmTemplate)) and template_node.group[1][0][0] == 1:
                     return False
 
                 if list(template_node.group[1][0]) != list(act_node.get_nodes()[0].node.data.get_size()):
@@ -132,25 +135,26 @@ class MLIRScheduling(BaseScheduling):
             return True
         return False
 
-    def revert_group(self, act_node):
-        args, var_ranges = dependencies.index_vars_no_squeeze(
-                act_node.node.data.get_size(), act_node.node.data.get_reduction_size(), prefix="q"
-        )
-        body = LoopBody(
-            act_node.node.get_store_function(),
-            (args if act_node.node.get_reduction_type() else args[:1]),
-            var_ranges,
-        )
-        index_size = []
-        reduce_size = []
-        for v, s in var_ranges.items():
-            if v in args[0]:
-                index_size.append(s)
-            else:
-                reduce_size.append(s)
-        node_device = act_node.get_device()
-        ranges = (index_size, reduce_size)
-        act_node._sizes, act_node._body, act_node.group = (ranges), body, (node_device, self.group_fn(ranges))
+    def revert_group(self, act_nodes):
+        for act_node in act_nodes.get_nodes():
+            args, var_ranges = dependencies.index_vars_no_squeeze(
+                    act_node.node.data.get_size(), act_node.node.data.get_reduction_size(), prefix="q"
+            )
+            body = LoopBody(
+                act_node.node.get_store_function(),
+                (args if act_node.node.get_reduction_type() else args[:1]),
+                var_ranges,
+            )
+            index_size = []
+            reduce_size = []
+            for v, s in var_ranges.items():
+                if v in args[0]:
+                    index_size.append(s)
+                else:
+                    reduce_size.append(s)
+            node_device = act_node.get_device()
+            ranges = (index_size, reduce_size)
+            act_node._sizes, act_node._body, act_node.group = (ranges), body, (node_device, self.group_fn(ranges))
 
     def group_fn(self, sizes):
         return tuple(tuple(map(V.graph.sizevars.simplify, s)) for s in sizes)
