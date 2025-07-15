@@ -87,6 +87,8 @@ class MLIRScheduling(BaseScheduling):
         _, (vars2, reduce2) = node2.group
 
         # Reduction is currently not supported
+        if node1.is_reduction() and node2.is_reduction() and not node1.is_template() and not node2.is_template():
+            return vars1 == vars2 and reduce1 == reduce2 and node1.inverse_users == node2.inverse_users
         if node1.is_reduction() or node2.is_reduction():
             return False
 
