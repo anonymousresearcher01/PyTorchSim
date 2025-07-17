@@ -14,7 +14,7 @@ from torch._inductor.ir import LoopBody
 from torch._inductor import dependencies
 
 from . import mlir_common
-from . import mlir_lowering
+from . import mlir_lowering # DO NOT REMOVE THIS LINE, it is used for lowering
 
 class MLIRScheduling(BaseScheduling):
     count = 0
@@ -41,15 +41,15 @@ class MLIRScheduling(BaseScheduling):
         if len(base_template_node1) == 1 and len(base_template_node2) == 0 and extension_config.CONFIG_FUSION_REDUCTION:
             from PyTorchSimFrontend.mlir.mlir_gemm_template import MLIRGemmTemplate
             from PyTorchSimFrontend.mlir.mlir_bmm_template import MLIRBMMTemplate
-            if (isinstance(base_template_node1[0].node.template, MLIRGemmTemplate) or isinstance(base_template_node1[0].node.template, MLIRBMMTemplate)) and node2.is_reduction() and len(node2.get_nodes())==1:
+            if (isinstance(base_template_node1[0].node.template, MLIRGemmTemplate) or isinstance(base_template_node1[0].node.template, MLIRBMMTemplate)) and node2.is_reduction():
                 # For matmul/bmm+reduction case
-                size_match = node1.get_nodes()[0].node.get_numel() == reduce(operator.mul, node2.node.get_size(), 1) * reduce(operator.mul, node2.node.get_reduction_size(), 1)
-                stride = [i.strip()[:-1].split(",")[-1].strip() for i in str(node2.node).split("\n") if "r0" in i][1]
+                size_match = node1.get_nodes()[0].node.get_numel() == reduce(operator.mul, node2.get_nodes()[0].node.get_size(), 1) * reduce(operator.mul, node2.get_nodes()[0].node.get_reduction_size(), 1)
+                stride = [i.strip()[:-1].split(",")[-1].strip() for i in str(node2.get_nodes()[0].node).split("\n") if "r0" in i][1]
                 target_symbol = symbols("r0")
                 # We can't fuse dim=-1
                 layout_possible = int(sympify(stride).coeff(target_symbol)) != 1
                 # Directed linked?
-                dependency_check = node2 in [node.node for node in base_template_node1[0].users]# and len(node2.read_writes.reads)==1
+                dependency_check = node2.get_nodes()[0] in [node.node for node in base_template_node1[0].users]# and len(node2.read_writes.reads)==1
                 dependency_size = all([i.get_numel() == node1.get_nodes()[0].node.get_numel() for i in node2.read_writes.reads])
                 return size_match and layout_possible and dependency_check and dependency_size
 
@@ -66,7 +66,7 @@ class MLIRScheduling(BaseScheduling):
                 return False
             if len(node1.read_writes.writes) != 1:
                 return False
-            if len(node1.users) != 1:
+            if len([node for node in node1.users if node.get_name() != "OUTPUT"]) != 1: # FIXME. Any good way to check this?
                 return False
             if list(node1.read_writes.writes)[0].name in [dep.name for dep in node2.read_writes.reads]:
                 node1 = self.revert_group(node1)
