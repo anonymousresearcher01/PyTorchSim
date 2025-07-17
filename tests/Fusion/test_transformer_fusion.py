@@ -206,6 +206,7 @@ if __name__ == "__main__":
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()
     device = module.custom_device()
+    test_MHA(device)
     test_DecoderBlock(device)
     # test_DecoderBlock_validation()
     # test_Attention(device, head=16, seq=512, d_k=64)

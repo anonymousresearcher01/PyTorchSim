@@ -91,7 +91,7 @@ if __name__ == "__main__":
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()
     device = module.custom_device()
-    #test_elem_broadcast_fusion(device)
-    #test_elem_fusion(device)
-    #test_elem_bmm_input_fusion(device, batch_size=4, m=512, n=512, k=64)
+    test_elem_broadcast_fusion(device)
+    test_elem_fusion(device)
+    test_elem_bmm_input_fusion(device, batch_size=4, m=512, n=512, k=64)
     test_elem_bmm_weight_fusion(device, batch_size=12, m=512, n=512, k=64)

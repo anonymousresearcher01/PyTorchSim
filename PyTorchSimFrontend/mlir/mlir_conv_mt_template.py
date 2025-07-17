@@ -202,7 +202,7 @@ class MLIRConvMultiTileTemplate(MLIRTemplate):
         X_idx = [X_dim[0]*(I_W+2*PADDING_W)*BATCH*I_C, X_dim[1]*I_C*STRIDE_W, X_dim[2]*I_C*(I_W+2*PADDING_W), X_dim[3]]
 
         W_tile_size = [TILE_K_H, 1, TILE_K, TILE_N]
-        W_tile_stride = [TILE_K_W * TILE_K * TILE_N, TILE_K * TILE_N, 1, TILE_K]
+        W_tile_stride = [TILE_K * TILE_N, TILE_K * TILE_N, 1, TILE_K]
         W_tile_desc = mlir_common.MLIRMultiDimTile(X_tile_size, kernel.vector_lane, 3, vlane_stride)
         W_tile_desc.set_tile_size_stride(W_tile_size, W_tile_stride)
         W_tile_desc.set_name("weight_buffer")

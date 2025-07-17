@@ -210,7 +210,7 @@ class MLIRConvSingleBatchTemplate(MLIRTemplate):
         W_idx = [W_dim[0]*K_W*I_C*O_C , W_dim[1]*I_C*O_C, W_dim[2]*O_C, W_dim[3]]
 
         Y_tile_size = [1, TILE_N, TILE_O_H, TILE_M]
-        Y_tile_stride = [TILE_O_W * TILE_M * TILE_N, TILE_M * TILE_N, TILE_M, 1] # N, C, H, W
+        Y_tile_stride = [TILE_O_H * TILE_M * TILE_N, TILE_M, TILE_M * TILE_N, 1] # N, C, H, W
         Y_tile_desc = mlir_common.MLIRMultiDimTile(Y_tile_size, kernel.vector_lane, vlane_split_axis, vlane_stride)
         Y_tile_desc.set_tile_size_stride(Y_tile_size, Y_tile_stride)
         Y_tile_desc.set_name("output_buffer")

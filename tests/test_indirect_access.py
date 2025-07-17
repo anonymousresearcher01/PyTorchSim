@@ -27,7 +27,7 @@ def test_indirect_vectoradd(device, size=(128, 128)):
     opt_fn = torch.compile(dynamic=False)(vectoradd)
     res = opt_fn(x, idx, y)
     out = vectoradd(x.cpu(), idx.cpu(), y.cpu())
-    test_result("VectorAdd", res, out)
+    test_result("Indirect VectorAdd", res, out)
 
 def test_embedding(device, vocab_size, dim):
     emb = torch.nn.Embedding(vocab_size, dim)
