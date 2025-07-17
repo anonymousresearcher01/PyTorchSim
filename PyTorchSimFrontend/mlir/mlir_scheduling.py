@@ -55,10 +55,8 @@ class MLIRScheduling(BaseScheduling):
 
         # For prologue fusion case
         if extension_config.CONFIG_FUSION_PROLOGUE and len(base_template_node1) == 0 and len(node1.get_nodes())==1 and len(base_template_node2) == 1:
-            # Return false if node2 is Convolution template
-            # if node2.get_nodes()[0].node.origin_node.target._name == 'aten::mm' or \
-            #     node2.get_nodes()[0].node.origin_node.target._name == 'aten::addmm':
-            #     return False
+            from PyTorchSimFrontend.mlir.mlir_gemm_template import MLIRGemmTemplate
+            from PyTorchSimFrontend.mlir.mlir_bmm_template import MLIRBMMTemplate
             target_node = base_template_node2[0].node
             if target_node.origin_node is not None and hasattr(target_node.origin_node.target, "_name") and target_node.origin_node.target._name == 'aten::convolution':
                 return False
@@ -66,8 +64,11 @@ class MLIRScheduling(BaseScheduling):
                 return False
             if len(node1.read_writes.writes) != 1:
                 return False
-            if len([node for node in node1.users if node.get_name() != "OUTPUT"]) != 1: # FIXME. Any good way to check this?
+            if len(node1.users) != 1:
                 return False
+            # We don't fuse this case...
+            if (isinstance(target_node.template, MLIRBMMTemplate) or isinstance(target_node.template, MLIRGemmTemplate)) and base_template_node2[0].group[1][0][0] == 1:
+                    return False
             if list(node1.read_writes.writes)[0].name in [dep.name for dep in node2.read_writes.reads]:
                 node1 = self.revert_group(node1)
                 return True
