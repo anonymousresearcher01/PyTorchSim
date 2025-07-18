@@ -846,6 +846,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.reduction_prefix = IndentedBuffer()
         self.reduction_suffix = IndentedBuffer()
         self.applys = IndentedBuffer()
+        self.masks = IndentedBuffer()
         self.dma_loads = IndentedBuffer()
         self.dma_stores = IndentedBuffer()
         self.indexed_buffer = IndentedBuffer()
@@ -859,6 +860,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.reduction_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_acc")
         self.spad_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="spad")
         self.apply_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="apply")
+        self.mask_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="mask")
         self.iterator_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="iter")
         self.init_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="init")
         self.init_vec_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="init_vec")
@@ -1030,25 +1032,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.cse.generate(self.dma_loads, code, assignment = False) # FIXME: assignment = False does not support caching
         compute_index_var = ",".join(sram_index_var.split(",")[:-1] + [f"%{self.compute_idx}"])
         # Generate vector load instruction
-        needs_mask = self.compute_body_loop.size % self.compute_body_loop.step != 0 and len(index.free_symbols) == len(self.ranges)
         if compute_vec_size > 1:
-            if needs_mask:
-                index_shape = f"vector<{self.compute_body_loop.step}xindex>"
-                mask_shape = f"vector<{compute_vec_size}xi1>"
-                step_vec = self.cse.generate(self.loads, f"vector.step : {index_shape}")
-                upper_bound = self.get_const_cse(self.compute_body_loop.size, "index")
-                gap = self.cse.generate(self.loads, f"arith.subi %{upper_bound}, %{self.compute_idx} : index")
-                gap_vec = self.cse.generate(self.loads, f"vector.broadcast %{gap} : index to {index_shape}")
-                mask_var = self.cse.generate(self.loads, f"arith.cmpi ult, %{step_vec}, %{gap_vec} : {index_shape}")
-                if padding:
-                    pad_val = self.const_cse.generate(self.const_buffer, f"arith.constant 0x{mlir_common.MLIR_INF['-inf'][mlir_dtype]:x} : {mlir_dtype}")
-                else:
-                    pad_val = self.get_const_cse(0, mlir_dtype)
-                pad_vec = self.const_cse.generate(self.const_buffer, f"vector.broadcast %{pad_val} : {mlir_dtype} to {vshape}")
-                line = f"vector.maskedload %{sram_var}[{compute_index_var}], %{mask_var}, %{pad_vec} : {tile_shape}, {mask_shape}, {vshape} into {vshape}"
-            else:
-                operation = "affine.vector_load"
-                line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}, {vshape}"
+            operation = "affine.vector_load"
+            line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}, {vshape}"
         else:
             operation = "affine.load"
             line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}"
@@ -1149,6 +1135,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         else:
             # Adjust shape and inital value
             init_vec = self.const_cse.generate(self.const_buffer, f"vector.broadcast %{init} : {type_name} to {reduced_shape}")
+            self.register_var_info(init_vec, [vec_len, type_name])
         acc_var = init_vec
 
         # Reduction body prepare
@@ -1167,6 +1154,9 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.init_cse.reduction_cache[reduction_key] = init_vec
 
         # Reduction body codegen
+        mask_shape, mask_var = self.get_mask()
+        if mask_var is not None:
+            value = ops.where(mask_var, value, init_vec)
         result = reduction_partial_combine_vec(reduction_type, value, body_iter_arg)
         self.compute_body_loop.reduction_vars[body_acc] = (reduction_type, body_iter_arg, iterator, reduced_shape)
         self.compute_body_loop.affine_yield[result] = reduced_shape
@@ -1423,6 +1413,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 code.writelines(self.compute_body_loop.lines())
                 with contextlib.ExitStack() as stack:
                     stack.enter_context(code.indent(attribute="{inner_loop=false}",suffix=self.compute_body_loop.epilogue_line()))
+                    code.splice(self.masks)
                     code.splice(self.loads)
                     code.splice(self.compute)
                     code.splice(self.stores)
@@ -1701,55 +1692,6 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         return f"memref.dma_start {src_operand}, {dst_operand}, %{dma_type}, {tag_var}, {dma_attribute} : {src_shape}, {dst_shape}, {tag_shape} {attribute}"
 
-    def adjust_tile_size(self):
-        if self.read_writes is not None:
-            read_writes = list(self.read_writes.reads) + list(self.read_writes.writes)
-            cv_list = []
-            for node in read_writes:
-                if len(node) > 1:
-                    cv_list.append(self.get_constant_vector2(node[1]))
-            max_element = max(cv_list, key=len)
-            max_nr_dim = len(max_element)
-
-            sorted_max_element = sorted(max_element, key=lambda x:x[0])
-            # Force vector tile size when 3D node is originated from view
-            if max_nr_dim == 3 and max_nr_dim != len(self.itervars):
-                self.tile_desc.n_col = min(self.tile_desc.get_tile_size(), sorted_max_element[1][0])
-                self.tile_desc.n_row = 1
-                return
-
-        # Case 1. vector kernel
-        if len(self.itervars) == 1:
-            tile_size = self.tile_desc.get_tile_size() if self.tile_desc.get_tile_size() < self.ranges[0] else self.ranges[0]
-            min_tile_size_unit = self.vector_lane * self.vlen // (8 * self.precision) # TODO: VCIX widening is not implemented
-            self.tile_desc.n_col = math.ceil(tile_size / min_tile_size_unit) * min_tile_size_unit # padding
-            self.tile_desc.n_row = 1
-        elif len(self.itervars) == 0:
-            self.tile_desc.n_col = 1
-            self.tile_desc.n_row = 1
-
-        # Case 2. 2-D tensor (e.g., softmax)
-        if len(self.itervars) == 2 and self.reduction_depth == len(self.itervars):
-            # Avoid too much padding
-            if (self.ranges[0] <= self.vector_lane and self.ranges[0] <= self.tile_desc.n_row):
-                self.tile_desc.n_row = self.ranges[0]
-                self.tile_desc.used_vector_lane = self.ranges[0]
-
-        # Case 2. 2-D reduction (e.g., batchnorm)
-        if len(self.itervars) == 2 and self.reduction_depth == len(self.itervars) - 1:
-            if (((self.ranges[0] + 1) // 2) <= self.vector_lane and ((self.ranges[0] + 1) // 2) <= self.tile_desc.n_row):
-                self.tile_desc.n_row = ((self.ranges[0] + 1) // 2) * 2
-                self.tile_desc.used_vector_lane = (self.ranges[0] + 1) // 2
-
-        # Case 2. 3-D tensor kernel without reduction. Access vector granule!
-        if len(self.itervars) == 3 and self.reduction_depth == len(self.itervars):
-            self.tile_desc.n_col = self.ranges[-1]
-            self.tile_desc.n_row = 1
-
-        # Case 3. N-D tensor kernel with reduction. Not implemented. Need this?
-        if len(self.itervars) >= 3 and self.reduction_depth < len(self.itervars):
-            raise NotImplementedError()
-
     def allocate_sram_buffer(self, dtype, dram_name, tile_desc, raw_index, buffer=None, forced_name=None):
         c_type = mlir_common.DTYPE_TO_C[dtype]
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
@@ -1804,6 +1746,22 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if value not in self.tags:
             self.tags[value] = self.alloc_cse.generate(self.alloc_buffer, f"memref.alloc() : {shape}")
         return self.tags[value]
+
+    def get_mask(self):
+        if self.compute_body_loop.size % self.compute_body_loop.step == 0:
+            return None, None
+        compute_vec_size = self.kernel_group.tile_desc.get_compute_vec_size()
+        index_shape = f"vector<{self.compute_body_loop.step}xindex>"
+        mask_shape = f"vector<{compute_vec_size}xi1>"
+
+        upper_bound = self.get_const_cse(self.compute_body_loop.size)
+        step_vec = self.const_cse.generate(self.const_buffer, f"vector.step : {index_shape}")
+
+        gap = self.mask_cse.generate(self.masks, f"arith.subi %{upper_bound}, %{self.compute_idx} : index")
+        gap_vec = self.mask_cse.generate(self.masks, f"vector.broadcast %{gap} : index to {index_shape}")
+        mask_var = self.mask_cse.generate(self.masks, f"arith.cmpi ult, %{step_vec}, %{gap_vec} : {index_shape}")
+        self.register_var_info(mask_var, [compute_vec_size, "i1"])
+        return mask_shape, mask_var
 
     def convert_indirect_indexing(self, index :sympy.Expr):
         if "tmp" not in str(index):

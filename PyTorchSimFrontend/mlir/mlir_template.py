@@ -450,6 +450,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
                 stack.enter_context(compute_body.indent(attribute="{inner_loop=false}",suffix=self.compute_body_loop.epilogue_line()))
                 if self.reduction_fusion:
                     compute_body.writelines(self.reduction_body_loop.lines())
+                    compute_body.splice(self.masks)
                     stack.enter_context(compute_body.indent(attribute="{inner_loop=false}"))
                     compute_body.splice(self.loads)
                     compute_body.splice(self.compute)
@@ -889,7 +890,6 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         name = f"{reduction_type}_buffer{self.reduction_buffer_idx}"
         self.reduction_buffer_idx += 1
         index = "dummy_index" # Not used
-        tile_numel_per_lane = self.compute_body_loop.step * self.reduction_body_loop.size # ???
         sram_var, _ = self.get_scratchpad_buffer(dtype, name, local_tile_desc, index, self.const_buffer)
         self.reduction_epilogue_result[reduction_key] = sram_var
 
@@ -903,6 +903,12 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         self.register_var_info(out, [self.compute_body_loop.step, type_name])
 
         # Reduction body codegen
+        init = self.const_cse.generate(self.const_buffer, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
+        init_vec = self.const_cse.generate(self.const_buffer, f"vector.broadcast %{init} : {type_name} to {vshape}")
+        self.register_var_info(init_vec, [local_tile_desc.get_compute_vec_size(), type_name])
+        mask_shape, mask_var = self.get_mask()
+        if mask_var is not None:
+            value = ops.where(mask_var, value, init_vec)
         result = reduction_partial_combine_vec(reduction_type, value, out)
 
         # Store partial result
