@@ -65,6 +65,8 @@ class MLIRScheduling(BaseScheduling):
                 return False
             if len(node1.read_writes.writes) != 1:
                 return False
+            if node1.node not in target_node.inputs or any(["view" in str(ori) for ori in node1.node.origins]): #FIXME
+                return False
             # We don't fuse this case...
             if (isinstance(target_node.template, MLIRBMMTemplate) or isinstance(target_node.template, MLIRGemmTemplate)) and base_template_node2[0].group[1][0][0] == 1:
                     return False
