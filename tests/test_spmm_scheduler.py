@@ -5,7 +5,7 @@ import argparse
 sys.path.append(os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim'))
 from Scheduler.scheduler import Scheduler, SchedulerDNNModel, Request
 from test_sparse_core import SparseMLP as model1
-from test_transformer import DecoderBlock as model2
+from test_transformer import EncoderBlock as model2
 CONFIG_TORCHSIM_DIR = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
 
 if __name__ == "__main__":

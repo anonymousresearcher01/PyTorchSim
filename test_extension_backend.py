@@ -12,7 +12,7 @@ from tests.test_conv2d import test_conv2d
 from tests.test_matmul import test_matmul
 from tests.test_bmm import test_BMM
 from tests.test_cnn import test_CNN
-from tests.test_transformer import test_DecoderBlock
+from tests.test_transformer import test_EncoderBlock
 from tests.test_resnet import test_resnet
 from tests.test_mlp import test_mlp, test_mlp_inf
 from tests.MoE.test_moe import test_moe
@@ -46,7 +46,7 @@ if __name__ == "__main__":
     #test_matmul(device, 33, 45, 68)
     #test_BMM(device)
     #test_CNN(device)
-    #test_DecoderBlock(device)
+    #test_EncoderBlock(device)
     #test_resnet(device)
     #test_mlp(device)
     #test_mlp_inf(device, batch_size=64, input_size=256, hidden_size=512, output_size=256, sparsity=0.97)

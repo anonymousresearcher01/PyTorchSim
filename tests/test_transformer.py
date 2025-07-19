@@ -53,9 +53,9 @@ class my_MultiheadAttention(torch.nn.Module):
         del value
         return self.linears[-1](x)
 
-class DecoderBlock(torch.nn.Module):
+class EncoderBlock(torch.nn.Module):
     def __init__(self, embed_dim, num_heads):
-        super(DecoderBlock, self).__init__()
+        super(EncoderBlock, self).__init__()
         self.multihead_attn = my_MultiheadAttention(num_heads, embed_dim)
         self.layer_norm = torch.nn.LayerNorm(embed_dim)
         self.ffn1 = torch.nn.Linear(embed_dim, embed_dim*4)
@@ -71,17 +71,17 @@ class DecoderBlock(torch.nn.Module):
         ffn2_result = self.ffn2(act_result)
         return self.layer_norm(ffn2_result + result)
 
-def test_DecoderBlock(device, head=12, embed_dim=768, input_seq=512):
+def test_EncoderBlock(device, head=12, embed_dim=768, input_seq=512):
     cpu_query = torch.randn(1, input_seq, embed_dim)
-    decoder_block = DecoderBlock(embed_dim, head)
-    cpu_res = decoder_block(cpu_query)
+    encoder_block = EncoderBlock(embed_dim, head)
+    cpu_res = encoder_block(cpu_query)
 
     query = cpu_query.clone().to(device=device)
-    decoder_block.to(device=device)
-    opt_fn = torch.compile(dynamic=False)(decoder_block)
+    encoder_block.to(device=device)
+    opt_fn = torch.compile(dynamic=False)(encoder_block)
     res = opt_fn(query)
 
-    test_result("Decoder Block Forwrad", res, cpu_res)
+    test_result("Encoder Block Forwrad", res, cpu_res)
 
 def test_Attention(device, head=16, seq=512, d_k=64):
     def attention(query, key, value):
@@ -122,6 +122,6 @@ if __name__ == "__main__":
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()
     device = module.custom_device()
-    test_DecoderBlock(device)
+    test_EncoderBlock(device)
     # test_Attention(device, head=16, seq=512, d_k=64)
     # test_MHA(device, num_heads=12, embed_dim=768)

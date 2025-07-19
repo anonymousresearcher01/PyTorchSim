@@ -18,13 +18,13 @@ def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
         print("cpu out: ", cpu_out)
         exit(1)
 
-def test_resnet(device):
+def test_resnet(device, batch=1):
     from torchvision.models import resnet
-    # model = resnet._resnet(resnet.BasicBlock, [1, 1, 0, 0], weights=None, progress=False).eval()
     with torch.no_grad():
+        #model = resnet._resnet(resnet.BasicBlock, [1, 1, 1, 1], weights=None, progress=False).eval()
         model = resnet18().eval()
         model.to(device, memory_format=torch.channels_last)
-        input = torch.randn(1, 3, 224, 224)
+        input = torch.randn(batch, 3, 224, 224)
         x1 = input.to(device=device, memory_format=torch.channels_last)
         x2 = input.cpu().to(memory_format=torch.channels_last)
         opt_fn = torch.compile(dynamic=False)(model)
