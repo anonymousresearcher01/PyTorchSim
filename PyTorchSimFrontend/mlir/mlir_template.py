@@ -805,10 +805,12 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         if name not in self.buffer_names:
             sram_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, self.kernel_group.tile_desc, index)
             self.buffer_names[name] = sram_var
+            store_force = False
         else:
             zero_cse = self.get_const_cse(0)
             sram_dims = len(tile_shape.split("x")) - 1
             sram_index_var = ",".join([f"%{zero_cse}"] * sram_dims)
+            store_force = True
         sram_var = self.buffer_names[name]
         zero_var = self.get_const_cse(0)
 
@@ -823,6 +825,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         else:
             operation = "affine.store"
             line = f"{operation} %{value}, %{sram_var}[{compute_index_var}] : {tile_shape}"
+        line = line if store_force else DeferredLine(name, line)
         self.stores.writeline(line)
 
         # Generate DMA instruction
