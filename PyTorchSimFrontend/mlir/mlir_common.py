@@ -179,9 +179,12 @@ class MLIRKernelArgs(common.KernelArgs):
 
 class MLIRMultiDimTile():
     def __init__(self, tile_size, vector_lane, vlane_split_axis=None, vlane_stride=None, vec_size=None):
+        self.name = ""
         self._tile_size = list(tile_size)
+        self._tile_stride = None
         self.tile_axis_order = list(range(len(tile_size)))
         self.vec_size = vec_size
+        self.update_tile_stride()
 
         # Vector lane mapping config
         self.vector_lane = vector_lane
@@ -190,12 +193,23 @@ class MLIRMultiDimTile():
         self.implicit_dim_size = None
         self.nr_rdim = 0
 
+    def set_name(self, name: str):
+        self.name = name
+
     def set_tile_size(self, tile_size, tile_axis_order=None):
         self._tile_size = tile_size
         if tile_axis_order is None:
             self.tile_axis_order = list(range(len(tile_size)))
         else:
             self.tile_axis_order = tile_axis_order
+        self.update_tile_stride()
+
+    def set_tile_size_stride(self, tile_size, tile_stride):
+        self._tile_size = tile_size
+        self._tile_stride = tile_stride
+
+    def get_name(self) -> str:
+        return self.name
 
     def get_tile_size(self):
         return self._tile_size
@@ -216,7 +230,7 @@ class MLIRMultiDimTile():
             size *= dim_size
         return size
 
-    def get_tile_stride(self):
+    def update_tile_stride(self):
         strides = [1] * len(self._tile_size)
         init = 1
 
@@ -228,7 +242,10 @@ class MLIRMultiDimTile():
         for _, size, original_indices in sorted_pairs:
             strides[original_indices] = init
             init *= size
-        return strides
+        self._tile_stride = strides
+
+    def get_tile_stride(self):
+        return self._tile_stride
 
     def get_tile_size_per_lane(self):
         tile_size_per_lane = list(self._tile_size)
@@ -339,6 +356,7 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
         self.buffer_types : dict = None # format: dtype, numel, size, stride
         self.compute_idx = "compute_idx"
         self.compute_body_loop = LoopLevel(self.compute_idx, 1)
+        self.prologue_compute_body_loop = LoopLevel(self.compute_idx, 1)
         self.recodegen = reason # spad overflow, tile size, vlane stride
         self.stop_autotune = False
 
@@ -479,8 +497,13 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
                 tile_size[0] = 2 * vlane_stride * self.vector_lane
             elif len(tile_size) == 3:
                 tile_size[-1] = self.vector_lane
-                tile_size[-2] = 2 * self.vector_lane
+                tile_size[-2] = 4 * self.vector_lane
                 tile_size[-3] = 2
+            elif len(tile_size) == 4:
+                tile_size[-1] = self.vector_lane
+                tile_size[-2] = 4 * self.vector_lane
+                tile_size[-3] = 2
+                tile_size[-4] = 1
             else:
                 raise NotImplementedError("dummy tile size fail!")
             return tile_size

@@ -2,7 +2,7 @@ import os
 import sys
 import torch
 from torchvision.models import resnet18 as model1
-from test_transformer import DecoderBlock as model2
+from test_transformer import EncoderBlock as model2
 
 base_path = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
 sys.path.append(base_path)

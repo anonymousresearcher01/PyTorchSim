@@ -7,7 +7,8 @@ import datetime
 
 def run_BERT(size, input_seq, config):
     from Scheduler.scheduler import Scheduler, SchedulerDNNModel, Request
-    from tests.test_transformer import DecoderBlock
+    # from tests.test_transformer import EncoderBlock
+    from tests.Fusion.test_transformer_fusion import EncoderBlock
     scheduler = Scheduler(num_request_queue=1, engine_select=Scheduler.FIFO_ENGINE, backend_config=config)
     device = scheduler.execution_engine.module.custom_device()
 
@@ -15,10 +16,10 @@ def run_BERT(size, input_seq, config):
     embedding_size = {'base': 768, 'large': 1024, 'xlarge': 2048}
     heads = {'base': 12, 'large': 16, 'xlarge': 32} # hidden/64 https://arxiv.org/pdf/1909.11942
     cpu_query = torch.randn(input_seq, hidden_dim[size])
-    decoder_block = DecoderBlock(embedding_size[size], heads[size]).eval()
+    encoder_block = EncoderBlock(embedding_size[size], heads[size]).eval()
 
     query = cpu_query.clone().to(device=device)
-    opt_fn = torch.compile(dynamic=False)(decoder_block.to(device=device))
+    opt_fn = torch.compile(dynamic=False)(encoder_block.to(device=device))
 
     SchedulerDNNModel.register_model(f"BERT-{size}", opt_fn)
     request = Request(f"BERT-{size}", [query], [], request_queue_idx=0)
@@ -35,7 +36,7 @@ if __name__ == "__main__":
     import os
     import sys
     base_dir = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
-    config = os.environ.get('TORCHSIM_CONFIG', default=f'{base_dir}/PyTorchSimBackend/configs/systolic_ws_128x128_c2_simple_noc_tpuv4.json')
+    config = os.environ.get('TORCHSIM_CONFIG', default=f'{base_dir}/PyTorchSimBackend/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json')
     config_prefix = config.split('/')[-1].split('.')[0][9:] # extract config name from config path FIXME: gem5 result is different as directoy name
     sys.path.append(base_dir)
     args = argparse.ArgumentParser()

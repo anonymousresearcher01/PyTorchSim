@@ -53,9 +53,9 @@ class my_MultiheadAttention_origin(torch.nn.Module):
         del value
         return self.linears[-1](x)
 
-class DecoderBlock_origin(torch.nn.Module):
+class EncoderBlock_origin(torch.nn.Module):
     def __init__(self, embed_dim, num_heads):
-        super(DecoderBlock_origin, self).__init__()
+        super(EncoderBlock_origin, self).__init__()
         self.multihead_attn = my_MultiheadAttention_origin(num_heads, embed_dim)
         self.layer_norm = torch.nn.LayerNorm(embed_dim)
         self.ffn1 = torch.nn.Linear(embed_dim, embed_dim*4)
@@ -111,9 +111,9 @@ class custom_MatmulLayerNorm(torch.nn.Module):
         out = torch.matmul(self.weight, x.transpose(-1, -2)) + self.bias[:, None] # (1, 768, 512)
         return self.layer_norm(out.transpose(-1, -2) + residual)
 
-class DecoderBlock(torch.nn.Module):
+class EncoderBlock(torch.nn.Module):
     def __init__(self, embed_dim, num_heads):
-        super(DecoderBlock, self).__init__()
+        super(EncoderBlock, self).__init__()
         self.multihead_attn = my_MultiheadAttention(num_heads, embed_dim)
         self.layer_norm = torch.nn.LayerNorm(embed_dim)
         self.ffn1 = torch.nn.Linear(embed_dim, embed_dim*4)
@@ -130,18 +130,18 @@ class DecoderBlock(torch.nn.Module):
         act_result = self.act(ffn1_result)
         return self.matmulln2(act_result, result)
 
-def test_DecoderBlock(device, head=12, embed_dim=768, input_seq=512):
+def test_EncoderBlock(device, head=12, embed_dim=768, input_seq=512):
     cpu_query = torch.randn(input_seq, embed_dim)
-    decoder_block = DecoderBlock(embed_dim, head)
-    cpu_res = decoder_block(cpu_query)
+    encoder_block = EncoderBlock(embed_dim, head)
+    cpu_res = encoder_block(cpu_query)
 
     query = cpu_query.clone().to(device=device)
-    decoder_block.to(device=device)
+    encoder_block.to(device=device)
     with torch.no_grad():
-        opt_fn = torch.compile(dynamic=False)(decoder_block)
+        opt_fn = torch.compile(dynamic=False)(encoder_block)
         res = opt_fn(query)
 
-    test_result("Decoder Block Forwrad", res, cpu_res)
+    test_result("Encoder Block Forwrad", res, cpu_res)
 
 def test_Attention(device, head=16, seq=512, d_k=64):
     def attention(query, key, value):
@@ -165,18 +165,18 @@ def test_Attention(device, head=16, seq=512, d_k=64):
 def test_MHA(device, num_heads=12, embed_dim=768, input_seq=512):
     MHA = my_MultiheadAttention(num_heads, embed_dim)
     cpu_query = torch.randn(input_seq, embed_dim)
-    cpu_res = MHA(cpu_query, cpu_query, cpu_query)
-
-    query = cpu_query.clone().to(device=device)
-    MHA.to(device=device)
-    opt_fn = torch.compile(dynamic=False)(MHA)
-    res = opt_fn(query, query, query)
+    with torch.no_grad():
+        cpu_res = MHA(cpu_query, cpu_query, cpu_query)
+        query = cpu_query.clone().to(device=device)
+        MHA.to(device=device)
+        opt_fn = torch.compile(dynamic=False)(MHA)
+        res = opt_fn(query, query, query)
 
     test_result("MHA Forward", res, cpu_res)
 
-def test_DecoderBlock_validation(head=12, embed_dim=768, input_seq=512):
-    bert_origin = DecoderBlock_origin(embed_dim, head)
-    bert = DecoderBlock(embed_dim, head)
+def test_EncoderBlock_validation(head=12, embed_dim=768, input_seq=512):
+    bert_origin = EncoderBlock_origin(embed_dim, head)
+    bert = EncoderBlock(embed_dim, head)
 
     bert.multihead_attn.linears[0].weight = bert_origin.multihead_attn.linears[0].weight
     bert.multihead_attn.linears[0].bias = bert_origin.multihead_attn.linears[0].bias
@@ -196,7 +196,7 @@ def test_DecoderBlock_validation(head=12, embed_dim=768, input_seq=512):
     origin_res = bert_origin(origin_query)
     res = bert(query)
 
-    test_result("Decoder Block Validation", res, origin_res)
+    test_result("Encoder Block Validation", res, origin_res)
 
 if __name__ == "__main__":
     import os
@@ -206,7 +206,8 @@ if __name__ == "__main__":
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()
     device = module.custom_device()
-    test_DecoderBlock(device)
-    # test_DecoderBlock_validation()
+    #test_MHA(device)
+    test_EncoderBlock(device)
+    # test_EncoderBlock_validation()
     # test_Attention(device, head=16, seq=512, d_k=64)
     # test_MHA(device, num_heads=12, embed_dim=768)
