@@ -877,6 +877,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         self.spadbuf_counter = 0
         self.dma_read_counter = 1
         self.dma_write_counter = 1
+        self.dma_tag_id = 0
         self.affine_yield = {}
         self.welford_reduce_out = None
         self.reduce_iterator = {}
@@ -1028,7 +1029,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         # MVIN Encoding
         attribute = f"{{dram_stride={dram_stride}, sram_stride={tile_stride}, padding={padding}}}"
         code = self.get_dma_code("MVIN", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
-                                 f"{name}_tag", dram_shape, tile_shape, attribute)
+                                 dram_shape, tile_shape, attribute)
         self.cse.generate(self.dma_loads, code, assignment = False) # FIXME: assignment = False does not support caching
         compute_index_var = ",".join(sram_index_var.split(",")[:-1] + [f"%{self.compute_idx}"])
         # Generate vector load instruction
@@ -1090,7 +1091,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         # Generate DMA instruction
         attribute = f"{{dram_stride={dram_stride}, sram_stride={tile_stride}, padding=0}}"
         code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
-                                 f"{name}_tag", dram_shape, tile_shape, attribute)
+                                 dram_shape, tile_shape, attribute)
         self.dma_stores.writeline(common.DeferredLine(name, code))
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
@@ -1243,7 +1244,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         # Generate DMA instruction
         attribute = f"{{dram_stride={dram_stride}, sram_stride={tile_stride}, padding=0}}"
         code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
-                                 f"{name}_tag", dram_shape, tile_shape, attribute)
+                                 dram_shape, tile_shape, attribute)
         self.reductions_suffix.writeline(common.DeferredLine(name, code))
 
         # Restore origin cse
@@ -1655,7 +1656,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         return local_tile_desc, index_var, dram_stride
 
     def get_dma_code(self, dma_type_name, vlane_split_axis, vlane_stride, mlir_dtype, dram_var, dram_index_var, sram_var, sram_index_var,
-                     tag_name, dram_shape, tile_shape, attribute):
+                     dram_shape, tile_shape, attribute):
         dma_key = (vlane_split_axis, vlane_stride, mlir_dtype)
         if dma_type_name == "MVIN" and dma_key in self.dma_read_cache:
             dma_type, vlane_split_axis, vlane_stride = self.dma_read_cache[dma_key]
@@ -1670,9 +1671,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 self.dma_read_cache[dma_key] = [dma_type, vlane_split_axis, vlane_stride]
             else:
                 dma_type = self.get_const_cse(DMA_TYPE[f"{dma_type_name}{self.dma_write_counter}"])
-                # self.dma_write_counter += 1 Is it okay?
                 self.dma_write_cache[dma_key] = [dma_type, vlane_split_axis, vlane_stride]
-        tag = self.get_tag_cse(tag_name)
+        tag = self.get_tag_cse()
         zero_cse = self.get_const_cse(0)
 
         # Prepare opearnds and attributes
@@ -1742,9 +1742,12 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             self.consts[str(value)+dtype] = self.const_cse.generate(self.const_buffer, f"arith.constant {value} : {dtype}")
         return self.consts[str(value)+dtype]
 
-    def get_tag_cse(self, value, shape="memref<1xi32>"):
+    def get_tag_cse(self, value=None, shape="memref<1xi32>"):
+        if value is None:
+            value = self.dma_tag_id
+            self.dma_tag_id += 1
         if value not in self.tags:
-            self.tags[value] = self.alloc_cse.generate(self.alloc_buffer, f"memref.alloc() : {shape}")
+            self.tags[value] = self.alloc_cse.generate(self.alloc_buffer, f"memref.alloc() : {shape} // {value}")
         return self.tags[value]
 
     def get_mask(self):

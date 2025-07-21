@@ -663,7 +663,6 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         # Prepare code block
         local_code = IndentedBuffer()
         with V.set_kernel_handler(self):
-            tag = f"mvint_{self.dma_read_counter}" if dma_type == "MVIN" else f"mvoutt_{self.dma_write_counter}"
             index_var = self.parse_index_list(index_list, local_code)
             node_layout = self.named_nodes[dram_var].get_layout()
             numel = self.get_arg_info(self.named_nodes[dram_var].get_name()).get_numel()
@@ -696,7 +695,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
                 attribute_parts.append(f"subtile_size={subtile_size}, async={int(async_type) if async_type is not None else 1}")
             attribute = "  {" + ", ".join(attribute_parts) + "}"
             code = self.get_dma_code(dma_type, vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
-                                    tag, dram_shape, tile_shape, "")
+                                     dram_shape, tile_shape, "")
             local_code.writeline(code)
             local_code.writeline(attribute)
         return textwrap.indent(local_code.getvalue(), " "*indent_size).strip()
@@ -749,7 +748,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             sram_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, self.kernel_group.tile_desc, index)
             attribute = f"{{dram_stride={dram_stride}, sram_stride={tile_stride}, padding=0}}"
             code = self.get_dma_code("MVIN", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
-                                     f"{name}_tag", dram_shape, tile_shape, attribute)
+                                     dram_shape, tile_shape, attribute)
             self.cse.generate(self.dma_loads, code, assignment = False)
             self.buffer_names[name] = sram_var
         else:
@@ -831,7 +830,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         # Generate DMA instruction
         attribute = f"{{dram_stride={dram_stride}, sram_stride={tile_stride}, padding=0}}"
         code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
-                                 f"{name}_tag", dram_shape, tile_shape, attribute)
+                                 dram_shape, tile_shape, attribute)
         self.dma_stores.writeline(DeferredLine(name, code))
 
     def reduction_epilogue(self, dtype, src_dtype, reduction_type, value):
@@ -991,7 +990,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         # Generate DMA instruction
         attribute = f"{{dram_stride={dram_stride}, sram_stride={final_tile_stride}, padding=0}}"
         code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
-                                f"{name}_tag", dram_shape, final_tile_shape, attribute)
+                                dram_shape, final_tile_shape, attribute)
         self.reductions_suffix.writeline(DeferredLine(name, code))
 
     def set_tile_size(self, template_fusion_info, prologue=False):
