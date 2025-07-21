@@ -24,6 +24,7 @@ class MLIRScheduling(BaseScheduling):
         self.scheduler = scheduler
         self.scheduler.can_fuse_origin = self.scheduler.can_fuse
         self.scheduler.can_fuse = self.can_fuse_with_exceptions
+        #self.scheduler.enter_context = self.enter_context_fixed # FIXME. Monkey patch: For fixing the inductor bug
         self.kernel_group = mlir_common.MLIRWrapperKenrelGroup()
         self._ready_to_flush = False
         self.outer_function = set()
@@ -67,9 +68,14 @@ class MLIRScheduling(BaseScheduling):
                 return False
             if node1.node not in target_node.inputs or any(["view" in str(ori) for ori in node1.node.origins]): #FIXME
                 return False
-            # We don't fuse this case...
-            if (isinstance(target_node.template, MLIRBMMTemplate) or isinstance(target_node.template, MLIRGemmTemplate)) and base_template_node2[0].group[1][0][0] == 1:
-                    return False
+
+            # Currently only BMM, MM support prologue fusion
+            if not isinstance(target_node.template, (MLIRBMMTemplate, MLIRGemmTemplate)):
+                return False
+            # We don't fuse this edge case...
+            if base_template_node2[0].group[1][0][0] == 1:
+                return False
+
             if list(node1.read_writes.writes)[0].name in [dep.name for dep in node2.read_writes.reads]:
                 node1 = self.revert_group(node1)
                 return True
@@ -369,3 +375,14 @@ class MLIRScheduling(BaseScheduling):
                 f"yield ({target_kernel_name}, ({args}))"
             )
         self._set_flush_status(True)
+
+    def enter_context_fixed(self, node):
+        def get_order(n):
+            if n not in self.scheduler.origin_to_index:
+                self.scheduler.origin_to_index.update({n: i for i, n in enumerate(n.graph.nodes)})
+            return self.scheduler.origin_to_index[n]
+
+        origins = [(get_order(e), idx, e) for n in node.get_nodes() for idx, e in enumerate(n.node.origins)]
+        if origins:
+            _, _, last = max(origins)
+            V.graph.wrapper_code.enter_context(last)
