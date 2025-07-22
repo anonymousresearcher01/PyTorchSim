@@ -353,30 +353,33 @@ class CustomAsyncCompile(AsyncCompile):
             validate = kwargs.get('validate', False)
             # Wait for compilation
             key = future.result()
+            from filelock import FileLock
+            lock_dir = get_lock_dir()
+            lock = FileLock(os.path.join(lock_dir, key + ".lock"), timeout=LOCK_TIMEOUT)
+            with lock:
+                # Run simulator pass
+                result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
+                # Dump arguments and meta data
+                dump_metadata(args, arg_attributes, result_path)
+                runtime_path = FunctionalSimulator.get_runtime_dump_path(result_path)
+                if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE or validate:
+                    funcsim = FunctionalSimulator(result_path, key)
+                    funcsim.run_spike(args, arg_attributes,
+                                    runtime_path, self.validation_binary_name,
+                                    vectorlane_size=vectorlane_size, spad_info=spad_info,
+                                    cleanup=extension_config.CONFIG_CLEANUP_DUMP_ARGS, silent_mode=silent_mode)
+                if extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
+                    return
 
-            # Run simulator pass
-            result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
-            # Dump arguments and meta data
-            dump_metadata(args, arg_attributes, result_path)
-            runtime_path = FunctionalSimulator.get_runtime_dump_path(result_path)
-            if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE or validate:
-                funcsim = FunctionalSimulator(result_path, key)
-                funcsim.run_spike(args, arg_attributes,
-                                  runtime_path, self.validation_binary_name,
-                                  vectorlane_size=vectorlane_size, spad_info=spad_info,
-                                  cleanup=extension_config.CONFIG_CLEANUP_DUMP_ARGS, silent_mode=silent_mode)
-            if extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
-                return
-
-            onnx_path = os.path.join(result_path, "tile_graph.onnx")
-            attribute_path = os.path.join(runtime_path, "attribute")
-            backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
-            backsim = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
-            backsim.vectorlane_size = vectorlane_size
-            attribute_path = backsim.create_attribute_file(attribute_path, args, loop_size=loop_size)
-            result_path = backsim.simulation(onnx_path, attribute_path, silent_mode=silent_mode)
-            result = BackendSimulator.get_result_from_file(result_path)
-            return result
+                onnx_path = os.path.join(result_path, "tile_graph.onnx")
+                attribute_path = os.path.join(runtime_path, "attribute")
+                backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
+                backsim = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
+                backsim.vectorlane_size = vectorlane_size
+                attribute_path = backsim.create_attribute_file(attribute_path, args, loop_size=loop_size)
+                result_path = backsim.simulation(onnx_path, attribute_path, silent_mode=silent_mode)
+                result = BackendSimulator.get_result_from_file(result_path)
+                return result
 
         def dryrun_simulator(*args, **kwargs):
             autotune = kwargs.get('autotune', False)
