@@ -1467,17 +1467,18 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                         out = bench_runner(validate=extension_config.CONFIG_TORCHSIM_VALIDATION_MODE)
                     return out[-1]
                 except (extension_codecache.SpadOverflowError, RuntimeError) as e:
-                    if isinstance(e, RuntimeError) and str(e) != "STACK_OVERFLOW":
-                        print(f"Benchmark[trial-{n_try}] failed with unexpected error: {e}")
-                        raise
-                    print(f"Benchmark failed due to spad overflow with tile size: {self.kernel_group.tile_desc.get_tile_size()}")
-                    self.kernel_group = kernel_group # Reset to the original tile desc
-                    self.reset("spad_overflow")
-                    src_code = super().codegen_nodes(nodes, kernel_name)
-                    bench_runner = self.run_bench(nodes, kernel_name, src_code)
-                    kernel_group = self.kernel_group
-                    self._prepare_simulator_headers(src_code)
-            raise RuntimeError("[Auto-tune] Exceeded maximum number of autotuning attempts")
+                    return float("inf")
+                    #if isinstance(e, RuntimeError) and str(e) != "STACK_OVERFLOW":
+                    #    print(f"Benchmark[trial-{n_try}] failed with unexpected error: {e}")
+                    #    return float("inf")
+                    #print(f"Benchmark failed due to spad overflow with tile size: {self.kernel_group.tile_desc.get_tile_size()}")
+                    #self.kernel_group = kernel_group # Reset to the original tile desc
+                    #self.reset("spad_overflow")
+                    #src_code = super().codegen_nodes(nodes, kernel_name)
+                    #bench_runner = self.run_bench(nodes, kernel_name, src_code)
+                    #kernel_group = self.kernel_group
+                    #self._prepare_simulator_headers(src_code)
+            return float("inf") # Exceeded maximum number of autotuning attempts
 
         choices = self.make_choices(nodes, kernel_name)
 
@@ -1486,6 +1487,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         with ThreadPoolExecutor(max_workers=8) as executor:
             results = list(executor.map(get_cycle, choices))
         max_idx = results.index(min(results))
+        if min(results) == float("inf"):
+            raise RuntimeError("Failed to find optimal tile size...")
         print(f"[Auto-tune] Optimal tile size: {choices[max_idx][2].tile_desc.get_tile_size()}, vlane_stride: {choices[max_idx][2].tile_desc.vlane_stride}, cycles: {results[max_idx]}")
         optimal_src_code = choices[max_idx][1]
         return optimal_src_code

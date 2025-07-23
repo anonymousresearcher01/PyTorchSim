@@ -105,7 +105,9 @@ class FunctionalSimulator():
             print("[SpikeSimulator] cmd> ", run)
         run_cmd = shlex.split(run)
         try:
-            subprocess.check_call(run_cmd)
+            stdout_setting = subprocess.DEVNULL if silent_mode else None
+            stderr_setting = subprocess.DEVNULL if silent_mode else None
+            subprocess.check_call(run_cmd, stdout=stdout_setting, stderr=stderr_setting)
         except subprocess.CalledProcessError as e:
             print("[SpikeSimulator] Command failed with exit code", e.returncode)
             error_msg = ""
