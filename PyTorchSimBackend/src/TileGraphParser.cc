@@ -419,7 +419,8 @@ std::vector<std::shared_ptr<Tile>> TileLoopNode::get_tiles_from_iter(TileGraphPa
       tog_parser->register_memory_tag(base_addr_name, key);
 
       printIndexMap("[TOGParser] Load Node " + mem_node->get_base_addr_name() + " Numa_id: " + std::to_string(numa_id), iter);
-      spdlog::trace("[TOGParser] Load Node {} key = [{}], accum = [{}], tag = [{}], stride = [{}]", mem_node->get_base_addr_name(),
+      spdlog::trace("[TOGParser] Load Node {}({}) key = [{}], accum = [{}], tag = [{}], stride = [{}]", mem_node->get_base_addr_name(),
+             base_addr_id,
              fmt::join(key, ", "),
              fmt::join(accum_tag_list, ", "),
              fmt::join(tag_list, ", "),
@@ -726,7 +727,7 @@ TileGraphParser::TileGraphParser(std::string onnx_path, std::string attribute_pa
       spdlog::info("[TOGParser/Attribute] Address numa info key: {} numa stride : {}", it.key(), fmt::join(_arg_numa_stride[it.key()], ", "));
     }
   }
-  if (_attribute_json.contains("sram_alloc")) {
+  if (_attribute_json.contains("sram_alloc") and _attribute_json.contains("l2d_type") and _attribute_json["l2d_type"] == "datacache") {
     auto sram_alloc_list = _attribute_json["sram_alloc"];
     spdlog::info("[TOGParser/Attribute] ================= SRAM Alloc Plan ================");
     for (auto it = sram_alloc_list.begin(); it != sram_alloc_list.end(); ++it) {
