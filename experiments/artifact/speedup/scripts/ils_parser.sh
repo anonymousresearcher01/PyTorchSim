@@ -19,7 +19,7 @@ while IFS= read -r line; do
       gem5_time=$(grep "Simulation time:" "$sto_log_path" | \
                 sed -E 's/^Simulation time: ([0-9.]+) seconds$/\1/')
       echo "GEM5: $gem5_time" 
-      total_gem5=$(echo "$total_gem5 + $gem5_time" | bc)
+      total_gem5=$(awk -v a="$total_gem5" -v b="$gem5_time" 'BEGIN {printf "%.6f", a+b}')
     fi
   fi
   if [[ "$line" == *"Simulation time:"* ]]; then
