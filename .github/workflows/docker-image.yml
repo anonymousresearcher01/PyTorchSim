@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
 
     permissions:
       contents: read
@@ -18,14 +18,16 @@ jobs:
       # Step 1: Checkout the repository
       - name: Checkout Code
         uses: actions/checkout@v4
-      # Step 2: Log in to GitHub Container Registry (optional)
-      # If you need to push the built image, authenticate here.
+        with:
+          repository: PSAL-POSTECH/PyTorchSim
+          ref: ${{ env.GITHUB_SHA }}
+          submodules: recursive
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
 
       # Step 3: Pull the Cached Image
       - name: Pull Cached Image & Set environment
@@ -53,9 +55,7 @@ jobs:
 
       # Step 4: Build and Push Docker Image
       - name: Build and Push Docker Image
-        uses: docker/build-push-action@v4
-        env:
-          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
@@ -63,8 +63,9 @@ jobs:
           build-args: |
             GEM5_ASSET_ID=${{ env.GEM5_ASSET_ID }}
             LLVM_ASSET_ID=${{ env.LLVM_ASSET_ID }}
-            GIT_ACCESS_TOKEN=${{ env.GIT_ACCESS_TOKEN }}
             TORCHSIM_SHA=${{ env.GITHUB_SHA }}
+          secrets: |
+            GIT_ACCESS_TOKEN=${{ secrets.GIT_ACCESS_TOKEN }}
           tags: ghcr.io/psal-postech/${{ env.IMAGE_TAG }}
 
   test_add:
@@ -72,7 +73,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_add.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_add.py"
           docker run --rm \
@@ -80,25 +89,41 @@ jobs:
             -e TORCHSIM_DUMP_PATH=/dump \
             ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/test_add.py
 
-  test_relu:
-    name: Run test_relu.py
+  test_activation:
+    name: Run test_activation.py
     runs-on: self-hosted
     needs: build
     steps:
-      - name: Run test_relu.py
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
+      - name: Run test_activation.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
-          echo "Running test_relu.py"
+          echo "Running test_activation.py"
           docker run --rm \
             -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
             -e TORCHSIM_DUMP_PATH=/dump \
-            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/test_relu.py
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/test_activation.py
 
   test_batchnorm:
     name: Run test_batchnorm.py
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_batchnorm.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_batchnorm.py"
           docker run --rm \
@@ -111,7 +136,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_bmm.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_bmm.py"
           docker run --rm \
@@ -124,7 +157,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_cnn.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_cnn.py"
           docker run --rm \
@@ -137,7 +178,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_conv2d.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_conv2d.py"
           docker run --rm \
@@ -150,7 +199,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_matmul.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_matmul.py"
           docker run --rm \
@@ -163,7 +220,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_reduce.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_reduce.py"
           docker run --rm \
@@ -176,7 +241,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_softmax.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_softmax.py"
           docker run --rm \
@@ -189,7 +262,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_transpose2D.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_transpose2D.py"
           docker run --rm \
@@ -202,7 +283,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_view3D_2D.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_view3D_2D.py"
           docker run --rm \
@@ -215,7 +304,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_layernorm.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_layernorm.py"
           docker run --rm \
@@ -228,7 +325,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_mlp.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_mlp.py"
           docker run --rm \
@@ -241,7 +346,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_resnet.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_resnet.py"
           docker run --rm \
@@ -254,7 +367,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_transformer.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_transformer.py"
           docker run --rm \
@@ -267,7 +388,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_transpose3D.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_transpose3D.py"
           docker run --rm \
@@ -280,7 +409,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_sparsity.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_sparsity.py"
           docker run --rm \
@@ -293,7 +430,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_pool.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_pool.py"
           docker run --rm \
@@ -306,7 +451,15 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_single_perceptron.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_single_perceptron.py"
           docker run --rm \
@@ -319,21 +472,45 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_addmm_residual.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_addmm_residual.py"
           docker run --rm \
             -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
             -e TORCHSIM_DUMP_PATH=/dump \
             ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Fusion/test_addmm_residual.py
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_matmul_activation.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_matmul_activation.py"
           docker run --rm \
             -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
             -e TORCHSIM_DUMP_PATH=/dump \
             ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Fusion/test_matmul_activation.py
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_matmul_scalar.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_matmul_scalar.py"
           docker run --rm \
@@ -346,13 +523,74 @@ jobs:
     runs-on: self-hosted
     needs: build
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
       - name: Run test_moe.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
         run: |
           echo "Running test_moe.py"
           docker run --rm \
             -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
             -e TORCHSIM_DUMP_PATH=/dump \
             ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/MoE/test_moe.py
+
+  test_mistral:
+    name: Run test_mistral
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GIT_ACCESS_TOKEN }}
+      - name: Run test_mistral.py
+        env:
+          GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
+        run: |
+          echo "Running test_mistral.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/Mixtral_8x7B/test_attention.py
+
+  test_indirect:
+    name: Run test_indirect
+    runs-on: self-hosted
+    needs: build
+    env:
+      GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
+    steps:
+      - name: Run test_indirect.py
+        run: |
+          echo "Running test_indirect.py"
+          echo $GIT_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/test_indirect_access.py
+
+  test_scheduler:
+    name: Run test_scheduler
+    runs-on: self-hosted
+    needs: build
+    env:
+      GIT_ACCESS_TOKEN: ${{ secrets.GIT_ACCESS_TOKEN }}
+    steps:
+      - name: Run test_scheduler.py
+        run: |
+          echo "Running test_scheduler.py"
+          echo $GIT_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} python3 PyTorchSim/tests/test_scheduler.py
 
   test_cleanup:
     name: Clean test cases
@@ -361,8 +599,9 @@ jobs:
             test_matmul, test_reduce, test_softmax,
             test_transpose2D, test_view3D_2D, test_layernorm,
             test_mlp, test_resnet, test_transformer, test_transpose3D,
-            test_sparsity, test_relu, test_pool, test_perceptron,
-            test_fusion, test_moe]
+            test_sparsity, test_activation, test_pool, test_perceptron,
+            test_fusion, test_mistral, test_moe, test_indirect, test_scheduler]
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -370,4 +609,4 @@ jobs:
         run: |
           docker run --rm \
             -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
-            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} chown -R $(id -u):$(id -g) /dump
+            ghcr.io/psal-postech/torchsim-ci:${GITHUB_SHA} chown -R $(id -u):$(id -g) /dump

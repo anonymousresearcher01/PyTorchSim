@@ -3,12 +3,16 @@ import torch._dynamo
 import torch.utils.cpp_extension
 
 def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
-    message = f"|{name} Test Passed|"
     if torch.allclose(out.cpu(), cpu_out, rtol=rtol, atol=atol):
+        message = f"|{name} Test Passed|"
         print("-" * len(message))
         print(message)
         print("-" * len(message))
     else:
+        message = f"|{name} Test Failed|"
+        print("-" * len(message))
+        print(message)
+        print("-" * len(message))
         print("custom out: ", out.cpu())
         print("cpu out: ", cpu_out)
         exit(1)
@@ -17,7 +21,7 @@ def test_conv2d(device, batch_size=1, in_channels=8, out_channels=16, input_size
     def custom_conv2d(a, b, bias):
         i_c = a.shape[1]
         o_c = b.shape[0]
-        conv2d = torch.nn.Conv2d(i_c, o_c, b.shape[-1], stride=stride, padding=padding, dilation=1)
+        conv2d = torch.nn.Conv2d(i_c, o_c, b.shape[-1], stride=stride, padding=padding, dilation=1, bias=False)
         conv2d.weight = torch.nn.Parameter(b)
         conv2d.bias = torch.nn.Parameter(bias)
         return conv2d(a)
@@ -39,4 +43,15 @@ if __name__ == "__main__":
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()
     device = module.custom_device()
-    test_conv2d(device, batch_size=1, in_channels=128, out_channels=128, input_size=28, kernel_size=3, stride=1, padding=1)
+    torch._dynamo.config.cache_size_limit = 64
+    test_conv2d(device, batch_size=8, in_channels=3, out_channels=32, input_size=32, kernel_size=1, stride=1, padding=0)
+    test_conv2d(device, batch_size=1, in_channels=3, out_channels=64, input_size=64//2, kernel_size=7, stride=2, padding=3)
+    test_conv2d(device, batch_size=2, in_channels=3, out_channels=64, input_size=32//2, kernel_size=7, stride=1, padding=3)
+    test_conv2d(device, batch_size=4, in_channels=3, out_channels=64, input_size=64//2, kernel_size=7, stride=1, padding=3)
+    test_conv2d(device, batch_size=4, in_channels=3, out_channels=64, input_size=64//2, kernel_size=7, stride=1, padding=3)
+    test_conv2d(device, batch_size=2, in_channels=128, out_channels=256, input_size=13, kernel_size=5, stride=1, padding=2)
+    test_conv2d(device, batch_size=2, in_channels=128, out_channels=512, input_size=14, kernel_size=7, stride=1, padding=3)
+    test_conv2d(device, batch_size=1, in_channels=128, out_channels=256, input_size=14, kernel_size=3, stride=2, padding=1)
+    test_conv2d(device, batch_size=1, in_channels=128, out_channels=256, input_size=7, kernel_size=3, stride=2, padding=1)
+    test_conv2d(device, batch_size=1, in_channels=128, out_channels=256, input_size=2, kernel_size=1, stride=1, padding=0)
+    test_conv2d(device, batch_size=1, in_channels=128, out_channels=256, input_size=14, kernel_size=1, stride=2, padding=0)

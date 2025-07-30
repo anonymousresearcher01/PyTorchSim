@@ -1,5 +1,6 @@
 import os
 import shlex
+import ctypes
 import subprocess
 import re
 import sys
@@ -35,8 +36,6 @@ class FunctionalSimulator():
         # path = os.path.join(dump_path, arg_name, f'{n_call}.raw')
         with open(path, 'rb') as f:
             np_array = np.fromfile(f, dtype=TORCH_TO_NUMPY[arg.dtype])
-            if (arg.dtype == torch.bool):
-                np_array = np.unpackbits(np_array)
             src_tensor = torch.as_strided(torch.from_numpy(np_array), arg.size(), arg.stride())
             arg.copy_(src_tensor.to(dtype=arg.dtype))
 
@@ -50,10 +49,10 @@ class FunctionalSimulator():
 
         if (isinstance(arg, torch.Tensor)):
             data_path = os.path.join(dump_path, f'{index}.raw')
-            tensor = arg.cpu()
-            t_arr = tensor.numpy().flatten()
-            if (tensor.dtype == torch.bool):
-                t_arr = np.packbits(t_arr)
+            tensor = arg.cpu().detach()
+            buffer_size = tensor.untyped_storage().size()
+            buffer = (ctypes.c_char * buffer_size).from_address(tensor.data_ptr())
+            t_arr = np.frombuffer(buffer, dtype=tensor.numpy().dtype, count=buffer_size // tensor.element_size())
             t_arr.tofile(data_path)
         else:
             assert(0)
@@ -75,49 +74,50 @@ class FunctionalSimulator():
 
         return array_size, file_path
 
-    def run_spike(self, args, arg_attributes, path, binary, intermediate_op=None, vectorlane_size=4, spad_info=None, cleanup=False):
-        load_path = self.path
-        dump_path = self.path
+    def run_spike(self, args, arg_attributes, runtime_path, binary, vectorlane_size=4, spad_info=None, cleanup=False, silent_mode=False):
+        load_path = runtime_path
+        dump_path = runtime_path
 
-        target_binary = os.path.join(path, binary)
-        objdump = f"riscv64-unknown-elf-objdump -d {target_binary} > {os.path.join(path, 'binary.dump')}"
+        target_binary = os.path.join(self.path, binary)
+        objdump = f"riscv64-unknown-elf-objdump -d {target_binary} > {os.path.join(self.path, 'binary.dump')}"
         kernel_start = f"nm {target_binary} | grep 'kernel' | awk 'NR==1 {{print $1}}'"
-        kernel_end = f"nm {target_binary} | grep 'kernel' | awk 'NR==1 {{print $1}}' | xargs -I {{}} awk '/{{}}/,0' {os.path.join(path, 'binary.dump')} | grep ret | awk 'NR==1 {{print $1}}' | awk '{{gsub(/:$/, \"\"); print}}'"
+        kernel_end = f"nm {target_binary} | grep 'kernel' | awk 'NR==1 {{print $1}}' | xargs -I {{}} awk '/{{}}/,0' {os.path.join(self.path, 'binary.dump')} | grep ret | awk 'NR==1 {{print $1}}' | awk '{{gsub(/:$/, \"\"); print}}'"
 
         subprocess.run(objdump, shell=True)
         kernel_start_addr = subprocess.run(kernel_start, shell=True, stdout=subprocess.PIPE).stdout.strip().decode('utf-8')
         kernel_end_addr = subprocess.run(kernel_end, shell=True, stdout=subprocess.PIPE).stdout.strip().decode('utf-8')
 
-        if intermediate_op is not None:
-            os.makedirs(os.path.join(self.path, "intermediate"), exist_ok=True)
-            if intermediate_op & 0b10: # input comes from intermediate
-                load_path = os.path.join(self.path, "intermediate")
-            if intermediate_op & 0b01: # output dumps to intermediate
-                dump_path = os.path.join(self.path, "intermediate")
-                for name, attr in arg_attributes:
-                    if attr[0] == 2:
-                        os.makedirs(os.path.join(dump_path, name), exist_ok=True)
-
         _, file_path = self.dump_args(args, arg_attributes, load_path, dump_path)
         file_path_str = ' '.join(file_path)
 
         # Set hardware information
-        spad_option = f"--scratchpad-base-paddr={spad_info['spad_paddr']} " + \
+        spad_option = f"-m0x{0x80000000:x}:0x{100<<30:x},0x{spad_info['spad_paddr']:x}:0x{spad_info['spad_size']*vectorlane_size:x} " + \
+            f"--scratchpad-base-paddr={spad_info['spad_paddr']} " + \
             f"--scratchpad-base-vaddr={spad_info['spad_vaddr']} " + \
-            f"--scratchpad-size={spad_info['spad_size']}"
+            f"--scratchpad-size={spad_info['spad_size']} "
         vectorlane_option = f"--vectorlane-size={vectorlane_size}"
         kernel_address = f"--kernel-addr={kernel_start_addr}:{kernel_end_addr}"
-        base_addr = f"--base-path={path}"
-        run = f'spike --isa rv64gcv --varch=vlen:256,elen:64 {vectorlane_option} {spad_option} {kernel_address} {base_addr} /workspace/riscv-pk/build/pk {target_binary} {file_path_str}'
-
-        print("[SpikeSimulator] cmd> ", run)
+        base_path= f"--base-path={runtime_path}"
+        os.makedirs(os.path.join(runtime_path, "indirect_access"), exist_ok=True)
+        os.makedirs(os.path.join(runtime_path, "dma_access"), exist_ok=True)
+        run = f'spike --isa rv64gcv --varch=vlen:256,elen:64 {vectorlane_option} {spad_option} {kernel_address} {base_path} /workspace/riscv-pk/build/pk {target_binary} {file_path_str}'
+        if not silent_mode:
+            print("[SpikeSimulator] cmd> ", run)
         run_cmd = shlex.split(run)
         try:
-            subprocess.check_call(run_cmd)
+            stdout_setting = subprocess.DEVNULL if silent_mode else None
+            stderr_setting = subprocess.DEVNULL if silent_mode else None
+            subprocess.check_call(run_cmd, stdout=stdout_setting, stderr=stderr_setting)
         except subprocess.CalledProcessError as e:
             print("[SpikeSimulator] Command failed with exit code", e.returncode)
-            print("[SpikeSimulator] Error output:", e.output)
-            assert(0)
+            error_msg = ""
+            if e.returncode == 200:
+                error_msg = "INVALID_SPAD_ACCESS"
+            elif e.returncode == 201:
+                error_msg = "STACK_OVERFLOW"
+            else:
+                error_msg = "UNKNOWN_ERROR"
+            raise RuntimeError(f"{error_msg}")
 
         for (arg_name, arg_attribute), arg, path in zip(arg_attributes, args, file_path):
             if LLVMKernelArgs.is_llvm_arg_out(arg_attribute[0]):
@@ -128,11 +128,27 @@ class FunctionalSimulator():
                 if os.path.exists(path):
                     os.remove(path)
 
+    @staticmethod
+    def get_runtime_dump_path(base_path, prefix="runtime", zfill=4):
+        indices = [
+            int(match.group(1))
+            for d in os.listdir(base_path)
+            if (match := re.fullmatch(rf"{prefix}_(\d{{{zfill}}})", d))
+        ]
+
+        max_index = max(indices, default=-1)
+        next_index = max_index + 1
+        folder_name = f"{prefix}_{str(next_index).zfill(zfill)}"
+        full_path = os.path.join(base_path, folder_name)
+
+        os.makedirs(full_path)
+        return full_path
+
 class CycleSimulator():
     def __init__(self) -> None:
         pass
 
-    def compile_and_simulate(self, target_binary, array_size, vectorlane_size):
+    def compile_and_simulate(self, target_binary, array_size, vectorlane_size, silent_mode=False):
         def show_progress():
             i = 0
             while not finished:
@@ -143,10 +159,11 @@ class CycleSimulator():
             print("")
 
         dir_path = os.path.join(os.path.dirname(target_binary), "m5out")
-        gem5_cmd = [extension_config.CONFIG_GEM5_PATH, "-d", dir_path, extension_config.CONFIG_GEM5_SCRIPT_PATH, "-c", target_binary, "--vlane", str(vectorlane_size)]
+        gem5_cmd = [extension_config.CONFIG_GEM5_PATH, "-r", "--stdout-file=sto.log", "-d", dir_path, extension_config.CONFIG_GEM5_SCRIPT_PATH, "-c", target_binary, "--vlane", str(vectorlane_size)]
         try:
             # Create progress thread
-            if not extension_config.CONFIG_BACKENDSIM_DRYRUN:
+            is_dryrun = int(os.environ.get('BACKENDSIM_DRYRUN', default=False)) or silent_mode
+            if not is_dryrun:
                 print("[Gem5Simulator] cmd> ", " ".join(gem5_cmd))
                 finished = False
                 progress_thread = threading.Thread(target=show_progress)
@@ -173,6 +190,7 @@ class CycleSimulator():
 class BackendSimulator():
     BACKEND_RESULT_PATH_KEY = "BACKEND_RESULT_PATH"
     FINISH_STR = "Simulation Finished"
+    ALLOC_POOL = dict() # For eagermode buffer plan
     def __init__(self, backend_path, config_path, vectorlane_size=-1) -> None:
         self.base_dir = backend_path
         self.config_path = config_path
@@ -186,7 +204,7 @@ class BackendSimulator():
         cmd = f"{bin} --config {config}"
         return cmd
 
-    def simulation(self, model_path, attribute_path=""):
+    def simulation(self, model_path, attribute_path="", silent_mode=False):
         def show_progress():
             i = 0
             while not finished:
@@ -200,21 +218,25 @@ class BackendSimulator():
             cmd += f" --log_level {extension_config.CONFIG_BACKENDSIM_DEBUG_LEVEL}"
         if attribute_path:
             cmd = f"{cmd} --attributes_list {attribute_path}"
-        print("[BackendSimulator] cmd> ", cmd)
+        if not silent_mode:
+            print("[BackendSimulator] cmd> ", cmd)
 
         # Create progress thread
-        finished = False
-        progress_thread = threading.Thread(target=show_progress)
-        progress_thread.start()
+        if not silent_mode:
+            finished = False
+            progress_thread = threading.Thread(target=show_progress)
+            progress_thread.start()
         try:
             result = subprocess.check_output(shlex.split(cmd))
-            finished = True
-            progress_thread.join()
+            if not silent_mode:
+                finished = True
+                progress_thread.join()
         except subprocess.CalledProcessError as e:
-            finished = True
-            progress_thread.join()
-            print("[BackendSimulator] Command failed with exit code", e.returncode)
-            print("[BackendSimulator] Error output:", e.output)
+            if not silent_mode:
+                finished = True
+                progress_thread.join()
+                print("[BackendSimulator] Command failed with exit code", e.returncode)
+                print("[BackendSimulator] Error output:", e.output)
             assert 0
         result_path = extension_config.CONFIG_BACKEND_RESULT_PATH_KEY
         if result_path is None:
@@ -226,7 +248,7 @@ class BackendSimulator():
         result_path = os.path.join(result_path, file_name)
         with open(result_path, "w") as f:
             f.write(result.decode())
-            print(f'[BackendSimulator] Simulation of "{model_path}" is stored to "{result_path}"')
+        print(f'[BackendSimulator] Simulation of "{model_path}" is stored to "{result_path}"')
         return result_path
 
     def interactive_simulation(self):
@@ -248,13 +270,23 @@ class BackendSimulator():
     def stop(self):
         if self.process:
             self.process.terminate()
+            self.process.wait()
             self.process = None
+            print("[BackendSimulator] Simulator stopped.")
+
+    def wait(self):
+        if self.process:
+            print("[BackendSimulator] Waiting for simulation to complete...")
+            self.quit()
+            self.process.wait()
+            self.process = None
+            print("[BackendSimulator] Simulation completed.")
 
     def send_command(self, command):
         if self.process:
             try:
                 if not extension_config.CONFIG_BACKENDSIM_DRYRUN:
-                    print(command)
+                    print(command, flush=True)
                 self.process.stdin.write(command + '\n')
                 self.process.stdin.flush()
                 ret = self.process.stderr.readline().strip()
@@ -281,10 +313,30 @@ class BackendSimulator():
     def until(self, until_cycle):
         command = f"until {until_cycle}"
         ret = self.send_command(command)
-        return int(ret.split(" ")[-1])
+        bitmap = int(ret.split(" ")[-1])
+        indices = []
+        for i in range(64):
+            if (bitmap >> i) & 1:
+                indices.append(i)
+        return indices
+
+    def quit(self):
+        command = "quit"
+        ret = self.send_command(command)
+        return
+
+    @classmethod
+    def sram_alloc(cls, buf_name, addr_range):
+        cls.ALLOC_POOL[buf_name] = addr_range
+
+    @classmethod
+    def sram_dealloc(cls, buf_name, addr_range):
+        if buf_name in cls.ALLOC_POOL:
+            del cls.ALLOC_POOL[buf_name]
 
     def create_attribute_file(self, attribute_path, inputs, **kwargs):
         address_info = {}
+        sram_buffer = {}
         json_content = {}
         os.makedirs(attribute_path, exist_ok=True)
         index = str(len(os.listdir(attribute_path)))
@@ -294,61 +346,9 @@ class BackendSimulator():
             address_info[f"arg{idx}"] = tensor.data_ptr()
         json_content["address_info"] = address_info
 
-        if "tile_size" in kwargs and len(kwargs['tile_size'])==3 and kwargs['tile_size'][0] != 1:
-            # GEMM
-            import copy
-            zero_skip = {}
-            input, weight = inputs[:2]
-            M, N, K = kwargs['tile_size']
-
-            padded_input = copy.deepcopy(input.cpu())
-            padded_weight = copy.deepcopy(weight.cpu())
-
-            original_input_shape = input.shape
-            original_weight_shape = weight.shape
-
-            # Initialize padding for all dimensions
-            pad_input = [(0, 0)] * input.ndim
-            pad_weight = [(0, 0)] * weight.ndim
-
-            if input.ndim == 2:
-                # 2D tensor: (Height, Width)
-                pad_input[0] = (0, M - original_input_shape[0] if original_input_shape[0] < M else 0)
-                pad_input[1] = (0, K - original_input_shape[1] if original_input_shape[1] < K else 0)
-            elif input.ndim == 3:
-                # 3D tensor: (Depth, Height, Width)
-                pad_input[1] = (0, M - original_input_shape[1] if original_input_shape[1] < M else 0)
-                pad_input[2] = (0, K - original_input_shape[2] if original_input_shape[2] < K else 0)
-
-            if weight.ndim == 2:
-                # 2D tensor: (Height, Width)
-                pad_weight[0] = (0, K - original_weight_shape[0] if original_weight_shape[0] < K else 0)
-                pad_weight[1] = (0, N - original_weight_shape[1] if original_weight_shape[1] < N else 0)
-            elif weight.ndim == 3:
-                # 3D tensor: (Depth, Height, Width)
-                pad_weight[1] = (0, K - original_weight_shape[1] if original_weight_shape[1] < K else 0)
-                pad_weight[2] = (0, N - original_weight_shape[2] if original_weight_shape[2] < N else 0)
-
-            # Apply padding
-            padded_input = np.pad(
-                padded_input,
-                pad_width=pad_input,
-                mode='constant',
-                constant_values=0
-            )
-
-            padded_weight = np.pad(
-                padded_weight,
-                pad_width=pad_weight,
-                mode='constant',
-                constant_values=0
-            )
-
-            #input_zero_pos = self.find_zero_sub_tensors(padded_input)
-            weight_zero_pos = self.find_zero_sub_tensors(padded_weight)
-            #zero_skip["arg0"] = input_zero_pos
-            zero_skip["arg1"] = weight_zero_pos
-            json_content["zero_skip"] = zero_skip
+        for buf_name, range in self.ALLOC_POOL.items():
+            sram_buffer[buf_name] = range
+        json_content["sram_alloc"] = sram_buffer
 
         with open(attribute_path, "w") as f:
             json.dump(json_content, f, indent=4)
@@ -440,10 +440,13 @@ class BackendSimulator():
             if 'DRAM: AVG BW Util' in line:
                 avg_dram_bw = float(re.search(r'AVG BW Util (\d+\.?\d*)%', line).group(1))
 
+            if 'Total execution cycle' in line:
+                total_cycle = int(re.search(r'Total execution cycle: (\d+)', line).group(1))
+
             # Parse total simulation time
             if 'Simulation time' in line:
                 simulation_time = float(re.search(r'Simulation time: (\d+\.?\d*) seconds', line).group(1))
-        return core_metrics, dram_channel_bw, avg_dram_bw, simulation_time
+        return core_metrics, dram_channel_bw, avg_dram_bw, simulation_time, total_cycle
 
 if __name__ == "__main__":
     sim = BackendSimulator("/workspace/PyTorchSim/PyTorchSimBackend", "/workspace/PyTorchSim/PyTorchSimBackend/configs/systolic_ws_128x128_c4_simple_noc_tpuv4.json")

@@ -27,12 +27,10 @@ message("BINARY DIR ${CMAKE_BINARY_DIR}")
 add_subdirectory("${PROJECT_SOURCE_DIR}/src")
 
 # Add libaray ramulator
-add_subdirectory("${PROJECT_SOURCE_DIR}/extern/ramulator_custom")
-
-# Add libaray ramulator
+include_directories("${PROJECT_SOURCE_DIR}/include")
 add_subdirectory("${PROJECT_SOURCE_DIR}/extern/ramulator2")
 include_directories("${PROJECT_SOURCE_DIR}/extern/ramulator2/src")
-include_directories("${PROJECT_SOURCE_DIR}/extern/ramulator2/resources/ndp_wrappers")
+include_directories("${PROJECT_SOURCE_DIR}/extern/ramulator2/resources/wrappers")
 
 # Add libaray booksim
 add_subdirectory("${PROJECT_SOURCE_DIR}/extern/booksim")
@@ -42,16 +40,19 @@ add_subdirectory("${PROJECT_SOURCE_DIR}/extern/protobuf/cmake" EXCLUDE_FROM_ALL)
 set_target_properties(libprotoc PROPERTIES FOLDER "external/protobuf")
 set_target_properties(protoc PROPERTIES FOLDER "external/protobuf")
 
+# Add libaray stonne core
+add_subdirectory("${PROJECT_SOURCE_DIR}/extern/stonneCore")
+
 # Add libaray onnx
 add_definitions("-DONNX_NAMESPACE=onnx")
 add_subdirectory("${PROJECT_SOURCE_DIR}/extern/onnx" EXCLUDE_FROM_ALL)
 set_target_properties(onnx PROPERTIES FOLDER "extern/onnx")
 set_target_properties(onnx_proto PROPERTIES FOLDER "extern/onnx")
 
+target_include_directories(Simulator PUBLIC ${PROJECT_SOURCE_DIR}/extern/stonneCore/include)
+target_include_directories(Simulator PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(Simulator PUBLIC ${PROJECT_SOURCE_DIR}/include/scheduler)
+target_include_directories(Simulator PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_include_directories(Simulator PUBLIC ${ONNX_INCLUDE_DIRS})
-target_link_libraries(Simulator ramulator1 booksim2 ramulator)
-target_link_libraries(Simulator ${PROTOBUF_LIB} onnx_proto ${CONAN_LIBS} stdc++fs)
-
-target_include_directories(Simulator_lib PUBLIC ${ONNX_INCLUDE_DIRS})
-target_link_libraries(Simulator_lib ramulator1 booksim2 ramulator)
-target_link_libraries(Simulator_lib ${PROTOBUF_LIB} onnx_proto ${CONAN_LIBS} stdc++fs)
+target_link_libraries(Simulator booksim2 ramulator sstStonne)
+target_link_libraries(Simulator ${PROTOBUF_LIB} onnx_proto sstStonne ${CONAN_LIBS} stdc++fs)

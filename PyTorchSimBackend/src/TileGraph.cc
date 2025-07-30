@@ -5,7 +5,6 @@ TileSubGraph::TileSubGraph() : _ready_tile_queue(), _tile_set(), _id(_next_id++)
 }
 
 void TileSubGraph::add_tile(std::shared_ptr<Tile> tile) {
-  tile->set_ownwer(this);
   for (auto& inst : tile->get_instructions())
     inst->subgraph_id = _id;
   if (tile->get_ready_counter() == 0) {
@@ -48,6 +47,7 @@ std::shared_ptr<Tile> TileSubGraph::get_tile() {
 
 
 void TileGraph::append_subgraph(std::shared_ptr<TileSubGraph> subgraph) {
+  subgraph->init_cache_plan(_cache_plan);
   _subgraph_vec.push_back(std::move(subgraph));
 }
 
@@ -63,7 +63,6 @@ bool TileGraph::is_finished() {
       if (tile_pair.second != nullptr)
         finished &= tile_pair.second->is_finished();
   }
-
   return finished;
 }
 

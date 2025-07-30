@@ -3,11 +3,6 @@
 Simulator::Simulator(SimulationConfig config)
     : _config(config), _core_cycles(0) {
   // Create dram object
-  spdlog::info("Simulator Configuration:");
-  for (int i=0; i<config.num_cores;i++)
-    spdlog::info("[Config] Core {}: {} MHz, Spad size: {} KB",
-      i, config.core_freq , config.sram_size);
-  spdlog::info("[Config] DRAM Bandwidth {} GB/s", config.max_dram_bandwidth());
   _core_period = 1000000 / (config.core_freq);
   _icnt_period = 1000000 / (config.icnt_freq);
   _dram_period = 1000000 / (config.dram_freq);
@@ -23,43 +18,51 @@ Simulator::Simulator(SimulationConfig config)
   char* onnxim_path_env = std::getenv("TORCHSIM_DIR");
   std::string onnxim_path = onnxim_path_env != NULL?
     std::string(onnxim_path_env) + "/PyTorchSimBackend" : std::string("./");
+
+  // Create core objects
+  _cores.resize(_n_cores);
+  for (int core_index = 0; core_index < _n_cores; core_index++) {
+    if (config.core_type[core_index] == CoreType::WS_MESH) {
+      spdlog::info("[Config/Core] Core {}: {} MHz, Spad size: {} KB, Systolic array per core: {}",
+        core_index, config.core_freq , config.sram_size, config.num_systolic_array_per_core);
+      _cores.at(core_index) = std::make_unique<Core>(core_index, _config);
+    } else if(config.core_type[core_index] == CoreType::STONNE) {
+      spdlog::info("[Config/Core] Core {}: {} MHz, Stonne Core selected", core_index, config.core_freq);
+      _cores.at(core_index) = std::make_unique<SparseCore>(core_index, _config);
+    } else {
+      throw std::runtime_error(fmt::format("Not implemented Core type {} ",
+                                          (int)config.core_type[core_index]));
+    }
+  }
+
   if (config.dram_type == DramType::SIMPLE) {
-    _dram = std::make_unique<SimpleDram>(config);
-  } else if (config.dram_type == DramType::RAMULATOR1) {
-    std::string ramulator_config = fs::path(onnxim_path)
-                                       .append("configs")
-                                       .append(config.dram_config_path)
-                                       .string();
-    config.dram_config_path = ramulator_config;
-    _dram = std::make_unique<DramRamulator>(config);
+    _dram = std::make_unique<SimpleDRAM>(config, &_core_cycles);
   } else if (config.dram_type == DramType::RAMULATOR2) {
     std::string ramulator_config = fs::path(onnxim_path)
                                        .append("configs")
                                        .append(config.dram_config_path)
                                        .string();
-    spdlog::info("Ramulator2 config: {}", ramulator_config);
+    spdlog::info("[Config/DRAM] Ramulator2 config: {}", ramulator_config);
     config.dram_config_path = ramulator_config;
-    _dram = std::make_unique<DramRamulator2>(config);
+    _dram = std::make_unique<DramRamulator2>(config, &_core_cycles);
   } else {
     spdlog::error("[Configuration] Invalid DRAM type...!");
     exit(EXIT_FAILURE);
   }
 
   // Create interconnect object
+  spdlog::info("[Config/Interconnect] Inerconnect freq: {} MHz", config.icnt_freq);
   if (config.icnt_type == IcntType::SIMPLE) {
+    spdlog::info("[Config/Interconnect] SimpleInerconnect selected");
     _icnt = std::make_unique<SimpleInterconnect>(config);
   } else if (config.icnt_type == IcntType::BOOKSIM2) {
+    spdlog::info("[Config/Interconnect] BookSim2 selected");
     _icnt = std::make_unique<Booksim2Interconnect>(config);
   } else {
-    spdlog::error("[Configuration] {} Invalid interconnect type...!");
+    spdlog::error("[Configuration] Invalid interconnect type...!");
     exit(EXIT_FAILURE);
   }
   _icnt_interval = config.icnt_print_interval;
-
-  // Create core objects
-  _cores.resize(config.num_cores);
-  for (int core_index = 0; core_index < _n_cores; core_index++)
-    _cores[core_index] = std::make_unique<Core>(core_index, _config);
 
   // Initialize Scheduler
   for (int i=0; i<config.num_patition;i++)
@@ -72,15 +75,10 @@ void Simulator::run_simulator() {
 }
 
 void Simulator::core_cycle() {
-  for (int core_id = 0; core_id < _n_cores; core_id++) {
-    std::shared_ptr<Tile> finished_tile = _cores[core_id]->pop_finished_tile();
-    if (finished_tile->get_status() == Tile::Status::FINISH) {
-      get_partition_scheduler(core_id)->finish_tile(std::move(finished_tile));
-    }
-
+  for (int i=0; i<_max_slot; i++, _slot_id=(_slot_id + 1) % _max_slot) {
     // Issue new tile to core
-    for (int i=0; i<_max_slot; i++, _slot_id=(_slot_id + 1) % _max_slot) {
-      const std::shared_ptr<Tile> tile = get_partition_scheduler(core_id)->peek_tile(core_id, _slot_id);
+    for (int core_id = 0; core_id < _n_cores; core_id++) {
+      const std::shared_ptr<Tile> tile = get_partition_scheduler(core_id)->peek_tile(core_id, _slot_id, _config.core_type[core_id]);
       if (tile->get_status() != Tile::Status::EMPTY && _cores[core_id]->can_issue(tile))  {
         if (tile->get_status() == Tile::Status::INITIALIZED) {
           _cores[core_id]->issue(std::move(get_partition_scheduler(core_id)->get_tile(core_id, _slot_id)));
@@ -91,8 +89,16 @@ void Simulator::core_cycle() {
         }
       }
     }
+  }
+  for (int core_id = 0; core_id < _n_cores; core_id++) {
+      std::shared_ptr<Tile> finished_tile = _cores[core_id]->pop_finished_tile();
+      if (finished_tile->get_status() == Tile::Status::FINISH) {
+        get_partition_scheduler(core_id)->finish_tile(std::move(finished_tile));
+      }
     _cores[core_id]->cycle();
   }
+  /* L2 cache */
+  _dram->cache_cycle();
   _core_cycles++;
 }
 
@@ -108,9 +114,14 @@ void Simulator::icnt_cycle() {
     // PUHS core to ICNT. memory request
       int port_id = core_id * _noc_node_per_core + noc_id;
       if (_cores[core_id]->has_memory_request()) {
-        MemoryAccess *front = _cores[core_id]->top_memory_request();
-        front->core_id = core_id;
+        mem_fetch *front = _cores[core_id]->top_memory_request();
+        front->set_core_id(core_id);
         if (!_icnt->is_full(port_id, front)) {
+          //int node_id = _dram->get_channel_id(front) / 16;
+          //if (core_id == node_id)
+          //  _cores[core_id]->inc_numa_hit();
+          //else
+          //  _cores[core_id]->inc_numa_miss();
           _icnt->push(port_id , get_dest_node(front), front);
           _cores[core_id]->pop_memory_request();
           _nr_from_core++;
@@ -177,17 +188,30 @@ int Simulator::until(cycle_type until_cycle) {
 
     // Check if core status has changed
     if (_core_cycles % 10 == 0) {
+      int bitmap = 0;
       for (int i=0; i<_partition_scheduler.size(); i++) {
         /* Skip this */
         if (partition_scheudler_status.at(i))
           continue;
 
-        if (_partition_scheduler.at(i)->empty())
-          return i;
+        if (_partition_scheduler.at(i)->empty()) {
+          bitmap |= (1 << i);
+        }
       }
+      if (bitmap)
+        return bitmap;
     }
   }
-  return -1;
+  int bitmap = 0;
+  for (int i=0; i<_partition_scheduler.size(); i++) {
+    /* Skip this */
+    if (partition_scheudler_status.at(i))
+      continue;
+
+    if (_partition_scheduler.at(i)->empty())
+      bitmap |= (1ULL << i);
+  }
+  return bitmap;
 }
 
 void Simulator::cycle() {
@@ -206,6 +230,9 @@ void Simulator::cycle() {
       icnt_cycle();
   }
   spdlog::info("Simulation Finished");
+  for (auto &core: _cores) {
+    core->check_tag();
+  }
 }
 
 bool Simulator::running() {
@@ -238,19 +265,31 @@ void Simulator::set_cycle_mask() {
   }
 }
 
-uint32_t Simulator::get_dest_node(MemoryAccess *access) {
-  if (access->request) {
+uint32_t Simulator::get_dest_node(mem_fetch *access) {
+  switch (access->get_type())
+  {
+  case mf_type::READ_REQUEST:
+  case mf_type::WRITE_REQUEST:
     return _config.num_cores * _noc_node_per_core + _dram->get_channel_id(access);
-  } else {
-    return access->core_id * _noc_node_per_core + (_dram->get_channel_id(access) % _noc_node_per_core);
+    break;
+  case mf_type::READ_REPLY:
+  case mf_type::WRITE_ACK:
+    return access->get_core_id() * _noc_node_per_core + (_dram->get_channel_id(access) % _noc_node_per_core);
+    break;
+  default:
+    spdlog::error("Unexpected memfetc type...");
+    return -1;
+    break;
   }
 }
 
 void Simulator::print_core_stat()
 {
+  _icnt->print_stats();
+  _dram->print_stat();
+  _dram->print_cache_stats();
   for (int core_id = 0; core_id < _n_cores; core_id++) {
     _cores[core_id]->print_stats();
   }
-  _icnt->print_stats();
-  _dram->print_stat();
+  spdlog::info("Total execution cycle: {}", _core_cycles);
 }

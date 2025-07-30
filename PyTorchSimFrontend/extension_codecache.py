@@ -1,5 +1,3 @@
-import getpass
-import tempfile
 import os
 import re
 import shlex
@@ -16,7 +14,7 @@ from Simulator.simulator import FunctionalSimulator, CycleSimulator, BackendSimu
 LOCK_TIMEOUT = 600
 
 def hash_prefix(hash_value):
-    return hash_value[1:5]
+    return hash_value[1:12]
 
 def get_write_path(src_code):
     return os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(src_code.strip())))
@@ -31,6 +29,21 @@ def dump_metadata(args, arg_attributes, path):
             file.write(f'{arg_name}=({arg_attribute[0]}, {arg.dtype}, {arg.shape})\n')
     return
 
+def parse_stack_sizes(file_path):
+    meta_path = file_path.split(".")[0]+".meta"
+    cmd = ["riscv64-unknown-elf-objcopy", "--dump-section", f".stack_sizes={meta_path}", file_path, "/dev/null"]
+    subprocess.run(cmd, check=True)
+
+    with open(meta_path, 'rb') as f:
+        stack_sizes_data = list(f.read())
+    if len(stack_sizes_data) <= 17:
+        raise ValueError("Invalid .stack_sizes section size")
+
+    stack_size_bytes = stack_sizes_data[8:-9]
+    stack_size = int.from_bytes(stack_size_bytes, byteorder='little')
+    return stack_size
+
+
 def llvm_compile_command(input, output):
     opt_output = f"{input[:-3]}_opt.ll"
     return [re.sub(r"[ \n]+", " ",
@@ -44,18 +57,21 @@ def llvm_compile_command(input, output):
         """,
     ).strip()]
 
-def mlir_compile_command(filename, vectorlane_size, tile_size, vlen=256):
+def mlir_compile_command(filename, vectorlane_size, vlen=256):
     return [re.sub(r"[ \n]+", " ",
         f"""
             {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-opt \
             -test-loop-padding \
-            -dma-fine-grained='systolic-array-size={vectorlane_size} tile-size={tile_size[0]},{tile_size[1]},{tile_size[2]}' \
+            -dma-fine-grained='systolic-array-size={vectorlane_size}' \
+            -global-idx='vlen={vlen}' \
             -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen={vlen}' \
+            -test-memref-to-gemmini="vectorlane={vectorlane_size}" \
+            -convert-linalg-to-loops \
+            -convert-vector-to-scf='full-unroll' \
             -lower-affine \
+            -finalize-memref-to-llvm \
             -lower-vector-multi-reduction \
             -convert-vector-to-llvm \
-            -test-memref-to-gemmini="vectorlane={vectorlane_size}" \
-            -finalize-memref-to-llvm \
             -convert-arith-to-llvm \
             -convert-math-to-llvm \
             -convert-scf-to-cf \
@@ -63,6 +79,7 @@ def mlir_compile_command(filename, vectorlane_size, tile_size, vlen=256):
             -convert-func-to-llvm \
             -convert-index-to-llvm \
             -reconcile-unrealized-casts \
+            {'--mlir-print-ir-after-all' if extension_config.CONFIG_TORCHSIM_DUMP_MLIR_IR else ''} \
             {filename}.mlir -o {filename}_llvm.mlir
         """,
     ).strip(),
@@ -73,23 +90,30 @@ def mlir_compile_command(filename, vectorlane_size, tile_size, vlen=256):
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/llc -relocation-model=pic -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl{vlen}b -O2 {filename}.ll -o {filename}.s
+            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/llc \
+                -relocation-model=pic -march=riscv64 -O3 --stack-size-section \
+                -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl{vlen}b \
+                {'--print-after-all' if extension_config.CONFIG_TORCHSIM_DUMP_LLVM_IR else ''} \
+                -O2 {filename}.ll -o {filename}.s
         """,
     ).strip()]
 
-def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_size, tile_size, vlen=256):
+def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_size, vlen=256):
     return [re.sub(r"[ \n]+", " ",
         f"""
             {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/mlir-opt \
             -test-loop-padding='timing_mode=1' \
-            -dma-fine-grained='systolic-array-size={vectorlane_size} tile-size={tile_size[0]},{tile_size[1]},{tile_size[2]}' \
-            -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen=256' \
-            -test-tile-operation-graph='vectorlane={vectorlane_size}' \
+            -dma-fine-grained='systolic-array-size={vectorlane_size}' \
+            -global-idx='vlen={vlen}' \
+            -test-pytorchsim-to-vcix='systolic-array-size={vectorlane_size} vlen={vlen}' \
+            -test-tile-operation-graph='vectorlane={vectorlane_size} tls_mode={extension_config.CONFIG_TLS_MODE}' \
+            -test-memref-to-gemmini="vectorlane={vectorlane_size} timing=1" \
+            -convert-linalg-to-loops \
+            -convert-vector-to-scf='full-unroll' \
             -lower-affine \
+            -finalize-memref-to-llvm \
             -lower-vector-multi-reduction \
             -convert-vector-to-llvm \
-            -test-memref-to-gemmini="vectorlane={vectorlane_size} timing=1" \
-            -finalize-memref-to-llvm \
             -convert-arith-to-llvm \
             -convert-math-to-llvm \
             -convert-scf-to-cf \
@@ -97,6 +121,7 @@ def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_si
             -convert-func-to-llvm \
             -convert-index-to-llvm \
             -reconcile-unrealized-casts \
+            {'--mlir-print-ir-after-all' if extension_config.CONFIG_TORCHSIM_DUMP_MLIR_IR else ''} \
             {filename}.mlir -o {sample_filename}_llvm.mlir
         """,
     ).strip(),
@@ -107,9 +132,17 @@ def mlir_gem5_compile_command(filename, sample_filename, tog_file, vectorlane_si
     ).strip(),
             re.sub(r"[ \n]+", " ",
         f"""
-            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/llc -relocation-model=pic -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl{vlen}b -O2 {sample_filename}.ll -o {sample_filename}.s
+            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/llc \
+                -relocation-model=pic -march=riscv64 -O3 --stack-size-section \
+                -mattr=+m,+f,+d,+a,+c,+v,+xsfvcp,zvl{vlen}b \
+                {'--print-after-all' if extension_config.CONFIG_TORCHSIM_DUMP_LLVM_IR else ''} \
+                -O2 {sample_filename}.ll -o {sample_filename}.s
         """,
     ).strip()]
+
+class SpadOverflowError(Exception):
+    def __init__(self, message="SPAD overflow occurred."):
+        super().__init__(message)
 
 class MLIRCodeCache:
     cache = dict()
@@ -125,14 +158,16 @@ class MLIRCodeCache:
              validation_binary_name="validation_bin",
              cycle_wrapper_name="cycle_wrapper",
              cycle_binary_name="cycle_bin",
-             arg_attributes=[], vectorlane_size=16, tile_size=[],
-             spad_info=None, origins=None, **kwargs):
+             arg_attributes=[], vectorlane_size=16,
+             spad_info=None, origins=None, silent_mode=False, **kwargs):
+        vlen = kwargs['vlen']
+        vlenb = vlen // 8
         write_path = get_write_path(source_code)
         key, input_path = write(source_code, "mlir", specified_dir=write_path)
         new_input_path = os.path.splitext(input_path)[0]
         raw_tog_path = new_input_path + "_tog.py"
         sample_mlir_path = new_input_path + "_sample"
-        gem5_cmds = mlir_gem5_compile_command(new_input_path, sample_mlir_path, raw_tog_path, vectorlane_size, tile_size)
+        gem5_cmds = mlir_gem5_compile_command(new_input_path, sample_mlir_path, raw_tog_path, vectorlane_size)
 
         from filelock import FileLock
         lock_dir = get_lock_dir()
@@ -144,7 +179,9 @@ class MLIRCodeCache:
             link_option = ""
         # Generate LLVM kernel calller and binary for validation
         if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE:
-            cmds = mlir_compile_command(new_input_path, vectorlane_size, tile_size, vlen=256)
+            # Use custom malloc to avoid size error
+            new_link_option = link_option + " -Wl,--wrap=malloc -Wl,--wrap=free"
+            cmds = mlir_compile_command(new_input_path, vectorlane_size, vlen=vlen)
             opt_cmd = shlex.split(cmds[0])
             translate_cmd = shlex.split(cmds[1])
             llc_cmd = shlex.split(cmds[2])
@@ -161,7 +198,16 @@ class MLIRCodeCache:
                 val_llvm_caller = MLIRKernelCallerCodeGen(extension_config.CONFIG_TORCHSIM_VALIDATION_MODE, arg_attributes)
                 val_llvm_caller.generate_wrapper_file(write_path, validation_wrapper_name)
                 val_llvm_caller.compile_wih_kernel(write_path, key, validation_wrapper_name,
-                                                   validation_binary_name, link_option)
+                                                   validation_binary_name, new_link_option)
+                target = os.path.join(write_path, validation_binary_name)
+                stack_size = val_llvm_caller.parse_stack_sizes(f"{write_path}/{key}.s", vlenb=vlenb)
+                spad_size =  val_llvm_caller.get_spad_size(target)
+                spad_usage = stack_size + spad_size # Spad usage per lane
+                if extension_config.CONFIG_SPAD_INFO["spad_size"] < spad_usage:
+                    print(f"[Warning] Scratchpad size exceeded: required {spad_usage} bytes, "
+                        f"but only {extension_config.CONFIG_SPAD_INFO['spad_size']} bytes available.")
+                    raise SpadOverflowError()
+
         # Launch tile graph generator
         gem5_sample_cmd = shlex.split(gem5_cmds[0])
         gem5_translate_cmd = shlex.split(gem5_cmds[1])
@@ -180,33 +226,37 @@ class MLIRCodeCache:
                 print("Error output:", e.output)
                 assert(0)
 
-        if extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
-            return key
+            if extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
+                return key
 
-        # Generate MLIR kernel calller and binary for cycle calculation
-        cycle_llvm_caller = MLIRKernelCallerCodeGen(False, arg_attributes, cycle_sim=True)
-        cycle_llvm_caller.generate_wrapper_file(write_path, cycle_wrapper_name)
-        cycle_llvm_caller.compile_wih_kernel(write_path, key + "_sample", cycle_wrapper_name, cycle_binary_name, link_option)
-        array_size = []
-        for (arg_name, arg_attribute) in arg_attributes:
-            array_size.append(str(arg_attribute[2]))
+            # Generate MLIR kernel calller and binary for cycle calculation
+            cycle_llvm_caller = MLIRKernelCallerCodeGen(False, arg_attributes, cycle_sim=True)
+            cycle_llvm_caller.generate_wrapper_file(write_path, cycle_wrapper_name)
+            cycle_llvm_caller.compile_wih_kernel(write_path, key + "_sample", cycle_wrapper_name, cycle_binary_name, link_option)
+            array_size = []
+            for (arg_name, arg_attribute) in arg_attributes:
+                array_size.append(str(arg_attribute[2]))
 
-        # Run cyclesim
-        cyclesim = CycleSimulator()
-        cycle_list = cyclesim.compile_and_simulate(os.path.join(write_path, cycle_binary_name), " ".join(array_size), vectorlane_size)
+            # Run cyclesim
+            cyclesim = CycleSimulator()
+            cycle_list = cyclesim.compile_and_simulate(os.path.join(write_path, cycle_binary_name), " ".join(array_size), vectorlane_size, silent_mode=silent_mode)
 
-        # Create TOG
-        offset = vectorlane_size
-        if kwargs['loop_size'] is not None and kwargs['loop_size'][0] < vectorlane_size:
-            offset = kwargs['loop_size'][0]
-        tile_graph_generator = tog_generator(origins)
-        tile_graph_generator.load_file(raw_tog_path)
-        tile_graph_generator.generate_tile_graph(
-            os.path.join(write_path, "tile_graph.onnx"),
-            cycle_list=cycle_list,
-            offset=offset, # FIXME.
-            vector_lane=vectorlane_size
-        )
+            # Create TOG
+            w_offset, x_offset = vectorlane_size, vectorlane_size
+            if kwargs['loop_size'] is not None and kwargs['loop_size'][-3] < vectorlane_size:
+                x_offset = kwargs['loop_size'][-3]
+            if kwargs['loop_size'] is not None and kwargs['loop_size'][-1] < vectorlane_size:
+                w_offset = kwargs['loop_size'][-1]
+            w_offset = 0 # max(w_offset - x_offset, 0)
+            tile_graph_generator = tog_generator(origins)
+            tile_graph_generator.load_file(raw_tog_path)
+            tile_graph_generator.generate_tile_graph(
+                os.path.join(write_path, "tile_graph.onnx"),
+                cycle_list=cycle_list,
+                x_offset=x_offset, # FIXME.
+                w_offset=w_offset, # FIXME.
+                vector_lane=vectorlane_size
+            )
         return key
 
 class LLVMCodeCache:
@@ -285,46 +335,84 @@ class CustomAsyncCompile(AsyncCompile):
         self.cycle_wrapper_name = "cycle_wrapper"
         self.cycle_binary_name = "cycle_binary"
 
-    def mlir(self, source_code, arg_attributes=[], vectorlane_size=16, tile_size=[], spad_info=None, origins=None, **kwargs):
+    def mlir(self, source_code, arg_attributes=[], vectorlane_size=16, tile_size=[], spad_info=None, origins=None, silent_mode=False, **kwargs):
         def task():
             key = MLIRCodeCache.load(source_code,
                                           valdiation_wrapper_name=self.validation_binary_name,
                                           validation_binary_name=self.validation_binary_name,
                                           arg_attributes=arg_attributes, vectorlane_size=vectorlane_size,
-                                          tile_size=tile_size, spad_info=spad_info, origins=origins, **kwargs)
+                                          tile_size=tile_size, spad_info=spad_info, origins=origins,
+                                          silent_mode=silent_mode, **kwargs)
             return key
         future = self.submit(task)
+        if "loop_size" in kwargs:
+            loop_size = kwargs["loop_size"]
+        else:
+            loop_size = []
         def dummy_simulator(*args, **kwargs):
+            validate = kwargs.get('validate', False)
             # Wait for compilation
             key = future.result()
+            from filelock import FileLock
+            lock_dir = get_lock_dir()
+            lock = FileLock(os.path.join(lock_dir, key + ".lock"), timeout=LOCK_TIMEOUT)
+            with lock:
+                # Run simulator pass
+                result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
+                # Dump arguments and meta data
+                dump_metadata(args, arg_attributes, result_path)
+                runtime_path = FunctionalSimulator.get_runtime_dump_path(result_path)
+                if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE or validate:
+                    funcsim = FunctionalSimulator(result_path, key)
+                    funcsim.run_spike(args, arg_attributes,
+                                    runtime_path, self.validation_binary_name,
+                                    vectorlane_size=vectorlane_size, spad_info=spad_info,
+                                    cleanup=extension_config.CONFIG_CLEANUP_DUMP_ARGS, silent_mode=silent_mode)
+                if extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
+                    return
 
-            # Run simulator pass
+                onnx_path = os.path.join(result_path, "tile_graph.onnx")
+                attribute_path = os.path.join(runtime_path, "attribute")
+                backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
+                backsim = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
+                backsim.vectorlane_size = vectorlane_size
+                attribute_path = backsim.create_attribute_file(attribute_path, args, loop_size=loop_size)
+                result_path = backsim.simulation(onnx_path, attribute_path, silent_mode=silent_mode)
+                result = BackendSimulator.get_result_from_file(result_path)
+                return result
+
+        def dryrun_simulator(*args, **kwargs):
+            autotune = kwargs.get('autotune', False)
+            key = future.result()
+             # Run simulator pass
             result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
             # Dump arguments and meta data
             dump_metadata(args, arg_attributes, result_path)
-            if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE:
-                funcsim = FunctionalSimulator(result_path, key)
-                funcsim.run_spike(args, arg_attributes,
-                                  result_path, self.validation_binary_name,
-                                  kwargs['intermediate_op'] if 'intermediate_op' in kwargs else None,
-                                  vectorlane_size=vectorlane_size, spad_info=spad_info,
-                                  cleanup=extension_config.CONFIG_CLEANUP_DUMP_ARGS)
+            runtime_path = FunctionalSimulator.get_runtime_dump_path(result_path)
             if extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
                 return
 
-            onnx_path = os.path.join(result_path, "tile_graph.onnx")
-            attribute_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
-            backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
-            backsim = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
-            attribute_path = backsim.create_attribute_file(attribute_path, args, tile_size=tile_size)
-            result_path = backsim.simulation(onnx_path, attribute_path)
-            result = BackendSimulator.get_result_from_file(result_path)
-            return result
+            if autotune:
+                onnx_path = os.path.join(result_path, "tile_graph.onnx")
+                attribute_path = os.path.join(runtime_path, "attribute")
+                backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
+                backsim = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
+                backsim.vectorlane_size = vectorlane_size
+                attribute_path = backsim.create_attribute_file(attribute_path, args, loop_size=loop_size)
+                result_path_2 = backsim.simulation(onnx_path, attribute_path)
+                result = BackendSimulator.get_result_from_file(result_path_2)
+                return result_path, runtime_path, result
 
-        def dryrun_simulator(*args, **kwargs):
-            key = future.result()
+            # Todo. Support valude dependent mode for graph mode
+            if False: # extension_config.CONFIG_TORCHSIM_VALIDATION_MODE:
+                funcsim = FunctionalSimulator(result_path, key)
+                funcsim.run_spike(args, arg_attributes,
+                                  runtime_path, self.validation_binary_name,
+                                  vectorlane_size=vectorlane_size, spad_info=spad_info,
+                                  cleanup=extension_config.CONFIG_CLEANUP_DUMP_ARGS)
+            return result_path, runtime_path, None
 
-        is_dryrun = extension_config.CONFIG_BACKENDSIM_DRYRUN
+        is_dryrun = int(os.environ.get('BACKENDSIM_DRYRUN', default=False))
         target_simulator = dryrun_simulator if is_dryrun else dummy_simulator
         target_simulator.arg_attributes = arg_attributes
         target_simulator.future = future

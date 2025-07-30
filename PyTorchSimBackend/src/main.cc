@@ -12,24 +12,8 @@ namespace po = boost::program_options;
 const char* env_value = std::getenv("BACKENDSIM_DRYRUN");
 bool isDryRun = (env_value != nullptr && std::string(env_value) == "1");
 
-bool loadConfig(const std::string& config_path, json& config_json) {
-  std::ifstream config_file(config_path);
-  if (config_file.is_open()) {
-      config_file >> config_json;
-      config_file.close();
-      spdlog::info("[LoadConfig] Success to open \"{}\"", config_path);
-      return true;
-  } else {
-    spdlog::error("[LoadConfig] Failed to open \"{}\"", config_path);
-    return false;
-  }
-}
-
 void launchKernel(Simulator* simulator, std::string onnx_path, std::string attribute_path, cycle_type request_time=0, int partiton_id=0) {
-  json attribute_json;
-  loadConfig(attribute_path, attribute_json);
-
-  auto graph_praser = TileGraphParser(onnx_path, attribute_json);
+  auto graph_praser = TileGraphParser(onnx_path, attribute_path);
   std::unique_ptr<TileGraph>& tile_graph = graph_praser.get_tile_graph();
   tile_graph->set_arrival_time(request_time ? request_time : simulator->get_core_cycle());
   spdlog::info("[Scheduler {}] Register graph path: {} operation: {} at {}", partiton_id, onnx_path, tile_graph->get_name(), simulator->get_core_cycle());
@@ -39,7 +23,9 @@ void launchKernel(Simulator* simulator, std::string onnx_path, std::string attri
 
 Simulator* create_simulator(std::string config_path) {
   json config_json;
-  loadConfig(config_path, config_json);
+  if(!loadConfig(config_path, config_json)) {
+    exit(1);
+  }
   SimulationConfig config = initialize_config(config_json);
   auto simulator = new Simulator(config);
   return simulator;
@@ -87,7 +73,7 @@ void interactive_mode(Simulator* simulator) {
       cycle_type current_cycle = simulator->get_core_cycle();
       std::cerr << "Current cycle: " << current_cycle << std::endl;
     }else if (token == "quit") {
-      spdlog::info("Exiting BackendSim.");
+      std::cerr << "Quit" << std::endl;
       break;
     } else {
       spdlog::error("Error: unknown command {} Available commands are: launch, until, quit.", token);
@@ -95,6 +81,7 @@ void interactive_mode(Simulator* simulator) {
     if (isDryRun)
       std::cout << "[" << simulator->get_core_cycle() << "] BackendSim> ";
   }
+  simulator->cycle();
   if (simulator->get_core_cycle()==0)
     simulator->until(0);
   simulator->print_core_stat();
@@ -157,6 +144,7 @@ int main(int argc, char** argv) {
     /* Get onnx_path, attribute from user input, request_time */
     interactive_mode(simulator);
   }
+  delete simulator;
 
   /* Simulation time measurement */
   auto end = std::chrono::high_resolution_clock::now();

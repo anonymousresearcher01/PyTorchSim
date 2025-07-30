@@ -50,10 +50,12 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
 
     def generate_args_define(self):
         name_set = set()
-        for arg_name, (_, arg_type, arg_size) in self.arg_attributes:
+        if self.validation:
+            self.writeline(f'int padding[0x100000]{self.ending}') # FIXME. For pooling operation... Some pooling layer use negative offset
+        for arg_name, (_, arg_type, arg_size, arg_sizes, arg_stride) in self.arg_attributes:
             if not arg_name in name_set:
                 if self.validation:
-                    self.writeline(f'{DTYPE_TO_C[arg_type]} c_{arg_name}[{arg_size}]{self.ending}')
+                    self.writeline(f'{DTYPE_TO_C[arg_type]} c_{arg_name}[{arg_size}ULL]{self.ending}')
                 else:
                     if torch.is_floating_point(torch.tensor([], dtype=arg_type)):
                         bits = torch.finfo(arg_type).bits
@@ -61,7 +63,7 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
                         bits = 8
                     else:
                         bits = torch.iinfo(arg_type).bits
-                    self.writeline(f'{DTYPE_TO_C[arg_type]}* c_{arg_name} = malloc({arg_size * bits // 8}){self.ending}')
+                    self.writeline(f'{DTYPE_TO_C[arg_type]}* c_{arg_name} = malloc({arg_size * bits // 8}ULL){self.ending}')
                 name_set.add(arg_name)
         self.writeline(self.newline)
 
@@ -77,7 +79,7 @@ class MLIRKernelCallerCodeGen(LLVMKernelCallerCodeGen):
             else:
                 self.generate_args_define()
 
-            func_arguments = [f"c_{arg_name}, c_{arg_name}, 0, {arg_shape}, 1" if arg_type != torch.bool else f"c_{arg_name}, c_{arg_name}, 0, {(arg_shape + 7) // 8}, 1" for arg_name, (_, arg_type, arg_shape) in self.arg_attributes]
+            func_arguments = [f"c_{arg_name}, c_{arg_name}, 0, {arg_shape}, 1" for arg_name, (_, arg_type, arg_shape, _, _) in self.arg_attributes]
             self.writeline(f"wrapper_{self.kernel_name}({', '.join(func_arguments)}){self.ending}{self.newline}")
 
             if self.validation:

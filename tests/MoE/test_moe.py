@@ -1,12 +1,7 @@
 # Owner(s): ["module: inductor"]
 import os
-import shutil
 import sys
-import time
-import contextlib
-import unittest
 import copy
-import numpy as np
 import matplotlib.pyplot as plt
 
 
@@ -341,7 +336,7 @@ class MoE(nn.Module):
         expert_inputs = dispatcher.dispatch(x)
         gates = dispatcher.expert_to_gates()
         expert_outputs = [self.experts[i](expert_inputs[i]) for i in range(self.num_experts)]
-        y = dispatcher.combine(expert_outputs, multiply_by_gates=False)
+        y = dispatcher.combine(expert_outputs, multiply_by_gates=True)
         return y, loss
 
     @torch.compiler.disable(recursive=True)
@@ -420,15 +415,15 @@ def test_moe(device):
     x1 = copy.deepcopy(X).to(device=device)
     x2 = copy.deepcopy(X).to("cpu")
 
-    # model.train()
-    model.eval()
+    model.train()
+    # model.eval()
     model_device = model.to(device=device)
     opt_model = torch.compile(model_device, dynamic=False)
     y_hat, aux_loss = opt_model(x1)
     print("MoE Custom Device Done!")
 
-    # model_cpu.train()
-    model_cpu.eval()
+    model_cpu.train()
+    # model_cpu.eval()
     cpu_hat, cpu_aux_loss = model_cpu(x2)
     test_result("MoE Forward", y_hat, cpu_hat)
     test_result("MoE Aux Loss", aux_loss, cpu_aux_loss)
@@ -453,15 +448,15 @@ def test_moe(device):
     total_cpu_loss.backward()
     print("MoE Backward Done!")
 
-    print("MoE Weight Bias print")
-    for i in range(num_experts):
-        print(f"\nExpert {i}")
-        print(f"FC1 Weight: {model.experts[i].fc1.weight.cpu()}")
-        print(f"FC1 Bias: {model.experts[i].fc1.bias.cpu()}")
-        print("\n")
-        print(f"FC2 Weight: {model.experts[i].fc2.weight.cpu()}")
-        print(f"FC2 Bias: {model.experts[i].fc2.bias.cpu()}")
-        print("\n")
+    # print("MoE Weight Bias print")
+    # for i in range(num_experts):
+    #     print(f"\nExpert {i}")
+    #     print(f"FC1 Weight: {model.experts[i].fc1.weight.cpu()}")
+    #     print(f"FC1 Bias: {model.experts[i].fc1.bias.cpu()}")
+    #     print("\n")
+    #     print(f"FC2 Weight: {model.experts[i].fc2.weight.cpu()}")
+    #     print(f"FC2 Bias: {model.experts[i].fc2.bias.cpu()}")
+    #     print("\n")
 
     print("MoE Weight Bias Grad")
     for i in range(num_experts):
@@ -514,7 +509,7 @@ def train_moe(device):
     # model.eval()
     model_device = model.to(device=device)
     opt_model = torch.compile(model_device, dynamic=False)
-    opt_w = torch.compile()(weight_update, dynamic=False)
+    # opt_w = torch.compile()(weight_update, dynamic=False)
     y_hat, aux_loss = opt_model(x1)
     print("MoE Custom Device Done!")
 

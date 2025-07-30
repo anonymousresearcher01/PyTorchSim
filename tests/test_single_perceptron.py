@@ -4,12 +4,16 @@ import torch._dynamo
 import torch.utils.cpp_extension
 
 def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
-    message = f"|{name} Test Passed|"
     if torch.allclose(out.cpu(), cpu_out, rtol=rtol, atol=atol):
+        message = f"|{name} Test Passed|"
         print("-" * len(message))
         print(message)
         print("-" * len(message))
     else:
+        message = f"|{name} Test Failed|"
+        print("-" * len(message))
+        print(message)
+        print("-" * len(message))
         print("custom out: ", out.cpu())
         print("cpu out: ", cpu_out)
         exit(1)
@@ -41,13 +45,14 @@ def test_single_perceptron(device):
     b2.requires_grad = True
     opt_mlp = torch.compile(dynamic=False)(perceptron)
     opt_w = torch.compile(dynamic=False)(weight_update)
-    opt_loss = torch.compile(dynamic=False)(torch.nn.MSELoss())
+    loss_fn = torch.nn.MSELoss()
+    opt_loss = torch.compile(dynamic=False)(loss_fn)
     lr = torch.tensor(5e-2).to(device=device) # learning rate
     y = opt_mlp(w1, x1, b1)
     loss = opt_loss(y, y1)
     loss.backward()
     cpu_y = perceptron(x2, w2, b2)
-    cpu_loss = torch.nn.MSELoss()(cpu_y, y2)
+    cpu_loss = loss_fn(cpu_y, y2)
     cpu_loss.backward()
     test_result("Perceptron", y, cpu_y)
     test_result("Loss", loss, cpu_loss)

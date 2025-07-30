@@ -1,7 +1,6 @@
 from typing import List
 import os
-import sys
-import json
+import numpy as np
 import torch
 from pathlib import Path
 import importlib.util
@@ -22,6 +21,19 @@ def import_module_from_path(module_name, path):
     spec.loader.exec_module(module)
 
     return module
+
+def poisson_request_generator(lambda_requests, max_msec_time=None):
+    current_time = 0.0 # msec
+
+    yield 0
+    while max_msec_time is None or current_time < max_msec_time:
+        inter_arrival_time = np.random.exponential(scale=1000 / lambda_requests)
+        current_time += inter_arrival_time
+
+        if max_msec_time is not None and current_time > max_msec_time:
+            break
+
+        yield current_time
 
 class Request:
     """ Each request has model name, it's own id, and requested time. """
@@ -46,9 +58,6 @@ class Request:
         allocated_id = Request.request_id
         Request.request_id += 1
         return allocated_id
-
-    def is_arrived(self, current_time):
-        return current_time >= self.arrival_time
 
     def set_start(self, start_time):
         self.state = self.RUNNING
@@ -109,9 +118,7 @@ class SchedulerDNNModel:
         if model_name in SchedulerDNNModel.MODEL_MAP:
             return SchedulerDNNModel.MODEL_MAP[model_name]
         else:
-            print(f'[Scheduler] Requested model "{model_name}"is not registered...')
-            return None
-
+            raise KeyError(f'[Scheduler] Requested model "{model_name}" is not registered...')
 
     def get_batchable_input(self):
         batched_input_tensor = []
@@ -179,8 +186,10 @@ class ExecutionEngine:
             register_backend_for_device,
         )
         from PyTorchSimFrontend.mlir.mlir_codegen_backend import (
-            MLIRScheduling,
             ExtensionWrapperCodegen,
+        )
+        from PyTorchSimFrontend.mlir.mlir_scheduling import (
+            MLIRScheduling
         )
         register_backend_for_device(
             "extension_device", MLIRScheduling, ExtensionWrapperCodegen
@@ -206,7 +215,10 @@ class ExecutionEngine:
     def is_partition_idle(self, partition_idx):
         return len(self.launch_model_dicts[partition_idx]) == 0
 
-    def is_idle(self):
+    def is_any_idle(self, skip_list):
+        return any([self.is_partition_idle(i) and not skip_list[i] for i in range(self.num_partion)])
+
+    def is_all_idle(self):
         return all([self.is_partition_idle(i) for i in range(self.num_partion)])
 
     def prepare_model(self, req_model: SchedulerDNNModel):
@@ -228,24 +240,25 @@ class ExecutionEngine:
             self.finish_req_dict[req] = RequestReturn(RequestReturn.FINISHED)
 
     def prepare_launch_kernel(self, kernel, inputs):
-        key = kernel.future.result()
-        result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
+        result_path, runtime_path, _ = kernel(*inputs)
         onnx_path = os.path.join(result_path, "tile_graph.onnx")
 
-        attribute_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
+        attribute_path = os.path.join(runtime_path, "attribute")
         attribute_path = self.backend_simulator.create_attribute_file(attribute_path, inputs)
         return onnx_path, attribute_path
 
     def launch_kernel(self, current_cycle, partion_idx=0):
         # Check partition is busy
         if self.partition_state[partion_idx] != self.PARTITION_IDLE:
-            return None
+            return self.partition_state[partion_idx]
         result = self.select_kernel(partion_idx)
         if result == self.SELECT_NOTHING:
-            return None
-
+            return self.SELECT_NOTHING
         kernel, inputs = result
-        onnx_path, attribute_path = self.prepare_launch_kernel(kernel, inputs)
+        if not isinstance(kernel, str):
+            onnx_path, attribute_path = self.prepare_launch_kernel(kernel, inputs)
+        else:
+            onnx_path, attribute_path = kernel, inputs
         self.partition_state[partion_idx] = self.PARTITION_BUSY
         return self.backend_simulator.launch(onnx_path, attribute_path, current_cycle, partion_idx)
 
@@ -264,6 +277,10 @@ class FIFOExecutionEngine(ExecutionEngine):
             req, target_model = next(iter(target_dict[partition_idx].items()))
             try:
                 kernel, inputs = next(target_model)
+
+                # For extern call
+                if isinstance(kernel, str):
+                    return kernel, inputs
 
                 # For convolution...
                 if not hasattr(kernel, "future"):
@@ -327,11 +344,12 @@ class RRExecutionEngine(ExecutionEngine):
         return self.SELECT_NOTHING
 
 class Scheduler:
+
     FIFO_ENGINE = 0
     RR_ENGINE = 1
-    def __init__(self, num_request_queue=1, engine_select=FIFO_ENGINE) -> None:
-        self.current_time = 0
-        self.max_batch = 1
+    def __init__(self, num_request_queue=1, max_batch=1, engine_select=FIFO_ENGINE, backend_config=extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG) -> None:
+        self.current_cycle = 0
+        self.max_batch = max_batch
         self.num_request_queue = num_request_queue
         self.request_queue : List[List[Request]] = []
         for i in range(self.num_request_queue):
@@ -339,7 +357,7 @@ class Scheduler:
         self.finish_queue : List[Request] = []
 
         backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
-        self.backend_simulator = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
+        self.backend_simulator = BackendSimulator(backend_path, backend_config)
         self.backend_simulator.interactive_simulation()
         if engine_select == Scheduler.FIFO_ENGINE:
             self.execution_engine = FIFOExecutionEngine(self.backend_simulator, self.num_request_queue)
@@ -350,10 +368,15 @@ class Scheduler:
             exit(1)
 
     def add_request(self, request: Request, request_time=-1):
-        """register model at timestamp time"""
-        request_time = self.current_time if request_time == -1 else request_time
+        """register model at timestamp time
+            request_time : msec
+        """
+        request_time = self.current_time() if request_time == -1 else request_time
         request.arrival_time = request_time
         self.request_queue[request.request_queue_idx].append(request)
+
+    def request_empty(self, request_queue_idx):
+        return len(self.request_queue[request_queue_idx])==0
 
     def select(self, request_queue_idx=0) -> List[Request]:
         """
@@ -364,7 +387,8 @@ class Scheduler:
         if not self.request_queue[request_queue_idx]:
             return candidate_req
         for req in self.request_queue[request_queue_idx]:
-            if req.is_arrived(self.current_time) and req.state == Request.QUEUED:
+
+            if self.msec_to_cycle(req.arrival_time) <= self.current_cycle and req.state == Request.QUEUED:
                 candidate_req.append(req)
 
                 # Stop batching
@@ -392,7 +416,7 @@ class Scheduler:
         return nearest_req, nearest_arrival_time
 
     def finish_request(self, req : Request):
-        req.set_finished(self.current_time)
+        req.set_finished(self.current_time())
 
         # Free resources
         req.free_memory()
@@ -406,17 +430,22 @@ class Scheduler:
               f"response time: {response_time} tbt_time: {tbt_time}")
 
     def per_schedule(self, request_queue_idx):
+        # Wait partition is idle
+        if not self.execution_engine.is_partition_idle(request_queue_idx):
+            return False
+
         request_list = self.select(request_queue_idx)
         if not request_list:
             return False
 
+        print(f"[Request issue] partition: {request_queue_idx} batch size: {len(request_list)}", flush=True)
         for req in request_list:
-            req.set_start(self.current_time)
-
+            req.set_start(self.current_time())
+            print(f"[Request-{req.id} issue] partition: {req.request_queue_idx} "
+                f"arrival_time: {req.arrival_time} start_time: {req.start_time[0]}", flush=True)
         # Submit batched request
         self.execution_engine.submit(request_list, request_queue_idx)
-        print(f"[Request-{req.id} issue] partition: {req.request_queue_idx} "
-              f"arrival_time: {req.arrival_time} start_time: {req.start_time[0]}")
+
         return True
 
     def check_finish_request(self):
@@ -434,51 +463,58 @@ class Scheduler:
 
         # Try move to next nearest request time
         next_req, next_time = self.nearest_next_reqeust_time()
-        if next_req is None and self.execution_engine.is_idle():
+        if next_req is None and self.execution_engine.is_all_idle():
             # No request remained...
             return
 
         # Need to forward the time until next_arrival_time
-        if self.execution_engine.is_idle():
-            reason = self.backend_simulator.until(next_time)
-            self.current_time = self.backend_simulator.cycle()
+        if self.execution_engine.is_all_idle():
+            reason = self.backend_simulator.until(self.msec_to_cycle(next_time))
+            self.current_cycle = self.backend_simulator.cycle()
         else:
             self.run(next_time)
         return
 
     def run(self, until_time):
+        req_empty_info = [self.request_empty(i) for i in range(self.execution_engine.num_partion)]
         def execute_cycle():
+            launch_ret_info = []
             for i in range(self.execution_engine.num_partion):
                 if self.execution_engine.partition_state[i] == ExecutionEngine.PARTITION_IDLE:
-                    ret = self.execution_engine.launch_kernel(self.current_time, i)
+                    ret = self.execution_engine.launch_kernel(self.current_cycle, i)
+                    launch_ret_info.append(ret)
 
             self.check_finish_request()
             # Check if the stop condition is met
-            if self.execution_engine.is_idle():
-                return -1
+            if self.execution_engine.is_any_idle(req_empty_info) or self.execution_engine.is_all_idle(): # Ignore empty request queue
+                return []
 
             # Schedule jobs and update the current time
-            result = self.backend_simulator.until(until_time)
-            self.current_time = self.backend_simulator.cycle()
+            result_list = self.backend_simulator.until(self.msec_to_cycle(until_time))
+            self.current_cycle = self.backend_simulator.cycle()
 
-            if result != -1:
+            for core_idx in result_list:
                 # Kernel is finished. So set idle state
-                self.execution_engine.partition_state[result] = ExecutionEngine.PARTITION_IDLE
+                self.execution_engine.partition_state[core_idx] = ExecutionEngine.PARTITION_IDLE
 
-            return result
+            return result_list
+
+        if self.current_cycle >= self.msec_to_cycle(until_time):
+            until_time = -1
 
         if until_time == -1:
-            while not self.execution_engine.is_idle():
+            while not self.execution_engine.is_any_idle(req_empty_info):
                 result = execute_cycle()
+                req_empty_info = [self.request_empty(i) for i in range(self.execution_engine.num_partion)]
                 # if result is not -1, schedule new request
-                if result == -1:
+                if len(result)==0:
                     break
 
         else:
-            while self.current_time <= until_time and not self.execution_engine.is_idle():
+            while self.current_cycle <= self.msec_to_cycle(until_time) and not self.execution_engine.is_all_idle():
                 result = execute_cycle()
                 # if result is not -1, schedule new request
-                if result == -1:
+                if len(result)==0:
                     break
         return
 
@@ -489,12 +525,22 @@ class Scheduler:
         return result
 
     def is_finished(self):
-        return self.is_request_queue_empty() and self.execution_engine.is_idle()
+        if self.is_request_queue_empty() and self.execution_engine.is_all_idle():
+            self.backend_simulator.wait()
+            return True
+        return False
+
+    def current_time(self):
+        return self.cycle_to_msec(self.current_cycle)
 
     def cycle_to_msec(self, cycle):
         freq = self.backend_simulator.get_core_freq()
         return cycle / (freq  / 1000)
 
     def msec_to_cycle(self, msec):
+        # We treat -1 as special time
+        if (msec == -1):
+            return msec
+
         freq = self.backend_simulator.get_core_freq()
-        return msec * (freq / 1000)
+        return int(msec * (freq / 1000))

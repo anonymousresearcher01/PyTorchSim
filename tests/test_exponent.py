@@ -1,0 +1,37 @@
+import torch
+import torch._dynamo
+import torch.utils.cpp_extension
+
+def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
+    if torch.allclose(out.cpu(), cpu_out, rtol=rtol, atol=atol):
+        message = f"|{name} Test Passed|"
+        print("-" * len(message))
+        print(message)
+        print("-" * len(message))
+    else:
+        message = f"|{name} Test Failed|"
+        print("-" * len(message))
+        print(message)
+        print("-" * len(message))
+        print("custom out: ", out.cpu())
+        print("cpu out: ", cpu_out)
+        exit(1)
+
+def test_exponent(device, size=(128, 128)):
+    def exponent(a):
+        return a.exp()
+    x = torch.randn(size).to(device=device)
+    opt_fn = torch.compile(dynamic=False)(exponent)
+    res = opt_fn(x)
+    out = exponent(x.cpu())
+    test_result("exponent", res, out)
+
+if __name__ == "__main__":
+    import os
+    import sys
+    sys.path.append(os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim'))
+
+    from Scheduler.scheduler import ExecutionEngine
+    module = ExecutionEngine.setup_device()
+    device = module.custom_device()
+    test_exponent(device, size=(32, 32))

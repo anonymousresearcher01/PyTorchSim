@@ -95,3 +95,57 @@ unsigned ipoly_hash_function(new_addr_type higher_bits, unsigned index,
     return 0;
   }
 }
+
+unsigned bitwise_hash_function(new_addr_type higher_bits, unsigned index,
+                               unsigned bank_set_num) {
+  return (index) ^ (higher_bits & (bank_set_num - 1));
+}
+
+unsigned PAE_hash_function(new_addr_type higher_bits, unsigned index,
+                           unsigned bank_set_num) {
+  // Page Address Entropy
+  // random selected bits from the page and bank bits
+  // similar to
+  // Liu, Yuxi, et al. "Get Out of the Valley: Power-Efficient Address
+  if (bank_set_num == 32) {
+    std::bitset<64> a(higher_bits);
+    std::bitset<5> b(index);
+    std::bitset<5> new_index(index);
+    new_index[0] = a[13] ^ a[10] ^ a[9] ^ a[5] ^ a[0] ^ b[3] ^ b[0] ^ b[0];
+    new_index[1] = a[12] ^ a[11] ^ a[6] ^ a[1] ^ b[3] ^ b[2] ^ b[1] ^ b[1];
+    new_index[2] = a[14] ^ a[9] ^ a[8] ^ a[7] ^ a[2] ^ b[1] ^ b[2];
+    new_index[3] = a[11] ^ a[10] ^ a[8] ^ a[3] ^ b[2] ^ b[3] ^ b[3];
+    new_index[4] = a[12] ^ a[9] ^ a[8] ^ a[5] ^ a[4] ^ b[1] ^ b[0] ^ b[4];
+
+    return new_index.to_ulong();
+  } else {
+    assert(0);
+    return 0;
+  }
+}
+
+unsigned mini_hash_function(new_addr_type higher_bits, unsigned index,
+                             unsigned bank_set_num) {
+  if (bank_set_num == 16) {
+    std::bitset<64> a(higher_bits);
+    std::bitset<4> b(index);
+    std::bitset<4> new_index(index);
+
+    new_index[0] = a[0] ^ b[0];
+    new_index[1] = a[0] ^ b[1];
+    new_index[2] = a[1] ^ b[2];
+    new_index[3] = a[1] ^ b[3];
+
+
+    return new_index.to_ulong();
+  } else { /* Else incorrect number of channels for the hashing function */
+    assert(
+        "\nmemory_partition_indexing error: The number of "
+        "channels should be "
+        "16, 32 or 64 for the hashing IPOLY index function. other banks "
+        "numbers are not supported. Generate it by yourself! \n" &&
+        0);
+
+    return 0;
+  }
+}

@@ -3,12 +3,16 @@ import torch._dynamo
 import torch.utils.cpp_extension
 
 def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
-    message = f"|{name} Test Passed|"
     if torch.allclose(out.cpu(), cpu_out, rtol=rtol, atol=atol):
+        message = f"|{name} Test Passed|"
         print("-" * len(message))
         print(message)
         print("-" * len(message))
     else:
+        message = f"|{name} Test Failed|"
+        print("-" * len(message))
+        print(message)
+        print("-" * len(message))
         print("custom out: ", out.cpu())
         print("cpu out: ", cpu_out)
         exit(1)
@@ -24,9 +28,9 @@ class CNN(torch.nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
+        x = self.maxpool(x)
         x = self.norm(x)
         x = self.conv2(x)
-        # x = self.maxpool(x)
         x = torch.nn.functional.relu(x)
         return x
 

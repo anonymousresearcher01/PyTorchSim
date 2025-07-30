@@ -3,12 +3,16 @@ import torch._dynamo
 import torch.utils.cpp_extension
 
 def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
-    message = f"|{name} Test Passed|"
     if torch.allclose(out.cpu(), cpu_out, rtol=rtol, atol=atol):
+        message = f"|{name} Test Passed|"
         print("-" * len(message))
         print(message)
         print("-" * len(message))
     else:
+        message = f"|{name} Test Failed|"
+        print("-" * len(message))
+        print(message)
+        print("-" * len(message))
         print("custom out: ", out.cpu())
         print("cpu out: ", cpu_out)
         exit(1)
@@ -29,10 +33,16 @@ def test_LayerNorm(device, size=(64, 64)):
 if __name__ == "__main__":
     import os
     import sys
+    import argparse
     sys.path.append(os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim'))
+
+    parser = argparse.ArgumentParser(description="Run LayerNorm test with dynamic shape")
+    parser.add_argument('--shape', type=str, help="Shape of the tensor in the format (batch_size, features)", default="(512,768)")
+    args = parser.parse_args()
+    shape = tuple(map(int, args.shape.strip('()').split(',')))
 
     from Scheduler.scheduler import ExecutionEngine
     module = ExecutionEngine.setup_device()
     device = module.custom_device()
-    test_LayerNorm(device)
-    test_LayerNorm(device, (64, 128))
+    #test_LayerNorm(device)
+    test_LayerNorm(device, shape)

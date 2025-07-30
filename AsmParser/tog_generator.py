@@ -6,8 +6,10 @@ from collections import defaultdict
 
 if __name__ == "__main__":
     from onnx_utility import node, loop_index_node, loop_end_node, load_node, store_node, memory_wait_node, compute_node, connect_nodes, dump_onnx_graph
+    from onnx_utility import stonne_node, stonne_trace_compute_node, stonne_trace_load_node, stonne_trace_store_node
 else:
     from AsmParser.onnx_utility import node, loop_index_node, loop_end_node, load_node, store_node, memory_wait_node, compute_node, connect_nodes, dump_onnx_graph
+    from AsmParser.onnx_utility import stonne_node, stonne_trace_compute_node, stonne_trace_load_node, stonne_trace_store_node
 
 
 def import_module_from_path(module_name, path):
@@ -31,7 +33,11 @@ class tog_generator:
     LoopNodeKind = 2
     DMANodeKind = 3
     DMAWaitNodeKind = 4
-    def __init__(self, origins=None) -> None:
+    StonneNodeKind = 5
+    StonneTraceCompute= 6
+    StonneTraceLoad = 7
+    StonneTraceStore = 8
+    def __init__(self, origins="Unknown") -> None:
         self.module_name = "tile_operation_graph"
         self.module = None
         self.raw_graph = {}
@@ -85,12 +91,15 @@ class tog_generator:
         elif node_type == self.DMANodeKind:
             tile_info = {}
             tile_info["base_addr"] = dump_data["base_address"]
-            tile_info["stride_list"] = dump_data["stride_list"]
             tile_info["tile_size"] = dump_data["tile_size"]
+            tile_info["tile_stride"] = dump_data["tile_stride"]
             tile_info["element_size"] = dump_data["element_size"]
             tile_info["tag_idx_list"] = dump_data["tag_idx_list"]
+            tile_info["tag_stride_list"] = dump_data["tag_stride_list"]
             tile_info["loop_idx_list"] = dump_data["loop_idx_list"]
+            tile_info["loop_stride_list"] = dump_data["loop_stride_list"]
             tile_info["is_async"] = dump_data["is_async"]
+            tile_info["indirect_mode"] = dump_data["indirect_mode"]
             is_write = dump_data["is_write"]
             if is_write:
                 new_node = store_node(tile_info, node_id=node_id)
@@ -99,8 +108,18 @@ class tog_generator:
         elif node_type == self.DMAWaitNodeKind:
             tile_info = {}
             tile_info["tag_idx_list"] = dump_data["tag_idx_list"]
+            tile_info["tag_stride_list"] = dump_data["tag_stride_list"]
+            tile_info["tag_divider_list"] = dump_data["tag_divider_list"]
             tile_info["base_addr"] = dump_data["base_address"]
             new_node = memory_wait_node(tile_info, node_id=node_id)
+        elif node_type == self.StonneNodeKind:
+            new_node = stonne_node(dump_data, node_id=node_id)
+        elif node_type == self.StonneTraceCompute:
+            new_node = stonne_trace_compute_node(dump_data['trace_compute_cycle'], node_id=node_id)
+        elif node_type == self.StonneTraceLoad:
+            new_node = stonne_trace_load_node(dump_data['trace_address'], node_id=node_id)
+        elif node_type == self.StonneTraceStore:
+            new_node = stonne_trace_store_node(dump_data['trace_address'], node_id=node_id)
         else:
             print("Unexpected node_type :", node_type)
             exit(1)
@@ -135,8 +154,6 @@ class tog_generator:
             if isinstance(prev_node[-1], load_node) and isinstance(new_node, load_node):
                 connect_nodes(prev_node[-1].get_parent()[-1], new_node)
             elif isinstance(prev_node[-1], memory_wait_node) and isinstance(new_node, memory_wait_node):
-                connect_nodes(prev_node[-1].get_parent()[-1], new_node)
-            elif isinstance(prev_node[-1], store_node) and isinstance(new_node, store_node):
                 connect_nodes(prev_node[-1].get_parent()[-1], new_node)
             elif isinstance(prev_node[-1], load_node) and isinstance(new_node, compute_node) or \
                  isinstance(prev_node[-1], memory_wait_node) and isinstance(new_node, compute_node):
@@ -192,7 +209,7 @@ class tog_generator:
             connect_nodes(prev_node, end_node)
             prev_node = end_node
 
-    def generate_tile_graph(self, name="tile_graph", cycle_list=list, offset=int, vector_lane=int):
+    def generate_tile_graph(self, name="tile_graph", cycle_list=list, x_offset=int, w_offset=int, vector_lane=int, stonneGraph=False):
         node_list = list(self.node_dict.values())[1:]
         if len(node_list):
             node_list[0].set_parent([])
@@ -204,14 +221,16 @@ class tog_generator:
                         print("[TOGGen] Error compute cycle timing is missing...!")
                         iter_node.torchsim_cycle = 10
                     # FIXME.
-                    if iter_node.torchsim_compute_type == 1:
-                        iter_node.torchsim_overlapping_cycle = iter_node.torchsim_cycle - offset
+                    if iter_node.torchsim_compute_type > 0:
+                        is_preload = iter_node.torchsim_compute_type == 2
+                        offset = w_offset if is_preload else x_offset
+                        iter_node.torchsim_overlapping_cycle = max(iter_node.torchsim_cycle - offset, 0)
 
         origin_info = "_".join(map(str, self.origins))
         onnx_node_list = [node.to_onnx() for node in node_list] # Exclude root node
-        dump_onnx_graph(name, onnx_node_list, vector_lane, origin_info)
+        dump_onnx_graph(name, onnx_node_list, vector_lane, origin_info, stonneGraph=stonneGraph)
 
 if __name__ == "__main__":
     t = tog_generator()
-    t.load_file("/workspace/llvm-project/build/tile_operation_graph.py")
-    t.parse_graph()
+    t.load_file("/tmp/torchinductor/tmp/sz6qi7bqkxn/csz6qi7bqkxnam5sxok4l4sppddjkijq5rd55s4qvdutd5ni73fc_tog.py")
+    t.generate_tile_graph("./tile_graph.onnx", cycle_list=[1,1,1,1,1], x_offset=0, w_offset=0, vector_lane=128)

@@ -1,31 +1,26 @@
-import dataclasses
 import contextlib
 import sympy
-import itertools
 import re
 import os
 import math
-from functools import reduce
-from operator import mul
-from typing import List
-from typing import Dict
-from collections import OrderedDict
 import torch
-from torch._inductor import dependencies, config
-from torch._inductor.codegen import cpp, wrapper, common
-from torch._inductor.scheduler import BaseScheduling
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from torch._dynamo.utils import dynamo_timed
+from torch._inductor.codegen import cpp, wrapper, common, memory_planning
 from torch._inductor.virtualized import V, _ops as ops
 from torch._inductor.codecache import write_atomic, write
-from Simulator.simulator import BackendSimulator
-from PyTorchSimFrontend import extension_config
 from torch._inductor.utils import (
     IndentedBuffer,
     is_welford_reduction,
+    sympy_product
 )
+from torch.utils._sympy.functions import ModularIndexing
 import PyTorchSimFrontend.extension_codecache as extension_codecache
 
-
+from PyTorchSimFrontend import extension_config
 from . import mlir_common
+from .mlir_common import LoopLevel, LoopNest
 
 def reduction_init(reduction_type, dtype):
     if dtype in cpp.DTYPE_LOWP_FP:
@@ -37,28 +32,34 @@ def reduction_init(reduction_type, dtype):
     if reduction_type == "prod":
         return float(1) if dtype.is_floating_point else int(1)
     if reduction_type in {"max", "argmax"}:
-        return "0.0"
+        if dtype == torch.float32:
+            return f"0x{mlir_common.MLIR_INF['-inf']['f32']:x}"
+        elif dtype == torch.float64:
+            return f"0x{mlir_common.MLIR_INF['-inf']['f64']:x}"
+        else:
+            return "0.0"
     if reduction_type in {"min", "argmin"}:
-        return "0.0"
+        if dtype == torch.float32:
+            return f"0x{mlir_common.MLIR_INF['inf']['f32']:x}"
+        elif dtype == torch.float64:
+            return f"0x{mlir_common.MLIR_INF['inf']['f64']:x}"
+        else:
+            return "0.0"
     if reduction_type in {"welford_reduce"}:
         return f"0.0"
     raise AssertionError(reduction_type)
 
-def reduction_combine(reduction_type, start_value, vector_value, tile_size=64):
+def reduction_partial_combine_vec(reduction_type, vector_value, init_value):
     if reduction_type == "sum":
-        return f"arith.addf %{start_value}, %{vector_value} : vector<{tile_size}xf32>"
+        return ops.add(vector_value, init_value)
     if reduction_type == "prod":
-        return f"arith.mulf %{start_value}, %{vector_value} : vector<{tile_size}xf32>"
-    if reduction_type == "xor_sum":
-        raise NotImplementedError() # TODO: implement
+        return ops.mul(vector_value, init_value)
+    if reduction_type == "max":
+        return ops.maximum(vector_value, init_value)
+    if reduction_type == "min":
+        return ops.minimum(vector_value, init_value)
     if reduction_type == "any":
-        raise NotImplementedError()
-    if reduction_type in ("min", "max"):
-        raise NotImplementedError()
-    if reduction_type == "welford_reduce":
-        raise NotImplementedError()
-    if reduction_type == "welford_combine":
-        raise NotImplementedError()
+        return ops.logical_and(vector_value, init_value)
     raise AssertionError(reduction_type)
 
 def reduction_combine_vec(reduction_type, vector_value, init_value, axis, shape, reduced_shape):
@@ -94,6 +95,9 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
 
                 from torch import device, empty, empty_strided
                 from {extension_codecache.__name__} import CustomAsyncCompile
+                from PyTorchSimFrontend.extension_config import CONFIG_SRAM_BUFFER_PLAN, CONFIG_BACKENDSIM_EAGER_MODE
+                from Simulator.simulator import BackendSimulator
+                from PyTorchSimFrontend.extension_op import sparse_mm_dummy_stonne_outer
                 from torch._inductor.select_algorithm import extern_kernels
 
                 aten = torch.ops.aten
@@ -101,15 +105,120 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
                 assert_size_stride = torch._C._dynamo.guards.assert_size_stride
                 alloc_from_pool = torch.ops.inductor._alloc_from_pool
                 reinterpret_tensor = torch.ops.aten._reinterpret_tensor
-                async_compile = CustomAsyncCompile()
+                custom_async_compile = CustomAsyncCompile()
                 os.environ["TORCHSIM_LAST_COMPILED_MODULE"] = __file__
             """
         )
+        self.header.splice(
+            f"""
+            def sram_plan_prefix(buffer_name, buffer):
+                #if CONFIG_SRAM_BUFFER_PLAN is None:
+                #    return
+                #elif buffer_name not in CONFIG_SRAM_BUFFER_PLAN:
+                #    return
+                buffer_size = buffer.element_size() * buffer.untyped_storage().size()
+                start = buffer.data_ptr()
+                end = start + buffer_size
+                # print(f'Alloc {{buffer_name}}(0x{{start:x}} ~ 0x{{end:x}})')
+                BackendSimulator.sram_alloc(buffer_name, [start, end])
 
+            def sram_plan_postfix(buffer_name, buffer):
+                #if CONFIG_SRAM_BUFFER_PLAN is None:
+                #    return
+                #elif buffer_name not in CONFIG_SRAM_BUFFER_PLAN:
+                #    return
+                buffer_size = buffer.element_size() * buffer.untyped_storage().size()
+                start = buffer.data_ptr()
+                end = start + buffer_size
+                # print(f'Dealloc {{buffer_name}}(0x{{start:x}} ~ 0x{{end:x}})')
+                BackendSimulator.sram_dealloc(buffer_name, [start, end])
+
+            def host2device_memcopy(buffer):
+                pass
+
+            def device2host_memcpy(buffer):
+                pass
+            """
+        )
+
+    def write_prefix(self):
+        self.prefix.splice(
+            """
+            def call(args):
+            """
+        )
+        with self.prefix.indent():
+            inp_len = len(V.graph.graph_inputs.keys())
+            if inp_len != 0:
+                lhs = f"{', '.join(V.graph.graph_inputs.keys())}{'' if inp_len != 1 else ','}"
+                self.prefix.writeline(f"{lhs} = args")
+                self.prefix.writeline("args.clear()")
+
+            self.codegen_inputs(self.prefix, V.graph.graph_inputs)
+            self.codegen_input_size_asserts()
+            self.codegen_sram_plan_prefix()
+
+    def codegen_sram_plan_prefix(self):
+        for name, buf in V.graph.graph_inputs.items():
+            if isinstance(buf, sympy.Expr):
+                continue
+            if sympy_product(buf.get_size()) == 0:
+                continue
+            if buf is None:
+                continue
+            self.prefix.writeline(f"sram_plan_prefix('{name}', {name})")
+
+    def codegen_sram_plan_postfix(self, outputs):
+        for name in outputs:
+            if name is None or name == "None":
+                continue
+            self.wrapper_call.writeline(f"sram_plan_postfix('{name}', {name})")
+
+    @dynamo_timed
+    def generate(self, is_inference):
+        result = IndentedBuffer()
+        result.splice(self.header)
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(self.wrapper_call.indent())
+            self.memory_plan_reuse()
+            for line in self.lines:
+                # Add buffer plan hook for dealloc
+                if isinstance(line, memory_planning.DeallocFromPoolLine):
+                    self.wrapper_call.writeline(f"sram_plan_postfix('{line.node.get_name()}', {line.node.get_name()})")
+                elif isinstance(line, str) and "del" in line:
+                    name = line.split(" ")[1]
+                    self.wrapper_call.writeline(f"sram_plan_postfix('{name}', {name})")
+
+                if isinstance(line, wrapper.MemoryPlanningLine):
+                    line.codegen(self.wrapper_call)
+                else:
+                    self.wrapper_call.writeline(line)
+                # Add buffer plan hook for alloc
+                if isinstance(line, memory_planning.AllocFromPoolLine) or isinstance(line, wrapper.AllocateLine):
+                    self.wrapper_call.writeline(f"sram_plan_prefix('{line.node.get_name()}', {line.node.get_name()})")
+            output_refs = self.get_output_refs()
+            self.codegen_sram_plan_postfix(output_refs)
+            self.mark_output_type()
+            self.generate_return(output_refs)
+
+        self.append_precomputed_sizes_to_prefix()
+        self.finalize_prefix()
+        result.splice(self.prefix)
+
+        with result.indent():
+            result.splice(self.wrapper_call)
+
+        self.generate_end(result)
+        self.add_benchmark_harness(result)
+        return result.getvaluewithlinemap()
+
+    def memory_plan(self):
+        self.lines = memory_planning.MemoryPlanner(self).plan(self.lines)
 class ExtensionOverrides(common.OpOverrides):
     # Binary element wise operations
     @staticmethod
-    def custom_cast(operand, target_type, *args, var_info=None):
+    def custom_cast(operand, target_type, *args, var_info=None, **kwargs):
         dtype = var_info[operand][1]
         if dtype == "index":
             ret = ops.index_cast(operand, target_type, var_info=var_info)
@@ -119,6 +228,8 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def binary_elementwise_common(operand1, operand2, var_info):
+        operand1.bounds = operand1.bounds.unknown()
+        operand2.bounds = operand2.bounds.unknown()
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
         # Tile size check
@@ -148,6 +259,13 @@ class ExtensionOverrides(common.OpOverrides):
             elif op_type1[1][0] == "f" and op_type2[1][0] == "i":
                 operand2 = ops.to_dtype(operand2, op_type1[1], var_info)
                 op_type2 = var_info[operand2]
+            elif op_type1[1][0] == op_type2[1][0]:
+                if int(op_type1[1][1:]) > int(op_type2[1][1:]):
+                   operand2 = ops.ext(operand2, op_type1[1])
+                   op_type2 = var_info[operand2]
+                elif int(op_type1[1][1:]) < int(op_type2[1][1:]):
+                   operand1 = ops.ext(operand1, op_type2[1])
+                   op_type1 = var_info[operand1]
             else:
                 raise NotImplementedError("Unsupported type converting")
 
@@ -157,28 +275,28 @@ class ExtensionOverrides(common.OpOverrides):
         return tile_size, ret_type, operand1, operand2
 
     @staticmethod
-    def add(operand1, operand2, *args, var_info=None):
+    def add(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         opcode = f'arith.add{ret_type[0]}'
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def sub(operand1, operand2, *args, var_info=None):
+    def sub(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         opcode = f'arith.sub{ret_type[0]}'
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def mul(operand1, operand2, *args, var_info=None):
+    def mul(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         opcode = f'arith.mul{ret_type[0]}'
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def div(operand1, operand2, *args, var_info=None):
+    def div(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         if ret_type[0] == "f":
@@ -188,7 +306,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def truediv(operand1, operand2, *args, var_info=None):
+    def truediv(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         if ret_type[0] == "f":
@@ -198,7 +316,17 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def minimum(operand1, operand2, *args, var_info=None):
+    def modular(operand1, operand2, *args, var_info=None, **kwargs):
+        tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
+        shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
+        if ret_type[0] == "f":
+            raise NotImplementedError("Not support remainder operation for floating point")
+        else:
+            opcode = f'arith.remui'
+        return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
+
+    @staticmethod
+    def minimum(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         if ret_type[0] == "f":
@@ -208,7 +336,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def maximum(operand1, operand2, *args, var_info=None):
+    def maximum(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
         if ret_type[0] == "f":
@@ -218,50 +346,123 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{opcode} %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def to_dtype(operand, dst_mlir_dtype, *args, var_info=None):
+    def to_dtype(operand, dst_mlir_dtype, *args, var_info=None, **kwargs):
         src_mlir_dtype = var_info[operand][1]
         tile_size = var_info[operand][0]
-
+        if isinstance(dst_mlir_dtype, torch.dtype):
+            dst_mlir_dtype = mlir_common.DTYPE_TO_MLIR[dst_mlir_dtype]
         dst_bits = int(dst_mlir_dtype[1:])
         src_bits = int(src_mlir_dtype[1:])
         shape = f"vector<{tile_size}x{dst_mlir_dtype}>" if tile_size > 1 else dst_mlir_dtype
         src_shape = f"vector<{tile_size}x{src_mlir_dtype}>" if tile_size > 1 else src_mlir_dtype
         if dst_mlir_dtype[0] == "i" and src_mlir_dtype[0] == "f":
-            raise NotImplementedError("floating point to integer conversion")
+            return f"arith.fptoui%{operand} : {src_shape} to {shape}", [tile_size, dst_mlir_dtype]
         if dst_mlir_dtype[0] == "f" and src_mlir_dtype[0] == "i":
-            raise NotImplementedError("integer to floating point conversion")
-        else:
+            return f"arith.uitofp%{operand} : {src_shape} to {shape}", [tile_size, dst_mlir_dtype]
+        if dst_mlir_dtype[0] == "i":
             if dst_bits > src_bits:
-                return f"arith.extui %{operand} : {src_shape} to {shape}"
+                return f"arith.extui %{operand} : {src_shape} to {shape}", [tile_size, dst_mlir_dtype]
             elif dst_bits < src_bits:
-                return f"arith.trunc %{operand} : {src_shape} to {shape}"
+                return f"arith.trunc %{operand} : {src_shape} to {shape}", [tile_size, dst_mlir_dtype]
+            return f"arith.maximumi %{operand}, %{operand} : {shape}", [tile_size, dst_mlir_dtype]
+        elif dst_mlir_dtype[0] == "f":
+            if dst_bits > src_bits:
+                return f"arith.extf %{operand} : {src_shape} to {shape}", [tile_size, dst_mlir_dtype]
+            elif dst_bits < src_bits:
+                return f"arith.trunf %{operand} : {src_shape} to {shape}", [tile_size, dst_mlir_dtype]
+            return f"arith.maximumf %{operand}, %{operand} : {shape}", [tile_size, dst_mlir_dtype]
+        else:
+            raise NotImplementedError("Unsupported type for to_dtype ops")
 
     @staticmethod
-    def constant(value, src_type, *args, var_info=None):
+    def constant(value, src_type, *args, var_info=None, **kwargs):
         if isinstance(src_type, torch.dtype):
             src_type = mlir_common.DTYPE_TO_MLIR[src_type]
 
+        if "inf" == str(value) or "-inf" == str(value) or "nan" == str(value):
+            value = f"0x{mlir_common.MLIR_INF[str(value)][src_type]:x}"
         # if value represented by e notation, convert to float (ex 1e-3 -> 1.0e-3)
-        if "e" in str(value):
-            value = float(value)
-        if src_type[0] == "f":
+        elif "e" in str(value):
+            value = format(float(value), ".20f")
+        elif src_type[0] == "f":
             value = format(value, ".20f")
-        if src_type[0] == "i":
+        elif src_type[0] == "i":
             value = int(value)
         return f'arith.constant {value} : {src_type}', [1, src_type]
 
-    # transcendental functions
     @staticmethod
-    def exp(operand, *args, var_info=None):
+    def alloc(size, src_type, *args, var_info=None, **kwargs):
+        return f"memref.alloc() : memref<{size}x{src_type}>", [size, src_type]
+
+    @staticmethod
+    def extractelement(operand, idx, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
+        shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
+        return f"vector.extract %{operand}[{idx}]: {dtype} from {shape}", [1, dtype]
 
+    # transcendental functions
+    @staticmethod
+    def exp(operand, *args, var_info=None, **kwargs):
+        # Check scalar
+        op_type = var_info[operand]
+        if op_type[0] == 1:
+            val = ops.constant(0, op_type[1])
+            var_info[val][0] = 4
+            operand = ops.broadcast(operand, val)
+            val = ops.exp(operand)
+            result = ops.extractelement(val, 0)
+            return result, var_info[result]
+        op_type = var_info[operand]
+        tile_size = op_type[0]
+        dtype = op_type[1]
         shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
         return f'math.exp %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
-    def sqrt(operand, *args, var_info=None):
+    def erf(operand, *args, var_info=None, **kwargs):
+        # Check scalar
+        op_type = var_info[operand]
+        if op_type[0] == 1:
+            val = ops.constant(0, op_type[1])
+            var_info[val][0] = 4
+            operand = ops.broadcast(operand, val)
+            val = ops.exp(operand)
+            result = ops.extractelement(val, 0)
+            return result, var_info[result]
+        op_type = var_info[operand]
+        tile_size = op_type[0]
+        dtype = op_type[1]
+        shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
+        return f'math.erf %{operand} : {shape}', [tile_size, dtype]
+
+    @staticmethod
+    def tanh(operand, *args, var_info=None, **kwargs):
+        op_type = var_info[operand]
+
+        # Check scalar
+        op_type = var_info[operand]
+        if op_type[0] == 1:
+            val = ops.constant(0, op_type[1])
+            var_info[val][0] = 4
+            operand = ops.broadcast(operand, val)
+            val = ops.exp(operand)
+            result = ops.extractelement(val, 0)
+            return result, var_info[result]
+        op_type = var_info[operand]
+        tile_size = op_type[0]
+        dtype = op_type[1]
+
+        # Type check & auto cast
+        if dtype[0] != "f":
+            operand, dtype = ops.to_dtype(operand, "f32", var_info=var_info)
+            var_info[operand] = dtype
+        shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
+        return f'math.tanh %{operand} : {shape}', [tile_size, dtype]
+
+    @staticmethod
+    def sqrt(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
@@ -275,7 +476,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'math.sqrt %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
-    def rsqrt(operand, *args, var_info=None):
+    def rsqrt(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
@@ -289,29 +490,23 @@ class ExtensionOverrides(common.OpOverrides):
         return f'math.rsqrt %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
-    def pow(operand1, operand2, *args, var_info=None):
-        op_type1 = var_info[operand1]
-        op_type2 = var_info[operand2]
+    def pow(operand1, operand2, *args, var_info=None, **kwargs):
+        tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
+        # Type check & auto cast
+        if ret_type[0] != "f":
+            operand1, ret_type = ops.to_dtype(operand1, "f32", var_info=var_info)
+            var_info[operand1] = ret_type
 
         # Type check & auto cast
-        if op_type1[1][0] != "f":
-            operand1, dtype = ops.to_dtype(operand1, "f32", var_info=var_info)
-            var_info[operand1] = dtype
+        if ret_type[0] != "f":
+            operand2, ret_type = ops.to_dtype(operand2, "f32", var_info=var_info)
+            var_info[operand2] = ret_type
 
-        # Type check & auto cast
-        if op_type2[1][0] != "f":
-            operand2, dtype = ops.to_dtype(operand2, "f32", var_info=var_info)
-            var_info[operand2] = dtype
-
-        op_type1 = var_info[operand1]
-        tile_size = op_type1[0]
-        dtype = op_type1[1]
-
-        shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
-        return f"math.pow{dtype[0]} %{operand1}, %{operand2} : {shape}", []
+        shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
+        return f"math.pow{ret_type[0]} %{operand1}, %{operand2} : {shape}", [tile_size, ret_type]
 
     @staticmethod
-    def log(operand, *args, var_info=None):
+    def log(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
@@ -325,7 +520,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'math.log %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
-    def reciprocal(operand, *args, var_info):
+    def reciprocal(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
@@ -337,9 +532,20 @@ class ExtensionOverrides(common.OpOverrides):
 
         return ops.div(ops.constant(1.0, dtype), operand), [tile_size, dtype]
 
+    @staticmethod
+    def ext(operand, dtype, *args, var_info=None, **kwargs):
+        op_type = var_info[operand]
+        shape = f"vector<{op_type[0]}x{op_type[1]}>" if op_type[0] > 1 else f"{op_type[1]}"
+        target_type = f"vector<{op_type[0]}x{dtype}>" if op_type[0] > 1 else f"{dtype}"
+        if op_type[0] == "f":
+            opcode = f'arith.extf'
+        else:
+            opcode = f'arith.extui'
+        return f'{opcode} %{operand} : {shape} to {target_type}', [op_type[0], dtype]
+
     # Logical operations
     @staticmethod
-    def neg(operand, *args, var_info=None):
+    def neg(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         dtype = op_type[1]
@@ -353,7 +559,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'arith.negf %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
-    def eq(operand1, operand2, *args, var_info=None):
+    def eq(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -368,7 +574,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def ne(operand1, operand2, *args, var_info=None):
+    def ne(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -383,7 +589,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def lt(operand1, operand2, *args, var_info=None):
+    def lt(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -398,7 +604,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def gt(operand1, operand2, *args, var_info=None):
+    def gt(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -413,7 +619,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def le(operand1, operand2, *args, var_info=None):
+    def le(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -428,7 +634,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def ge(operand1, operand2, *args, var_info=None):
+    def ge(operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         if ret_type[0] == "f":
             op_type = "arith.cmpf"
@@ -443,7 +649,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'{op_type} {attribute}, %{operand1}, %{operand2} : {shape}', [tile_size, "i1"]
 
     @staticmethod
-    def and_(operand1, operand2, *args, var_info=None):
+    def and_(operand1, operand2, *args, var_info=None, **kwargs):
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
 
@@ -464,7 +670,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'arith.andi %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def or_(operand1, operand2, *args, var_info=None):
+    def or_(operand1, operand2, *args, var_info=None, **kwargs):
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
 
@@ -485,7 +691,7 @@ class ExtensionOverrides(common.OpOverrides):
         return f'arith.ori %{operand1}, %{operand2} : {shape}', [tile_size, ret_type]
 
     @staticmethod
-    def xor(operand1, operand2, *args, var_info=None):
+    def xor(operand1, operand2, *args, var_info=None, **kwargs):
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
 
@@ -507,30 +713,50 @@ class ExtensionOverrides(common.OpOverrides):
 
 
     @staticmethod
-    def logical_and(operand, *args, var_info=None):
-        raise NotImplementedError("logical_and")
+    def logical_and(operand1, operand2, *args, var_info=None, **kwargs):
+        op_type = var_info[operand1]
+        # Type check & auto cast
+        if op_type[1] != "i1":
+            raise NotImplementedError("Logical operation with not bool data type")
+        return ExtensionOverrides.and_(operand1, operand2, *args, var_info=var_info, **kwargs)
 
     @staticmethod
-    def logical_not(operand, *args, var_info=None):
-        raise NotImplementedError("logical_not")
+    def logical_not(operand, *args, var_info=None, **kwargs):
+        op_type = var_info[operand]
+
+        ret_type = op_type[1]
+        tile_size = op_type[0]
+        shape = f"vector<{tile_size}x{ret_type}>" if tile_size > 1 else ret_type
+        const_one = ops.constant(0, ret_type)
+        const_one = ops.broadcast(const_one, operand, var_info=var_info)
+        ret = ops.eq(operand,const_one)
+        return ret, [tile_size, var_info[ret]]
 
     @staticmethod
-    def logical_or(operand, *args, var_info=None):
-        raise NotImplementedError("logical_not")
+    def logical_or(operand1, operand2, *args, var_info=None, **kwargs):
+        op_type = var_info[operand1]
+        # Type check & auto cast
+        if op_type[1] != "i1":
+            raise NotImplementedError("Logical operation with not bool data type")
+        return ExtensionOverrides.or_(operand1, operand2, *args, var_info=var_info, **kwargs)
 
     @staticmethod
-    def logical_xor(operand, *args, var_info=None):
-        raise NotImplementedError("logical_not")
+    def logical_xor(operand1, operand2, *args, var_info=None, **kwargs):
+        op_type = var_info[operand1]
+        # Type check & auto cast
+        if op_type[1] != "i1":
+            raise NotImplementedError("Logical operation with not bool data type")
+        return ExtensionOverrides.xor(operand1, operand2, *args, var_info=var_info, **kwargs)
 
     @staticmethod
-    def relu(operand, *args, var_info=None):
+    def relu(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         ret_type = "f32"
         return ops.maximum(operand, ops.constant(0.0, "f32")), [tile_size, ret_type]
 
     @staticmethod
-    def sigmoid(operand, *args, var_info=None):
+    def sigmoid(operand, *args, var_info=None, **kwargs):
         op_type = var_info[operand]
         tile_size = op_type[0]
         ret_type = "f32"
@@ -539,7 +765,7 @@ class ExtensionOverrides(common.OpOverrides):
 
     # Special operaitons
     @staticmethod
-    def where(condition, operand1, operand2, *args, var_info=None):
+    def where(condition, operand1, operand2, *args, var_info=None, **kwargs):
         tile_size, ret_type, operand1, operand2 = ExtensionOverrides.binary_elementwise_common(operand1, operand2, var_info)
         cond_type = var_info[condition]
         if cond_type[0] < tile_size:
@@ -555,30 +781,11 @@ class ExtensionOverrides(common.OpOverrides):
 
 
     @staticmethod
-    def masked(mask, body, other, *args, var_info=None, tile_size=16, dtype="f32", ninf_declared=False):
+    def masked(mask, body, other, *args, var_info=None, tile_size=16, dtype="f32", ninf_declared=False, **kwargs):
         result = body()
-        val = ops.constant(0.0, "f32")
+        val = ops.constant(other, dtype, *args, **kwargs)
         result = ops.where(mask, result, val)
         return result, var_info[result]
-
-    @staticmethod
-    def _index_expr(operand, *args, var_info=None, **kwargs):
-        symbols = sorted([str(i) for i in operand.free_symbols])
-        renamed_symbols = {symbol: sympy.Symbol(f"d{i}") for i, symbol in enumerate(symbols)}
-
-        renamed_expression = operand.subs(renamed_symbols)
-
-        affine_map_str = "(" + ", ".join([f"d{i}" for i in range(len(symbols))]) + ") -> ("
-        affine_map_str += sympy.printing.ccode(renamed_expression) + ")"
-
-        map_operands = [f"%{str(symbol)}" for symbol in symbols]
-        return f"affine.apply affine_map<{affine_map_str}>({', '.join(map_operands)})", [1, "index"]
-
-    @staticmethod
-    def index_expr(operand, *args, var_info=None, **kwargs):
-        result = ops._index_expr(operand)
-        ret_type = [1, "index"]
-        return result, ret_type
 
     @staticmethod
     def index_cast(operand, target_type, *args, var_info=None, **kwrags):
@@ -587,14 +794,32 @@ class ExtensionOverrides(common.OpOverrides):
         des_shape = f"vector<{op_type[0]}x{target_type}>" if op_type[0] > 1 else target_type
         return f"arith.index_cast %{operand} : {src_shape} to {des_shape}", [op_type[0], target_type]
 
+    @staticmethod
+    def broadcast_unflat(operand1, operand2, *args, var_info=None, **kwargs):
+        op_type1 = var_info[operand1]
+        op_type2 = var_info[operand2]
+        src_shape = f"vector<{op_type1[0]}x{op_type1[1]}>"# if op_type1[0] > 1 else op_type1[1]
+        des_shape = f"vector<{op_type2[0]//op_type1[0]}x{op_type1[0]}x{op_type1[1]}>"# if op_type2[0] > 1 else op_type1[1] # Use tile size only
+
+        expand = f"vector.broadcast %{operand1} : {src_shape} to {des_shape}"
+        return expand, [op_type2[0], op_type1[1]]
 
     @staticmethod
-    def broadcast(operand1, operand2, *args, var_info=None):
+    def broadcast(operand1, operand2, *args, var_info=None, **kwargs):
         op_type1 = var_info[operand1]
         op_type2 = var_info[operand2]
         src_shape = f"vector<{op_type1[0]}x{op_type1[1]}>" if op_type1[0] > 1 else op_type1[1]
-        des_shape = f"vector<{op_type2[0]}x{op_type1[1]}>" if op_type2[0] > 1 else op_type1[1] # Use tile size only
-        expand = f"vector.broadcast %{operand1} : {src_shape} to {des_shape}"
+        des_shape = f"vector<{op_type2[0]}x{op_type1[1]}>" # if op_type2[0] > 1 else op_type1[1] # Use tile size only
+
+        # Special case for length 2 vector. We used this vector to avoid scalar operations...
+        if op_type1[0] != 1 and op_type2[0] % op_type1[0] == 0:
+            unflat_operand = ops.broadcast_unflat(operand1, operand2)
+            unflat_shape = f"vector<{op_type2[0]//op_type1[0]}x{op_type1[0]}x{op_type1[1]}>"
+            expand = f"vector.shape_cast %{unflat_operand} : {unflat_shape} to {des_shape}"
+        elif op_type1[0] == 1:
+            expand = f"vector.broadcast %{operand1} : {src_shape} to {des_shape}"
+        else:
+            raise NotImplementedError("Not supporting broadcast type...")
         return expand, [op_type2[0], op_type1[1]]
 
 RTYPE_TO_MLIR = {
@@ -606,363 +831,268 @@ DMA_TYPE = {
     "MVIN1": 2,
     "MVIN2": 1,
     "MVIN3": 14,
-    "MVOUT": 3,
+    "MVOUT1": 3,
 }
-
-class MLIRTile():
-    TILE_ROW_WISE = 0
-    TILE_COL_WISE = 1
-    TILE_PER_LANE_ROW_WISE = 2
-    TILE_PER_LANE_COL_WISE = 3
-    def __init__(self, n_row, n_col, vector_lane, used_vector_lane=None) -> None:
-        self.n_row = n_row
-        self.n_col = n_col
-        self.vector_lane = vector_lane
-        if used_vector_lane is None:
-            self.used_vector_lane = self.vector_lane
-        else:
-            self.used_vector_lane = used_vector_lane
-        self.tile_per_lane_layout = self.TILE_PER_LANE_ROW_WISE # How a given tile per lane is stored
-        self.tile_layout = self.TILE_ROW_WISE # How a given tile is stored per lane
-        self.vector_lane_axis = (self.n_col//self.used_vector_lane) > 0 #(0: Col major, 1: Row major)
-
-    def get_tile_size(self):
-        return self.n_row * self.n_col
-
-    def get_rows_per_lane(self):
-        if self.n_row % self.used_vector_lane != 0 and self.n_row > 1:
-            print(f"[Warning] n_row({self.n_row}) % vector_lane({self.used_vector_lane}) != 0")
-        return self.div_round_up(self.n_row, self.used_vector_lane)
-
-    def get_cols_per_lane(self):
-        if self.n_col % self.used_vector_lane != 0 and self.n_col > 1:
-            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.used_vector_lane}) != 0")
-        return self.div_round_up(self.n_col, self.used_vector_lane)
-
-    def get_tile_size_per_lane(self):
-        if self.get_tile_size() % self.used_vector_lane != 0:
-            print(f"[Warning] n_col({self.n_col}) % vector_lane({self.used_vector_lane}) != 0")
-        return self.div_round_up(self.get_tile_size(), self.used_vector_lane)
-
-    def get_tile_shape(self):
-        return f"{self.n_row}x{self.n_col}"
-
-    def get_chunk_size(self):
-        if self.tile_layout == self.TILE_ROW_WISE:
-            chunk_size = self.get_tile_size_per_lane()
-        else:
-            chunk_size = self.get_cols_per_lane()
-        return chunk_size
-
-    @staticmethod
-    def div_round_up(size, round_val):
-        return (size + round_val - 1) // round_val
 
 class MLIRKernel(mlir_common.BaseMLIRKernel):
     overrides = ExtensionOverrides
     newvar_prefix = "%"
 
-    def __init__(self):
-        super().__init__(mlir_common.MLIRKernelArgs())
-        self.kernel_group = None
-        self.call_ranges = None
-        self.ranges = None
-        self.itervars = None
-        self.reduction_depth = None
+    def __init__(self, kernel_group, reason=None):
+        super().__init__(kernel_group, reason=reason)
+        self.const_buffer = IndentedBuffer()
+        self.alloc_buffer = IndentedBuffer()
+        self.spad_buffer = IndentedBuffer()
         self.reduction_prefix = IndentedBuffer()
         self.reduction_suffix = IndentedBuffer()
-        self.body = IndentedBuffer()
+        self.applys = IndentedBuffer()
+        self.masks = IndentedBuffer()
+        self.dma_loads = IndentedBuffer()
+        self.dma_stores = IndentedBuffer()
+        self.indexed_buffer = IndentedBuffer()
         self.global_vars = IndentedBuffer()
-        self.global_vars_dict = dict()
         self.header = IndentedBuffer()
         self.gem5_header = IndentedBuffer()
-        self.reduction_vars = {}
+        self.header.writeline("#include <unistd.h>")
+        self.header.writeline("#include <stdlib.h>")
+        self.header.writeline("void* __wrap_malloc(size_t size) { return sbrk(size); }")
+        self.header.writeline("void __wrap_free(void *ptr) { return; }")
         self.reduction_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="tmp_acc")
+        self.spad_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="spad")
+        self.apply_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="apply")
+        self.mask_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="mask")
         self.iterator_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="iter")
         self.init_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="init")
         self.init_vec_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="init_vec")
+        self.const_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="const")
+        self.alloc_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="alloc")
+        self.indexed_cse = common.CSE(self.newvar_prefix, self.suffix, name_prefix="indexed_op")
         self.map_cse = common.CSE("#", self.suffix, name_prefix="map")
-        self.consts = set()
-        self.tags = set()
-        self.tile_desc = MLIRTile(self.tile_row, self.tile_col, self.vector_lane)
-        self.dma_cache = {}
-        self.dma_counter = 1
-        self.reduction_idx = {}
+        self.global_vars_dict = dict()
+        self.reduction_vars = dict()
+        self.consts = dict()
+        self.tags = dict()
+        self.dma_read_cache = dict()
+        self.dma_write_cache = dict()
+        self.spadbuf_counter = 0
+        self.dma_read_counter = 1
+        self.dma_write_counter = 1
+        self.dma_tag_id = 0
         self.affine_yield = {}
         self.welford_reduce_out = None
         self.reduce_iterator = {}
-        self.is_template_kernel = False
+        self.spad_buffer_dict = dict()
+        self.base_vector_initialized = False
 
-    def get_constant_vector(self, expr):
-        constant_vector = [[int(expr.coeff(var)),None] for var in self.itervars]
-        return constant_vector
+    def reset(self, reason):
+        self.__init__(self.kernel_group, reason=reason)
 
-    def get_constant_vector2(self, expr):
-        # Case 0. symbol ex) index 0
-        # Case 1. inner product form ex) 16 * index0 + 1 * index1
-        # Case 2. Complicated form ex) 16 * index0 + 8 * (index//4) + (index % 4)
-        constant_vector = []
+    # padding type 0: zero-padding 1: negative-padding(-inf) ...
+    def get_padding_type(self):
+        ops = self.current_node.node.origins
+        if self.current_node.is_reduction():
+            for op in ops:
+                if "exp" in op.name: # exponential reduciton case
+                    return 1
+        # for op in ops: # TODO: padding has some problem in the case of max_pool
+        #     if "max_pool" in op.args[0].name:
+        #         return 1
+        return 0
+
+    def convert_index(self, expr, buffer):
+        if len(expr.free_symbols) != 1:
+            raise NotImplementedError("Not supporting this view operation...!")
+
         if expr.is_symbol:
-            constant_vector.append(tuple([1, expr]))
-            return constant_vector
-
-        for arg in expr.args:
-            if arg.is_symbol:
-                constant_vector.append(tuple([1,arg]))
-                continue
-            if len(arg.args) == 0: #TODO: check this
-                continue
-            if arg.args[0].is_number:
-                constant_vector.append(arg.args)
-            else:
-                constant_vector.append([1, arg])
-
-        return constant_vector
-
-    def find_node_by_name(self, name):
-        if name in V.graph.graph_inputs:
-            return V.graph.graph_inputs[name]
-        else:
-            for output_node in V.graph.graph_outputs:
-                if output_node.data.name == name:
-                    return output_node
-
-    def get_dma_info(self, name, index, dtype):
-        current_tile = MLIRTile(self.tile_desc.n_row, self.tile_desc.n_col, self.tile_desc.vector_lane, self.tile_desc.used_vector_lane)
-        cv = self.get_constant_vector(index)
-        cv2 = self.get_constant_vector2(index)
-        tile_size_per_lane = self.tile_desc.get_tile_size_per_lane()            # FIXME. move this
-        tile_size_per_lane = 2 if tile_size_per_lane==1 else tile_size_per_lane # Avoid scalar operation
-
-        if len(cv) != len(cv2) and len(cv2) == 3:
-            print("Mismatch! ", cv)
-            # FIXME. this is really shitty code :(
-            cv = cv2#[[1 if x[0] == 0 else x[0], x[1]] for x in cv]
-
-        # Case 0. Tile is 0-D scalar
-        if len(cv) == 0:
-            # Use only one vectorlane to handle scalar data
-            current_tile.n_row = 1
-            current_tile.n_col = 1
-            current_tile.tile_layout = MLIRTile.TILE_ROW_WISE
-            current_tile.tile_per_lane_layout = MLIRTile.TILE_PER_LANE_ROW_WISE
-            mm_stride, tile_size_per_lane = 1, 1
-            chunk_size = current_tile.get_chunk_size()
-        # Case 1. Tile is 1-D vector type
-        elif len(cv) == 1 and len(cv) <= self.reduction_depth:
-            current_tile.n_row = 1
-            current_tile.n_col = self.tile_desc.get_tile_size()
-            current_tile.tile_layout = MLIRTile.TILE_ROW_WISE
-            current_tile.tile_per_lane_layout = MLIRTile.TILE_PER_LANE_COL_WISE # Actually it is not needed in vector case
-            chunk_size = current_tile.get_chunk_size()
-            mm_stride = current_tile.n_col
-        # Case 2. Tile is 1-D vector type with reduction
-        elif len(cv) == 1 and len(cv) == self.reduction_depth + 1:
-            # Use only one vectorlane to reduce a vector
-            current_tile.tile_layout = MLIRTile.TILE_ROW_WISE
-            current_tile.tile_per_lane_layout = MLIRTile.TILE_PER_LANE_ROW_WISE
-            current_tile.n_row = 1
-            current_tile.n_col = self.tile_desc.get_tile_size()
-            current_tile.used_vector_lane = 1
-            chunk_size = current_tile.get_chunk_size()
-            mm_stride = 0 # don't care
-        # Case 3. Tile is 2-D tile
-        elif len(cv) == 2:
-            is_reduction = self.reduction_depth == 1
-            if cv[0][0] != 0 and cv[1][0] != 0:
-                is_transposed = cv[0][0] < cv[1][0]
-                if is_transposed:
-                    current_tile.n_row = self.tile_desc.n_col
-                    current_tile.n_col = self.tile_desc.n_row
-                    mm_stride = self.ranges[0]
-                else:
-                    current_tile.n_row = self.tile_desc.n_row
-                    current_tile.n_col = self.tile_desc.n_col
-                    mm_stride = self.ranges[1]
-
-                if is_reduction and is_transposed:
-                    current_tile.tile_layout = MLIRTile.TILE_COL_WISE
-                    current_tile.tile_per_lane_layout = MLIRTile.TILE_PER_LANE_ROW_WISE
-                    chunk_size = current_tile.get_chunk_size()
-                elif is_reduction and not is_transposed:
-                    current_tile.tile_layout = MLIRTile.TILE_ROW_WISE
-                    current_tile.tile_per_lane_layout = MLIRTile.TILE_PER_LANE_COL_WISE
-                    chunk_size = current_tile.get_chunk_size()
-                elif not is_reduction and is_transposed:
-                    # Transposed case
-                    current_tile.tile_layout = MLIRTile.TILE_COL_WISE
-                    current_tile.tile_per_lane_layout = MLIRTile.TILE_PER_LANE_COL_WISE
-                    chunk_size = current_tile.get_chunk_size()
-                else: # not is_reduction and not is_transpose
-                    current_tile.tile_layout = MLIRTile.TILE_COL_WISE if self.tile_desc.vector_lane_axis else MLIRTile.TILE_ROW_WISE
-                    current_tile.tile_per_lane_layout = MLIRTile.TILE_PER_LANE_ROW_WISE
-                    chunk_size = current_tile.get_chunk_size()
-            else:
-                # Broadcast pattern
-                current_tile.tile_per_lane_layout = MLIRTile.TILE_PER_LANE_ROW_WISE
-                mm_stride = 0
-                if cv[0][0] == 0:
-                    current_tile.tile_layout = MLIRTile.TILE_COL_WISE if self.tile_desc.vector_lane_axis else MLIRTile.TILE_ROW_WISE
-                    current_tile.n_row = self.tile_desc.n_row
-                    current_tile.n_col = self.tile_desc.n_col
-                    chunk_size = current_tile.get_chunk_size()
-                else: # cv[1][0] == 0
-                    current_tile.n_row = self.tile_desc.n_col
-                    current_tile.n_col = self.tile_desc.n_row
-                    chunk_size = current_tile.get_cols_per_lane()
-                    if not is_reduction:
-                        current_tile.tile_per_lane_layout = MLIRTile.TILE_PER_LANE_COL_WISE
-                        chunk_size = current_tile.n_col if self.tile_desc.vector_lane_axis else chunk_size
-        elif len(cv) == 3:
-            current_tile.tile_per_lane_layout = MLIRTile.TILE_PER_LANE_COL_WISE # Actually it is not needed in vector case
-            mm_stride = cv[-1][0]
-            # When current_tile.n_col stride is 1, we can access row vector
-            if mm_stride == 1:
-                current_tile.n_row = 1
-                current_tile.n_col = self.tile_desc.get_tile_size()
-            # if current_tile.n_col stride is not 1, we have to access in a column vector
-            else:
-                current_tile.n_row = self.tile_desc.get_tile_size()
-                current_tile.n_col = 1
-            chunk_size = current_tile.get_tile_size_per_lane()
-        else:
-            raise NotImplementedError()
-
-        #assert(not (dtype==torch.bool and chunk_size < 8))
-        chunk = chunk_size << 1 | (current_tile.tile_per_lane_layout == MLIRTile.TILE_PER_LANE_COL_WISE)
-        return mm_stride, chunk, [current_tile.n_row, current_tile.n_col], tile_size_per_lane
-
-    def parse_indices(self, expr):
-        if len(expr.args) == 0:
             return expr
 
-        # Extract index var
         expr_str = str(expr)
-        pattern = r'index\d+'
-        indices = OrderedDict()
-        for index in re.findall(pattern, expr_str):
-            indices[index] = None
-        indices = list(indices.keys())
-
-        args = ", ".join(map(str, indices))
-        if "//" in expr_str:
-            expr_str = expr_str.replace("//", " floordiv ")
-        pattern = r"ModularIndexing\((.*?)\)"
-        matches = re.search(pattern, expr_str)
-        if matches:
-            mod_args = matches.group(1)
-            args_list = mod_args.split(", ")
-            replace_str = f"({args_list[0]} floordiv {args_list[1]}) mod {args_list[2]}"
+        if isinstance(expr, ModularIndexing):
+            replace_str = f"({expr.args[0]} floordiv {expr.args[1]}) mod {expr.args[2]}"
             expr_str = re.sub(r"ModularIndexing\([^)]*\)", replace_str, expr_str)
+        elif "//" in expr_str:
+            expr_str = expr_str.replace("//", " floordiv ")
+        else:
+            raise NotImplementedError("What is this case?")
 
+        indices = [expr.args[0]]
+        args = ", ".join(map(str, indices))
         map_var = self.map_cse.generate(self.global_vars, f"affine_map<({args}) -> ({expr_str})>")
         args = ", ".join([f"%{i}" for i in indices])
-        index = self.cse.generate(self.loads, f"affine.apply #{map_var}({args})")
+        index = self.apply_cse.generate(buffer, f"affine.apply #{map_var}({args})")
         return index
 
-    def codegen_nodes(self, nodes, kernel_name):
-        _, (group, reduction_group) = max(
-            nodes, key=lambda x: int(x.is_reduction())
-        ).group
+    def parse_indices(self, expr, buffer=None, comments="", indirect_dims=[]) -> common.CSEVariable:
+        if buffer is None:
+            buffer = self.applys
 
-        self.set_ranges(group, reduction_group, None)
-        with self as kernel:
-            kernel.args = kernel.kernel_group.args
-            for node in nodes:
-                vars, reduction_vars = kernel.set_ranges(group, reduction_group, node.read_writes)
-                kernel.args.tile_row = kernel.tile_desc.n_row
-                kernel.args.tile_col = kernel.tile_desc.n_col
-                _, _, _, kernel.buffer_types = kernel.args.mlir_argdefs()
-                kernel.reduction_idx = {var: i for i, var in enumerate(reduction_vars)}
-                node.run(vars, reduction_vars)
-        src_code = self.codegen_kernel(kernel_name=kernel_name)
-        self.meta_kernel()
+        # Constant case
+        if expr.is_number and len(indirect_dims) == 0:
+            return self.get_const_cse(int(expr))
 
-        write_path = extension_codecache.get_write_path(src_code)
-        if not os.path.exists(write_path):
-            os.makedirs(write_path)
-        spike_write_path = os.path.join(write_path, "global_var.h")
-        gem5_write_path = os.path.join(write_path, "gem5_global_var.h")
-        if not os.path.exists(spike_write_path):
-            write_atomic(spike_write_path, self.header.getvalue())
-        if not os.path.exists(gem5_write_path):
-            write_atomic(gem5_write_path, self.gem5_header.getvalue())
-        return src_code
+        # Identity case
+        if len(expr.args) == 0 and len(indirect_dims) == 0:
+            return expr
+
+        if len(expr.args) == 0:
+            args = [expr]
+        else:
+            args = list(expr.args)
+        # Sort index variable.. ex) (%index1, %index0)
+        args_dict = {term: list(term.free_symbols)[0] for term in args if term.free_symbols}
+        sorted_args = sorted(args_dict.keys(), key=lambda term: str(args_dict[term]))
+        indices = []
+        for arg in sorted_args:
+            if arg.is_Mul and arg.args[0].is_number:
+                new_arg = sympy.Symbol(str(self.convert_index(arg.args[1], buffer)))
+                expr = expr.replace(arg.args[1], new_arg)
+                indices.append(str(new_arg))
+            elif not arg.is_number:
+                new_arg = sympy.Symbol(str(self.convert_index(arg, buffer)))
+                expr = expr.replace(arg, new_arg)
+                indices.append(str(new_arg))
+
+        # Extract index var
+        indirect_args = [f"%{i}" for i in indirect_dims]
+        expr_str = str(expr)
+        args = ", ".join(map(str, indices))
+        map_var = self.map_cse.generate(self.global_vars, f"affine_map<({args})[{','.join(indirect_dims)}] -> ({expr_str})>")
+        args = ", ".join([f"%{i}" for i in indices])
+        index = self.apply_cse.generate(buffer, f"affine.apply #{map_var}({args})[{','.join(indirect_args)}] {comments}")
+        return index
+
+    def parse_index_list(self, expr_list:list, buffer=None) -> common.CSEVariable:
+        if buffer is None:
+            buffer = self.applys
+        zero_var = self.get_const_cse(0)
+        expr_list = [arg for arg in expr_list]
+        dim_list = [f"d{i}" for i in range(len(expr_list))]
+
+        if len(expr_list) == 1 and expr_list[0].is_number:
+            # Constant case
+            return self.get_const_cse(int(expr_list[0]))
+        elif len(expr_list) == 1 and expr_list[0].is_symbol:
+            # Identity case
+            return expr_list[0]
+
+        indices = []
+        new_expr_list = [0] * len(expr_list)
+        for idx, arg in enumerate(expr_list):
+            if arg.is_Mul and arg.args[0].is_number:
+                new_arg = sympy.Symbol(str(self.convert_index(arg.args[1], buffer)))
+                new_expr_list[idx] = arg.subs(arg.args[1], dim_list[idx])
+                indices.append(str(new_arg))
+            elif not arg.is_number:
+                new_arg = sympy.Symbol(str(self.convert_index(arg, buffer)))
+                new_expr_list[idx] = new_arg.subs(new_arg, dim_list[idx])
+                indices.append(str(new_arg))
+            else:
+                const_var = self.get_const_cse(int(arg))
+                new_arg = sympy.Symbol(f"{const_var}")
+                new_expr_list[idx] = arg
+                indices.append(str(new_arg))
+
+        # Extract index var
+        expr_str = str(sum(new_expr_list))
+        args = ", ".join(map(str, dim_list))
+        map_var = self.map_cse.generate(self.global_vars, f"affine_map<({args})[] -> ({expr_str})>")
+        args = ", ".join([f"%{i}" for i in indices])
+        index = self.apply_cse.generate(buffer, f"affine.apply #{map_var}({args})[]")
+        return index
 
     def load(self, name: str, index: sympy.Expr):
         index = self.rename_indexing(index)
-        indices = self.parse_indices(index)
-        prefix = self.newvar_prefix
-        if index.is_number:
-            prefix = prefix + "c"
-            self.consts.add(int(index))
-        var = self.args.input(name)
+        index = self.convert_indirect_indexing(index)
+        padding = self.get_padding_type()
+
+        # Extract dram info
+        dram_var = self.kernel_group.args.input(name)
+        dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         dtype = V.graph.get_dtype(name)
-        type_name = mlir_common.DTYPE_TO_MLIR[dtype]
-        stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(name, index, dtype)
-        dram_tile_shape = f"{tile_shape[0]}x{tile_shape[1]}"
+        mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
+
+        # Extract sram info
+        local_tile_desc, index_var, dram_stride = self.get_dma_info(name, index)
+        vlane_split_axis = local_tile_desc.vlane_split_axis
+        vlane_stride = local_tile_desc.vlane_stride
+        tile_numel_per_lane = local_tile_desc.get_numel_per_lane()
+        tile_shape = local_tile_desc.get_mlir_shape(mlir_dtype)
+        tile_stride = local_tile_desc.get_tile_stride()
+
+        # Compute vector unit size
+        vshape = self.kernel_group.tile_desc.get_mlir_vshape(mlir_dtype)
+        compute_vec_size = self.kernel_group.tile_desc.get_compute_vec_size()
 
         # Define scratch pad buffer
-        buffer, indices = self.get_scratchpad_buffer(dtype, name, self.tile_desc.n_row, self.tile_desc.n_col, dram_tile_shape, self.loads, indices, index)
-        # MVIN Encoding
-        dma_key = (stride, chunk, dtype)
-        if dma_key in self.dma_cache:
-            dmaType, stride, chunk = self.dma_cache[dma_key]
-        else:
-            assert(self.dma_counter < 4)
-            dmaType = DMA_TYPE[f"MVIN{self.dma_counter}"]
-            self.dma_counter += 1
-            self.consts.add(dmaType)
-            self.consts.add(stride)
-            self.consts.add(chunk)
-            self.dma_cache[dma_key] = dmaType, stride, chunk
-        self.tags.add(f"{name}_tag")
-        self.consts.add(0)
-        code = f"affine.dma_start %{var}[{prefix}{indices}], %{buffer}[%c0, %c0], %{name}_tag[0], %c{dmaType}, %c{stride}, %c{chunk} : memref<{self.buffer_types[name][1]}x{type_name}>, memref<{dram_tile_shape}x{type_name}, 1>, memref<1xi32>"
-        self.cse.generate(self.loads, code, assignment = False) # FIXME: assignment = False does not support caching
+        sram_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, local_tile_desc, index)
 
-        operation = "affine.vector_load" if tile_size_per_lane > 1 else "affine.load"
-        shape = f", vector<{tile_size_per_lane}x{type_name}>" if tile_size_per_lane > 1 else ""
-        line = f"{operation} %{buffer}[0, 0] : memref<{dram_tile_shape}x{type_name}, 1>{shape}"
+        # MVIN Encoding
+        attribute = f"{{dram_stride={dram_stride}, sram_stride={tile_stride}, padding={padding}}}"
+        code = self.get_dma_code("MVIN", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
+                                 dram_shape, tile_shape, attribute)
+        self.cse.generate(self.dma_loads, code, assignment = False) # FIXME: assignment = False does not support caching
+        compute_index_var = ",".join(sram_index_var.split(",")[:-1] + [f"%{self.compute_idx}"])
+        # Generate vector load instruction
+        if compute_vec_size > 1:
+            operation = "affine.vector_load"
+            line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}, {vshape}"
+        else:
+            operation = "affine.load"
+            line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}"
         out = self.cse.generate(self.loads, line)
-        var_info = [tile_size_per_lane, mlir_common.DTYPE_TO_MLIR[dtype]]
-        self.register_var_info(out, var_info)
+        self.register_var_info(out, [compute_vec_size, mlir_dtype])
+        self.spad_buffer_dict[str(out)] = [sram_var, local_tile_desc.get_tile_size(), tile_numel_per_lane, sram_index_var, tile_shape, vshape]
         return out
 
     def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
         index = self.rename_indexing(index)
-        indices = self.parse_indices(index)
-        prefix = self.newvar_prefix
-        if index.is_number:
-            prefix = prefix + "c"
-            self.consts.add(int(index))
-        var = self.args.output(name)
+        dram_var = self.kernel_group.args.output(name)
         dtype = V.graph.get_dtype(name)
-        type_name = mlir_common.DTYPE_TO_MLIR[dtype]
-        stride, chunk, tile_shape, tile_size_per_lane = self.get_dma_info(name, index, dtype)
-        dram_tile_shape = f"{tile_shape[0]}x{tile_shape[1]}"
+        mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
 
-        # Define scratch pad buffer
-        buffer, indices = self.get_scratchpad_buffer(dtype, name, self.tile_desc.n_row, self.tile_desc.n_col, dram_tile_shape, self.stores, indices, index)
+        # Prepare dma instruction
+        local_tile_desc, index_var, dram_stride = self.get_dma_info(name, index)
+        vlane_split_axis = local_tile_desc.vlane_split_axis
+        vlane_stride = local_tile_desc.vlane_stride
 
-        # MVOUT Encoding
-        dmaType = 3 # MVIN 2, MVIN2 1, MVIN3 14, MVOUT 3
-        self.consts.add(dmaType)
-        self.consts.add(stride)
-        self.consts.add(chunk)
+        dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
+        tile_shape = local_tile_desc.get_mlir_shape(mlir_dtype)
+        tile_stride = local_tile_desc.get_tile_stride()
+        tile_size = local_tile_desc.get_tile_size()
+        # Compute vector unit size
+        vshape = self.kernel_group.tile_desc.get_mlir_vshape(mlir_dtype)
+        compute_vec_size = self.kernel_group.tile_desc.get_compute_vec_size()
+        require_store = True
 
-        store_size, operand_type = self.var_info[value]
-        operation = "affine.vector_store" if tile_size_per_lane > 1 and store_size > 1 else "affine.store"
-        shape = f", vector<{tile_size_per_lane}x{type_name}>" if tile_size_per_lane > 1 and store_size > 1 else ""
-        if type_name != operand_type:
-            value = ops.custom_cast(value, type_name, var_info=self.var_info)
+        if str(value) in self.spad_buffer_dict:
+            # Todo. If tile_size is not same (i.e., view operation), we can't apply peephole optimization easily
+            require_store = self.spad_buffer_dict[str(value)][1] != tile_size
 
-        line = f"{operation} %{value}, %{buffer}[0, 0] : memref<{dram_tile_shape}x{type_name}, 1>{shape}"
-        self.cse.generate(self.stores, line, assignment = False)
-        self.consts.add(0)
-        self.tags.add(f"{name}_tag")
-        code = f"affine.dma_start %{buffer}[%c0, %c0], %{var}[{prefix}{indices}], %{name}_tag[0], %c{dmaType}, %c{stride}, %c{chunk} : memref<{dram_tile_shape}x{type_name}, 1>, memref<{self.buffer_types[name][1]}x{type_name}>, memref<1xi32>"
-        self.cse.generate(self.stores, code, assignment = False)
+        if require_store:
+            # Define scratch pad buffer
+            sram_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, local_tile_desc, index)
+            compute_index_var = ",".join(sram_index_var.split(",")[:-1] + [f"%{self.compute_idx}"])
+            # Generate vector store instruction
+            store_size, operand_type = self.var_info[value]
+            if mlir_dtype != operand_type:
+                value = ops.custom_cast(value, mlir_dtype, var_info=self.var_info)
+
+            if compute_vec_size > 1 and store_size > 1:
+                operation = "affine.vector_store"
+                line = f"{operation} %{value}, %{sram_var}[{compute_index_var}] : {tile_shape}, {vshape}"
+            else:
+                operation = "affine.store"
+                line = f"{operation} %{value}, %{sram_var}[{compute_index_var}] : {tile_shape}"
+            self.stores.writeline(common.DeferredLine(name, line)) # TODO: Should be changed to self.compute?
+        else:
+            sram_var = self.spad_buffer_dict[str(value)][0]
+            sram_index_var = self.spad_buffer_dict[str(value)][3]
+
+        # Generate DMA instruction
+        attribute = f"{{dram_stride={dram_stride}, sram_stride={tile_stride}, padding=0}}"
+        code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
+                                 dram_shape, tile_shape, attribute)
+        self.dma_stores.writeline(common.DeferredLine(name, code))
 
     def reduction(self, dtype, src_dtype, reduction_type, value):
         argmax_or_argmin = reduction_type in {"argmax", "argmin"}
@@ -979,537 +1109,727 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 sqr_sum = self.reduction(dtype, src_dtype, "sum", ops.mul(value, value))
                 self.welford_reduce_out = (sum, sqr_sum, None)
                 return sum, sqr_sum, None
+
+        # Prepare reduction loop
+        reduction_key = src_dtype, reduction_type, value
+        acc = self.reduction_cse.generate(
+            self.loads, f"reduction {reduction_key}", write=False
+        )
+        iterator = self.iterator_cse.generate(
+            self.loads, f"reduction {reduction_key}", write=False
+        )
+        init = self.init_cse.generate(
+            self.loads, f"reduction {reduction_key}", write=False
+        )
+        init_vec = self.init_vec_cse.generate(
+            self.loads, f"reduction {reduction_key}", write=False
+        )
+        type_name = mlir_common.DTYPE_TO_MLIR[dtype]
+        init = self.const_cse.generate(self.const_buffer, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
+        vec_len = self.kernel_group.tile_desc.get_compute_vec_size()
+        reduced_shape = self.kernel_group.tile_desc.get_mlir_vshape(type_name)
+
+        # Set accumulation var
+        if vec_len == 1: # 1-D vector to scalar
+            # Edge case for scalar
+            init_vec = init
         else:
-            reduction_key = src_dtype, reduction_type, value
-            acc = self.reduction_cse.generate(
-                self.loads, f"reduction {reduction_key}", write=False
-            )
-            iterator = self.iterator_cse.generate(
-                self.loads, f"reduction {reduction_key}", write=False
-            )
-            init = self.init_cse.generate(
-                self.loads, f"reduction {reduction_key}", write=False
-            )
-            init_vec = self.init_vec_cse.generate(
-                self.loads, f"reduction {reduction_key}", write=False
-            )
-            type_name = mlir_common.DTYPE_TO_MLIR[dtype]
-            acc_var = init
-            acc_shape = type_name
-            shape = f"vector<{self.tile_desc.get_tile_size()}x{type_name}>"
-            reduced_shape = type_name
-            init = self.cse.generate(self.reduction_prefix, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
-            if len(self.ranges) == 1:
-                axis = "0"
-                acc_var = init
-                shape = f"vector<{self.tile_desc.get_tile_size_per_lane()}x{type_name}>"
-            elif len(self.ranges) == 2:
-                vec_len = self.tile_desc.get_rows_per_lane()
-                flattened_size = f"vector<{self.tile_desc.get_tile_size_per_lane()}x{type_name}>"
+            # Adjust shape and inital value
+            init_vec = self.const_cse.generate(self.const_buffer, f"vector.broadcast %{init} : {type_name} to {reduced_shape}")
+            self.register_var_info(init_vec, [vec_len, type_name])
+        acc_var = init_vec
 
-                # It is column majored per lane tile
-                expaned_size = f"vector<{self.tile_desc.get_tile_size_per_lane()//vec_len}x{vec_len}x{type_name}>"
-                value = self.cse.generate(self.compute, f"vector.shape_cast %{value} : {flattened_size} to {expaned_size}")
-                shape = expaned_size
+        # Reduction body prepare
+        body_acc = self.reduction_cse.generate(
+            self.compute, f"reduction {reduction_key}body_acc", write=False
+        )
+        body_iter_arg = self.iterator_cse.generate(
+            self.compute, f"reduction {reduction_key}body_iter_arg", write=False
+        )
+        self.register_var_info(body_iter_arg, [vec_len, type_name])
 
-                # Edge case for scalar
-                if vec_len == 1:
-                    reduced_shape = f"{type_name}"
-                    init_vec = init
-                    axis = "0, 1"
-                    acc_var = init
-                    var_info = [1, mlir_common.DTYPE_TO_MLIR[dtype]]
-                else:
-                    reduced_shape = f"vector<{vec_len}x{type_name}>"
-                    init_vec = self.cse.generate(self.reduction_prefix, f"vector.broadcast %{init} : {type_name} to {reduced_shape}")
-                    axis = "0"
-                    acc_var = init_vec
-                    var_info = [vec_len, mlir_common.DTYPE_TO_MLIR[dtype]]
-                self.register_var_info(acc, var_info)
+        self.reduction_vars[acc] = (reduction_type, iterator, acc_var, reduced_shape)
+        self.affine_yield[body_acc] = reduced_shape
+        self.reduction_cse.reduction_cache[reduction_key] = acc
+        self.iterator_cse.reduction_cache[reduction_key] = iterator
+        self.init_cse.reduction_cache[reduction_key] = init_vec
+
+        # Reduction body codegen
+        mask_shape, mask_var = self.get_mask()
+        if mask_var is not None:
+            value = ops.where(mask_var, value, init_vec)
+        result = reduction_partial_combine_vec(reduction_type, value, body_iter_arg)
+        self.compute_body_loop.reduction_vars[body_acc] = (reduction_type, body_iter_arg, iterator, reduced_shape)
+        self.compute_body_loop.affine_yield[result] = reduced_shape
+
+        # Final reduction
+        reduction_size = self.kernel_group.tile_desc.get_numel_per_lane() // self.kernel_group.tile_desc.get_tile_size()[-1]
+        assert(vec_len % reduction_size==0)
+        if vec_len > reduction_size:
+            init = self.const_cse.generate(self.reductions_suffix, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
+            if reduction_size == 1:
+                final_reduced_shape = f"{type_name}"
+                out = self.cse.generate(self.reductions_suffix, reduction_combine_vec(reduction_type, acc, init, axis=0, shape=reduced_shape, reduced_shape=final_reduced_shape))
             else:
-                raise NotImplementedError()
+                final_reduced_shape = f"vector<{reduction_size}x{type_name}>"
+                init_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %{init} : {type_name} to {final_reduced_shape}")
+                new_vshape= f"vector<{vec_len//reduction_size}x{reduction_size}x{type_name}>"
+                value = self.cse.generate(self.reductions_suffix, f"vector.shape_cast %{acc} : {reduced_shape} to {new_vshape}")
+                out = self.cse.generate(self.reductions_suffix, reduction_combine_vec(reduction_type, value, init_vec, axis=0, shape=new_vshape, reduced_shape=final_reduced_shape))
+            acc = out
 
-            self.reduction_vars[acc] = (reduction_type, iterator, acc_var, reduced_shape)
-            out = self.cse.generate(self.compute, reduction_combine_vec(reduction_type, value, iterator, axis=axis, shape=shape, reduced_shape=reduced_shape))
-            self.affine_yield[out] = reduced_shape
-
-            self.reduction_cse.reduction_cache[reduction_key] = acc
-            self.iterator_cse.reduction_cache[reduction_key] = iterator
-            self.init_cse.reduction_cache[reduction_key] = init_vec
+        # reigster reduction output
+        var_info = [reduction_size, mlir_common.DTYPE_TO_MLIR[dtype]]
+        self.register_var_info(acc, var_info)
         return acc
 
     def store_reduction(self, name, index, value):
-        var = self.args.output(name)
+        # Note: Change cse temporaily
+        # Store reduction can't share cached value stored in cse,
+        # since it is not innermost loop body.
+        tmp_cse = self.cse
+        tmp_apply_cse = self.apply_cse
+        self.cse = self.reduction_cse
+        self.apply_cse = self.reduction_cse
+
+        dram_var = self.kernel_group.args.output(name)
         dtype = V.graph.get_dtype(name)
-        type_name = mlir_common.DTYPE_TO_MLIR[dtype]
+        mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
         index = self.rename_indexing(index)
-        indices = self.parse_indices(index)
-        prefix = self.newvar_prefix
-        if index.is_number:
-            prefix = prefix + "c"
-            self.consts.add(int(index))
+
         # Tile is always reuduced in inner loop
-        tile_col = self.tile_desc.n_row
-        tile_row = 1
-        dram_tile_shape = f"{tile_row}x{tile_col}"
-        buffer, indices = self.get_scratchpad_buffer(dtype, name, tile_row, tile_col, dram_tile_shape, self.reductions_suffix, indices, index)
+        local_tile_desc, index_var, dram_stride = self.get_dma_info(name, index, broadcast=False, store_reduction=True, buffer=self.reductions_suffix)
+        vlane_split_axis = local_tile_desc.vlane_split_axis
+        vlane_stride = local_tile_desc.vlane_stride
+
+        dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
+        tile_shape = local_tile_desc.get_mlir_shape(mlir_dtype)
+        tile_stride = local_tile_desc.get_tile_stride()
+        compute_vec_size = self.kernel_group.tile_desc.get_numel_per_lane() // self.kernel_group.tile_desc.get_tile_size()[-1]
+        if compute_vec_size == 1:
+            vshape = f"{mlir_dtype}"
+        else:
+            vshape = f"vector<{compute_vec_size}x{mlir_dtype}>"
+        sram_var, sram_index_var = self.get_scratchpad_buffer(dtype, name, local_tile_desc, index)
         if self.welford_reduce_out is not None:
-            # raise NotImplementedError()
             sum, sqr_sum, _ = self.welford_reduce_out
-            shape = f"vector<{self.tile_desc.get_rows_per_lane()}x{type_name}>" if self.buffer_types[name][1] > 1 else type_name
             # mean
             divider = self.cse.generate(self.reductions_suffix, f"arith.constant {float(self.ranges[self.reduction_depth])} : f32")
             if self.buffer_types[name][1] > 1:
-                divider_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %{divider} : f32 to vector<{self.var_info[sum][0]}x{type_name}>")
+                divider_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %{divider} : f32 to vector<{self.var_info[sum][0]}x{mlir_dtype}>")
             else:
-                divider_vec = f"f{self.buffer_types[name][1]}"
-            mean = self.cse.generate(self.reductions_suffix, f"arith.divf %{sum}, %{divider_vec} : {shape}")
+                divider_vec = divider
+            mean = self.cse.generate(self.reductions_suffix, f"arith.divf %{sum}, %{divider_vec} : {vshape}")
 
             # m2 = (E(X^2) - E(X)^2) * N
-            sqr_mean = self.cse.generate(self.reductions_suffix, f"arith.divf %{sqr_sum}, %{divider_vec} : {shape}")
-            mean_sqr = self.cse.generate(self.reductions_suffix, f"arith.mulf %{mean}, %{mean} : {shape}")
-            variance = self.cse.generate(self.reductions_suffix, f"arith.subf %{sqr_mean}, %{mean_sqr} : {shape}")
-            m2 = self.cse.generate(self.reductions_suffix, f"arith.mulf %{variance}, %{divider_vec} : {shape}")
+            sqr_mean = self.cse.generate(self.reductions_suffix, f"arith.divf %{sqr_sum}, %{divider_vec} : {vshape}")
+            mean_sqr = self.cse.generate(self.reductions_suffix, f"arith.mulf %{mean}, %{mean} : {vshape}")
+            variance = self.cse.generate(self.reductions_suffix, f"arith.subf %{sqr_mean}, %{mean_sqr} : {vshape}")
+            m2 = self.cse.generate(self.reductions_suffix, f"arith.mulf %{variance}, %{divider_vec} : {vshape}")
             if self.current_node.node.origin_node: # FIXME: This is a temporary solution
                 value = mean
             else:
                 value = m2
 
-        # Select mlir store operaiton
-        if self.buffer_types[name][1] == 1 or self.tile_desc.get_rows_per_lane() == 1:
+        # Select src type
+        if compute_vec_size == 1:
             operation = "affine.store"
-            # raise NotImplementedError("Scalar store!")
+            line = f"{operation} %{value}, %{sram_var}[{sram_index_var}] : {tile_shape}"
         else:
             operation =  "affine.vector_store"
-
-        # Select src type
-        if self.tile_desc.get_rows_per_lane() == 1:
-            shape = ""
-        else:
-            shape = f"vector<{self.tile_desc.get_rows_per_lane()}x{type_name}>"
-            shape = f", {shape}" if self.buffer_types[name][1] > 1 else ""
-        line = f"{operation} %{value}, %{buffer}[0, 0] : memref<{tile_row}x{tile_col}x{type_name}, 1>{shape}"
-        self.cse.generate(self.reductions_suffix, line, assignment = False)
+            line = f"{operation} %{value}, %{sram_var}[{sram_index_var}] : {tile_shape}, {vshape}"
+        self.reductions_suffix.writeline(common.DeferredLine(name, line))
 
         # MVOUT Encoding
-        dmaType = 3 # MVIN 2, MVIN2 1, MVIN3 14, MVOUT 3
-        mm_stride = tile_col
-        is_col_major = MLIRTile.TILE_PER_LANE_ROW_WISE
-        chunk_size = self.tile_desc.get_rows_per_lane()
-        chunk = chunk_size << 1 | (is_col_major == MLIRTile.TILE_PER_LANE_COL_WISE)
-        self.consts.add(dmaType)
-        self.consts.add(mm_stride)
-        self.consts.add(chunk)
-        self.tags.add(f"{name}_tag")
-        # Change row, col
-        self.consts.add(0)
-        code = f"affine.dma_start %{buffer}[%c0, %c0], %{var}[{prefix}{indices}], %{name}_tag[0], %c{dmaType}, %c{mm_stride}, %c{chunk} : memref<{tile_row}x{tile_col}x{type_name}, 1>, memref<{self.buffer_types[name][1]}x{type_name}>, memref<1xi32>"
-        self.cse.generate(self.reductions_suffix, code, assignment = False)
+        # Generate DMA instruction
+        attribute = f"{{dram_stride={dram_stride}, sram_stride={tile_stride}, padding=0}}"
+        code = self.get_dma_code("MVOUT", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
+                                 dram_shape, tile_shape, attribute)
+        self.reductions_suffix.writeline(common.DeferredLine(name, code))
 
-    def codegen_body(self):
-        # if not (
-        #     self.loads
-        #     or self.stores
-        #     or self.compute
-        # ):
-        #     return
-        def template_store(options):
-            subtile_size = [self.vector_lane, self.vector_lane]
-            async_flag = 1
-            self.consts.add(0)
-            line = f"affine.dma_start %Y_buffer[%c0, %c0], %Y[%index2], %tag[0], %c_mvout, %N, %c_set"\
-                   f": memref<{options['TILE_M']}x{options['TILE_N']}xf32, 1>,"\
-                   f"memref<{options['M'] * options['N']}xf32>, memref<1xi32>" #FIXME: Using constant index
-            self.cse.generate(self.stores, line, assignment = False)
-        self.body.splice(self.codegen_init())
-        self.body.splice(self.loads)
-        self.body.splice(self.compute)
-        if len(self.stores._lines) == 0:
-            template_store(self.render_options)
-        self.body.splice(self.stores)
-        self.loads.clear()
-        self.compute.clear()
-        self.stores.clear()
+        # Restore origin cse
+        self.cse = tmp_cse
+        self.apply_cse = tmp_apply_cse
 
-    def codegen_init(self):
-        code = IndentedBuffer()
-        tags = sorted(self.tags)
-        consts = sorted(self.consts)
-        for tag in tags:
-            code.writeline(f"%{tag} = memref.alloc() : memref<1xi32>")
-        for const in consts:
-            code.writeline(f"%c{const} = arith.constant {const} : index")
-        return code
+    def indirect_indexing(self, index_var, size, check=True):
+        return str(index_var)
+
+    def _index_expr(self, tile_size, renamed_expression, index, base_vector_index):
+        tile_desc = self.kernel_group.tile_desc
+        compute_vec_size = tile_desc.get_compute_vec_size()
+
+        strides = [1] * len(tile_size)
+        for i in range(len(tile_size) - 2, -1, -1):
+            strides[i] = strides[i + 1] * tile_size[i + 1]
+
+        # Create vector index
+        compute_vec = self.cse.generate(self.compute, f"vector.broadcast %{self.compute_idx} : index to vector<{compute_vec_size}xindex>")
+        self.register_var_info(compute_vec, [compute_vec_size, "index"])
+        vector_index = ops.add(base_vector_index, compute_vec)
+
+        # Create tile_dim index
+        dim_list = []
+        for idx in range(len(tile_size)):
+            div_coeff = self.get_const_cse(strides[idx], "index")
+            mod_coeff = self.get_const_cse(tile_size[idx], "index")
+            div_vec = self.const_cse.generate(self.const_buffer, f"vector.broadcast %{div_coeff} : index to vector<{compute_vec_size}xindex>")
+            mod_vec = self.const_cse.generate(self.const_buffer, f"vector.broadcast %{mod_coeff} : index to vector<{compute_vec_size}xindex>")
+            self.register_var_info(div_vec, [compute_vec_size, "index"])
+            self.register_var_info(mod_vec, [compute_vec_size, "index"])
+            dim = ops.modular(ops.div(vector_index, div_vec), mod_vec)
+            if idx == tile_desc.vlane_split_axis: # Need to add vector lane offset
+                offset = tile_desc.vlane_stride * strides[idx]
+                vlane_coeff = self.get_const_cse(0, "i64")
+                vlane_vec_size = 4
+                vlane_vec = self.const_cse.generate(self.const_buffer, f"vector.broadcast %{vlane_coeff} : i64 to vector<{vlane_vec_size}xi64>")
+                vlane_offset = self.const_cse.generate(self.const_buffer, f"arith.addi %{vlane_vec}, %{vlane_vec} {{ vlane_offset={offset} }} : vector<{vlane_vec_size}xi64> // vlane offset")
+                self.register_var_info(vlane_offset, [vlane_vec_size, "i64"])
+                vlane_offset = ops.index_cast(vlane_offset, "index")
+                self.register_var_info(vlane_offset, [vlane_vec_size, "index"])
+                dim = ops.add(dim, vlane_offset)
+            dim_list.append(dim)
+
+        indices = [str(i) for i in index.free_symbols]
+        for idx in indices:
+            i = int(idx[5:])
+            index_vec = self.cse.generate(self.compute, f"vector.broadcast %{idx} : index to vector<{compute_vec_size}xindex>")
+            self.register_var_info(index_vec, [compute_vec_size, "index"])
+            offset = ops.add(index_vec, dim_list[i])
+            dim_list[i] = offset
+        arg_lists = []
+        for arg in renamed_expression.args:
+            if isinstance(arg, sympy.Integer):
+                offset = self.get_const_cse(int(arg))
+                offset_vec = self.const_cse.generate(self.const_buffer, f"vector.broadcast %{offset} : index to vector<{compute_vec_size}xindex>")
+                self.register_var_info(offset_vec, [compute_vec_size, "index"])
+                arg_lists.append(offset_vec)
+            elif isinstance(arg, sympy.Mul):
+                if isinstance(arg.args[0], sympy.Integer) and isinstance(arg.args[1], sympy.Symbol):
+                    coeff = self.get_const_cse(int(arg.args[0]))
+                    coeff_vec = self.const_cse.generate(self.const_buffer, f"vector.broadcast %{coeff} : index to vector<{compute_vec_size}xindex>")
+                    self.register_var_info(coeff_vec, [compute_vec_size, "index"])
+                    result = ops.mul(dim_list[int(str(arg.args[1])[1:])], coeff_vec)
+                    arg_lists.append(result)
+                elif isinstance(arg.args[1], sympy.Integer) and isinstance(arg.args[0], sympy.Symbol):
+                    coeff = self.get_const_cse(int(arg.args[1]))
+                    coeff_vec = self.cse.generate(self.compute, f"vector.broadcast %{coeff} : index to vector<{compute_vec_size}xindex>")
+                    self.register_var_info(coeff_vec, [compute_vec_size, "index"])
+                    result = ops.mul(dim_list[int(str(arg.args[0])[1:])], coeff_vec)
+                    arg_lists.append(result)
+                else:
+                    raise NotImplementedError("Not supporting format")
+            elif isinstance(arg, sympy.Symbol):
+                arg_lists.append(dim_list[int(str(arg)[1:])])
+            else:
+                raise NotImplementedError("Not supporting format")
+        if isinstance(renamed_expression, sympy.Symbol):
+            arg_lists.append(dim_list[int(str(renamed_expression)[1:])])
+        accum = arg_lists[0]
+        for arg in arg_lists[1:]:
+            accum = ops.add(accum, arg)
+        return accum
+
+    def index_expr(self, index, dtype):
+        tile_desc = self.kernel_group.tile_desc
+        tile_size = tile_desc.get_tile_size_per_lane()
+        mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
+        str_tile_size = [str(dim) for dim in tile_size]
+        compute_vec_size = tile_desc.get_compute_vec_size()
+        tile_shape = f"memref<{compute_vec_size}xi64, 1>"
+        vshape = f"vector<{compute_vec_size}xi64>"
+
+        # Create base_vector index var
+        c_type = "uint64_t"
+        new_name = f"index_expr_{compute_vec_size}"
+        if new_name not in self.global_vars_dict:
+            self.header.writeline(f"{c_type} {new_name}_spad[{compute_vec_size}] __attribute__ ((section(\".spad\")));")
+            self.gem5_header.writeline(f"{c_type} {new_name}_spad[{compute_vec_size}] __attribute__((aligned(64)));")
+            self.global_vars.writeline(f"memref.global @{new_name}_spad : {tile_shape}")
+            self.global_vars_dict[new_name] = dict()
+        sram_var = self.spad_cse.generate(self.spad_buffer, f"memref.get_global @{new_name}_spad : {tile_shape}")
+        # Initialize base vector
+        if not self.base_vector_initialized:
+            init_iter = "iter"
+            parallel_map = f"affine.parallel (%{init_iter}) = ({0}) to ({compute_vec_size}) {{ // Base vector initializer"
+            self.spad_buffer.writeline(parallel_map)
+            with self.spad_buffer.indent():
+                self.spad_buffer.writeline(f"%init_vec = vector.broadcast %{init_iter} : index to vector<2xindex>")
+                self.spad_buffer.writeline(f"%init_cvt_vec = arith.index_cast %init_vec : vector<2xindex> to vector<2xi64>")
+                self.spad_buffer.writeline(f"affine.vector_store %init_cvt_vec, %{sram_var}[%{init_iter}] : {tile_shape}, vector<2xi64>")
+            self.spad_buffer.writeline("}")
+            self.base_vector_initialized = True
+
+        line = f"affine.vector_load %{sram_var}[0] : {tile_shape}, {vshape}"
+        out = self.cse.generate(self.compute, line)
+        self.register_var_info(out, [compute_vec_size, "i64"])
+        base_vector_index = ops.index_cast(out, "index")
+        self.register_var_info(base_vector_index, [compute_vec_size, "index"])
+
+        renamed_symbols = {symbol: "d"+str(symbol)[5:] for symbol in index.free_symbols}
+        renamed_expression = index.subs(renamed_symbols)
+        result = self._index_expr(tile_size, renamed_expression, index, base_vector_index)
+        return result
+
+    def codegen_global_init(self):
+        return self.global_vars
 
     def codegen_loops(self):
         code = mlir_common.ParallelLoopBuffer()
         # Loop body part
-        tile_row, tile_col = self.tile_desc.n_row, self.tile_desc.n_col
-        # FIXME.
-        #if (self.tiling_idx < self.reduction_depth and len(self.reduction_idx) > 0):
-        #    tile_row, tile_col = self.tile_desc.n_col, self.tile_desc.n_row
-        tile_row = self.tile_desc.get_tile_size() if len(self.itervars) == 1 else tile_row
-        loops = [LoopLevel(var, size, idx-len(self.itervars), tile_row=tile_row, tile_col=tile_col) for idx, (var, size) in enumerate(zip(self.itervars, self.ranges))]
+        tile_size = self.kernel_group.tile_desc.get_tile_size()
+        # Apply paddings
+        loops = [LoopLevel(var, size, step=step) for idx, (var, size, step) in enumerate(zip(self.itervars, self.ranges, tile_size))]
         loops, reductions = [LoopNest(loops[: self.reduction_depth]),
                              LoopNest(loops[self.reduction_depth :])]
+        reductions.mark_reduction(self.reduction_vars, self.affine_yield)
+        # For non-loop code
         if (self.reduction_depth==0):
-            loops = LoopNest([LoopLevel("dummy", 1, 1, 0)])
-        reductions.mark_reduction(self.reduction_vars)
-        if len(self.affine_yield) > 0:
-            vars = ', '.join([f"%{name}" for name, _ in self.affine_yield.items()])
-            reduced_shapes = ', '.join([f"{shape}" for _, shape in self.affine_yield.items()])
-            self.stores.writeline(f"affine.yield {vars} : {reduced_shapes}")
+            loops = LoopNest([LoopLevel("dummy", 1)])
+
+        if len(reductions.loops) > 1:
+            NotImplementedError("Not support multiple reduction axis..")
+
+        code.splice(self.const_buffer)
+        code.splice(self.alloc_buffer)
+        code.splice(self.spad_buffer)
+        # Outerloop
         with contextlib.ExitStack() as stack:
             for loop in loops.loops:
                 loop_lines = loop.lines()
-                if loop_lines is None:
-                    return
                 code.writelines(loop_lines)
-                stack.enter_context(code.indent(outer_loop=True))
-            with contextlib.ExitStack() as stack_outer:
-                code.splice(self.reduction_prefix)
+                stack.enter_context(code.indent(attribute="{outer_loop=true}"))
+            # Non-outerloop start
+            code.splice(self.reduction_prefix)
+            with contextlib.ExitStack() as stack:
+                # Add reduction loops
+                if len(reductions.loops):
+                    reduction_lines = reductions.loops[0].lines()
+                    epilogue = reductions.loops[0].epilogue_line()
+                    code.writelines(reduction_lines)
+                    stack.enter_context(code.indent(attribute="{accumulation_loop=true}", suffix=epilogue))
+                code.splice(self.applys)
+                code.splice(self.indexed_buffer)
+                code.splice(self.dma_loads)
+                # Compute body
+                code.writelines(self.compute_body_loop.lines())
                 with contextlib.ExitStack() as stack:
-                    for reduction in reductions.loops:
-                        reduction_lines = reduction.lines()
-                        if reduction_lines is None:
-                            return
-                        code.writelines(reduction_lines)
-                        stack.enter_context(code.indent(outer_loop=False))
+                    stack.enter_context(code.indent(attribute="{inner_loop=false}",suffix=self.compute_body_loop.epilogue_line()))
+                    code.splice(self.masks)
                     code.splice(self.loads)
                     code.splice(self.compute)
                     code.splice(self.stores)
-                code.splice(self.reductions_suffix)
+                code.splice(self.dma_stores)
+            code.splice(self.reductions_suffix)
+            # Non-outerloop end
         code.writeline(f"return")
         return code
 
-    def codegen_kernel(self, kernel_name):
-        wrapper = V.graph.wrapper_code
-        arg_defs, _, _, _ = self.kernel_group.args.mlir_argdefs()
-        code = self._codegen_kernel(arg_defs, kernel_name)
-        return code.getvalue()
+    def make_choices(self, nodes, kernel_name):
+        choices = []
+        initial_tile_size = self.kernel_group.tile_desc.get_tile_size()
+        previous_ranges = self.ranges
+        prevent_infinite_loop = 0
+        if len(initial_tile_size) < 2:
+            return choices # Can't autotune for 1-D tile size
+        for vlane_stride in [2, 4, 8]:
+            os.environ['TORCHSIM_VECTOR_LANE_STRIDE'] = str(vlane_stride)
+            previous_tile_size = initial_tile_size
+            increase_dim = -2 # increase the first dimension
+            while previous_tile_size[increase_dim] * 2 <= previous_ranges[increase_dim] and previous_tile_size[increase_dim] <= 2 ** 13 and prevent_infinite_loop < 10:
+                incrase_dim = -1 # only increase the last dimension
+                prevent_infinite_loop += 1
+                while previous_tile_size[incrase_dim] * 2 <= previous_ranges[incrase_dim] and previous_tile_size[incrase_dim] <= 2 ** 13:
+                    src_code = super().codegen_nodes(nodes, kernel_name)
+                    if self.stop_autotune:
+                        print(f"[Auto-tune] Skipping autotuning due to enough tile size: {self.kernel_group.tile_desc.get_tile_size()}")
+                        break
+                    print(f"[Auto-tune] Trying tile size: {self.kernel_group.tile_desc.get_tile_size()}, vlane_stride: {vlane_stride}")
+                    previous_tile_size = self.kernel_group.tile_desc.get_tile_size()
+                    self._prepare_simulator_headers(src_code)
+                    bench_runner = self.run_bench(nodes, kernel_name, src_code)
+                    choices.append((bench_runner, src_code, self.kernel_group))
+                    self.reset(f"tile_size_{incrase_dim}")
+                previous_tile_size[incrase_dim] = initial_tile_size[incrase_dim]
+                self.kernel_group.tile_desc.set_tile_size(previous_tile_size)
+                self.reset(f"tile_size_{increase_dim}")
+            self.reset("vlane_stride")
+        return choices
 
-    def meta_kernel(self):
-        wrapper = V.graph.wrapper_code
-        _, _, arg_attributes, _ = self.kernel_group.args.mlir_argdefs()
-        wrapper.add_import_once('\nprint(f\'Wrapper Codegen Path = {__file__}\')')
-        wrapper.add_import_once(f'\nfrom PyTorchSimFrontend.extension_codecache import CustomAsyncCompile')
-        wrapper.add_import_once(f'\ncustom_async_compile = CustomAsyncCompile()')
-        # Dump loop and load/store information
-        wrapper.add_import_once(f"arg_attributes = {arg_attributes}")
+    def autotune(self, nodes, kernel_name):
+        def get_cycle(choice):
+            bench_runner, src_code, kernel_group = choice
+            for n_try in range(extension_config.CONFIG_MAX_AUTOTUNE_TRY): # TODO: make simple
+                try:
+                    # bench_runner = self.run_bench(nodes, kernel_name, src_code)
+                    if int(os.environ.get('BACKENDSIM_DRYRUN', default=False)):
+                        _, _, out = bench_runner(autotune=1)
+                    else:
+                        out = bench_runner(validate=extension_config.CONFIG_TORCHSIM_VALIDATION_MODE)
+                    return out[-1]
+                except (extension_codecache.SpadOverflowError, RuntimeError) as e:
+                    return float("inf")
+                    #if isinstance(e, RuntimeError) and str(e) != "STACK_OVERFLOW":
+                    #    print(f"Benchmark[trial-{n_try}] failed with unexpected error: {e}")
+                    #    return float("inf")
+                    #print(f"Benchmark failed due to spad overflow with tile size: {self.kernel_group.tile_desc.get_tile_size()}")
+                    #self.kernel_group = kernel_group # Reset to the original tile desc
+                    #self.reset("spad_overflow")
+                    #src_code = super().codegen_nodes(nodes, kernel_name)
+                    #bench_runner = self.run_bench(nodes, kernel_name, src_code)
+                    #kernel_group = self.kernel_group
+                    #self._prepare_simulator_headers(src_code)
+            return float("inf") # Exceeded maximum number of autotuning attempts
 
+        choices = self.make_choices(nodes, kernel_name)
 
-    def call_kernel(self, kernel_name):
-        wrapper = V.graph.wrapper_code
-        _, call_args, _, _ = self.kernel_group.args.mlir_argdefs()
-       # generate the code to call this
-        wrapper.generate_kernel_call(kernel_name, call_args, cuda=False)
+        if len(choices) == 0: # can't autotune
+            return None
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(get_cycle, choices))
+        max_idx = results.index(min(results))
+        if min(results) == float("inf"):
+            raise RuntimeError("Failed to find optimal tile size...")
+        print(f"[Auto-tune] Optimal tile size: {choices[max_idx][2].tile_desc.get_tile_size()}, vlane_stride: {choices[max_idx][2].tile_desc.vlane_stride}, cycles: {results[max_idx]}")
+        optimal_src_code = choices[max_idx][1]
+        return optimal_src_code
 
-    def _codegen_kernel(self, arg_defs, kernel_name):
-        arg_defs = ",\n".ljust(25).join(arg_defs)
-        code = common.BracesBuffer()
-
-        code.splice(self.global_vars)
-        #TODO:. kernel name custom
-        kernel_decl_name = kernel_name if V.graph.cpp_wrapper else "kernel"
-        code.writeline(f'func.func @{kernel_decl_name}({arg_defs})')
-        with code.indent():
-            for old, new in self.kernel_group.args.aliases():
-                code.writeline(f"auto {old} = {new};")
-            # Loop body part
-            code.splice(self.codegen_init())
-            code.splice(self.codegen_loops())
-        return code
-
-    def adjust_tile_size(self):
-        if self.read_writes is not None:
-            read_writes = list(self.read_writes.reads) + list(self.read_writes.writes)
-            cv_list = []
-            for node in read_writes:
-                if len(node) > 1:
-                    cv_list.append(self.get_constant_vector2(node[1]))
-            max_element = max(cv_list, key=len)
-            max_nr_dim = len(max_element)
-
-            sorted_max_element = sorted(max_element, key=lambda x:x[0])
-            # Force vector tile size when 3D node is originated from view
-            if max_nr_dim == 3 and max_nr_dim != len(self.itervars):
-                self.tile_desc.n_col = min(self.tile_desc.get_tile_size(), sorted_max_element[1][0])
-                self.tile_desc.n_row = 1
-                return
-
-        # Case 1. vector kernel
-        if len(self.itervars) == 1:
-            self.tile_desc.n_col = self.tile_desc.get_tile_size()
-            self.tile_desc.n_row = 1
-        elif len(self.itervars) == 0:
-            self.tile_desc.n_col = 1
-            self.tile_desc.n_row = 1
-
-        # Case 2. 2-D tensor (e.g., softmax)
-        if len(self.itervars) == 2 and self.reduction_depth == len(self.itervars):
-            # Avoid too much padding
-            if (self.ranges[0] <= self.vector_lane and self.ranges[0] <= self.tile_desc.n_row):
-                self.tile_desc.n_row = self.ranges[0]
-                self.tile_desc.used_vector_lane = self.ranges[0]
-
-        # Case 2. 2-D reduction (e.g., batchnorm)
-        if len(self.itervars) == 2 and self.reduction_depth == len(self.itervars) - 1:
-            if (((self.ranges[0] + 1) // 2) <= self.vector_lane and ((self.ranges[0] + 1) // 2) <= self.tile_desc.n_row):
-                self.tile_desc.n_row = ((self.ranges[0] + 1) // 2) * 2
-                self.tile_desc.used_vector_lane = (self.ranges[0] + 1) // 2
-
-        # Case 2. 3-D tensor kernel without reduction. Access vector granule!
-        if len(self.itervars) == 3 and self.reduction_depth == len(self.itervars):
-            self.tile_desc.n_col = self.ranges[-1]
-            self.tile_desc.n_row = 1
-
-        # Case 3. N-D tensor kernel with reduction. Not implemented. Need this?
-        if len(self.itervars) >= 3 and self.reduction_depth < len(self.itervars):
-            raise NotImplementedError()
-
-    def set_ranges(self, lengths, reduction_lengths, read_writes):
-        self.read_writes = read_writes
-        if self.call_ranges:
-            assert self.call_ranges == tuple(lengths) + tuple(
-                reduction_lengths
-            ), f"{self.call_ranges} == {tuple(lengths)} + {tuple(reduction_lengths)}"
-            assert self.reduction_depth == len(lengths)
+    def codegen_nodes(self, nodes, kernel_name):
+        src_code = super().codegen_nodes(nodes, kernel_name)
+        self._prepare_simulator_headers(src_code)
+        if not extension_config.CONFIG_AUTOTUNE or extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
+            return src_code
         else:
-            self.call_ranges = tuple(lengths) + tuple(reduction_lengths)
-            self.ranges = [self.rename_indexing(x) for x in self.call_ranges]
-            self.itervars = [sympy.Symbol(f"index{n}") for n in range(len(self.ranges))]
-            self.reduction_depth = len(lengths)
-
-        # Adjust time size when it is vector
-        self.adjust_tile_size()
-
-        return (
-            self.itervars[: self.reduction_depth],
-            self.itervars[self.reduction_depth :],
-        )
-
-    def get_scratchpad_buffer(self, dtype, name, tile_row, tile_col, dram_tile_shape, code_buffer, indices, raw_index):
-        c_type = mlir_common.DTYPE_TO_C[dtype]
-        mlir_type = mlir_common.DTYPE_TO_MLIR[dtype]
-        # Make sure each lane's buffer has at least two element
-        tile_size = max(self.roundup_vectorlane(tile_row * tile_col), self.vector_lane * 2)
-        if dtype == torch.bool and not self.is_template_kernel:     #FIXME: epilogue ReLU does not need this
-            if self.is_template_kernel:
-                mapping = f"template_{indices} "
-                self.map_cse.generate(self.global_vars, f"#{mapping} = affine_map<({indices}) -> ({indices} floordiv 8)>", assignment=False)
+            optimal_src_code = self.autotune(nodes, kernel_name)
+            if optimal_src_code:
+                return optimal_src_code
             else:
-                mapping = self.map_cse.generate(self.global_vars, f"affine_map<({indices}) -> ({indices} floordiv 8)>")
-            indices = self.cse.generate(self.loads, f"affine.apply #{mapping}(%{indices})") # FIXME. Only loads?
+                return src_code
 
-        if name not in self.global_vars_dict:
-            self.global_vars_dict[name] = list()
+    def _prepare_simulator_headers(self, src_code):
+        write_path = extension_codecache.get_write_path(src_code)
+        os.makedirs(write_path, exist_ok=True)
 
-        if str(raw_index) not in self.global_vars_dict[name]:
-            new_name = f"{name}_{len(self.global_vars_dict[name])}"
+        spike_write_path = os.path.join(write_path, "global_var.h")
+        gem5_write_path = os.path.join(write_path, "gem5_global_var.h")
+
+        spad_end_symbol = "int spad_end[0] __attribute__ ((section(\".spad\")));\n"
+        spad_section_end_symbol = (
+            f"int spad_section_end[0] __attribute__ ((section(\".spad\"), aligned({self.spad_info['spad_size']*self.vector_lane})));"
+        )
+        write_atomic(spike_write_path, self.header.getvalue() + spad_end_symbol + spad_section_end_symbol)
+        write_atomic(gem5_write_path, self.gem5_header.getvalue())
+
+    def get_arg_info(self, name):
+        arg_info = dict()
+        arg_info.update(V.graph.graph_inputs)
+        arg_info.update({i.get_name(): i for i in V.graph.buffers})
+        return arg_info[name]
+
+    def get_dma_info(self, name, index, broadcast=True, store_reduction=False, buffer=None): # Need more argument?
+        """
+        A tile descriptor exists that is configured on a kernel group
+        DMA desc should be adjusted according to buffer.
+        Therefore, this function shoulde determin DRAM, SRAM stride and
+        vectorlane mapping policy
+        """
+        # Use loads as default
+        if buffer is None:
+            buffer = self.applys if "tmp" not in str(index) else self.dma_loads
+
+        # TODO.
+        kg_tile_desc = self.kernel_group.tile_desc
+        # Note: index could contain symbols that represent dynamic axies
+        # Extract dimension of index(e.g, index0, index1)
+        local_dims = [int(str(i)[5:]) for i in index.free_symbols if "index" in str(i)]
+        implicit_local_dims = list(index.args)
+        total_dims =  [int(str(i)[5:]) for i in self.itervars]
+        local_tile_desc = mlir_common.MLIRMultiDimTile([1], self.vector_lane)
+        local_dims.sort() # Assume that smaller index is placed in the outer loop
+        indirect_dims = [f"{i}" for i in index.free_symbols if "tmp" in str(i)]
+        for indirect_dim in indirect_dims:
+            index = index.replace(sympy.Symbol(indirect_dim), 0)
+
+        # Reduction can have two type of tile size
+        if broadcast and (total_dims != local_dims or (self.reduction_depth!=len(total_dims) and total_dims[:self.reduction_depth] == local_dims)):
+            local_dims = total_dims # Brodatcast tile shape
+
+        index_var = self.parse_indices(index, buffer=buffer, indirect_dims=indirect_dims)
+
+        if kg_tile_desc.vlane_split_axis in local_dims:
+            local_vlane_split_axis = local_dims.index(kg_tile_desc.vlane_split_axis)
+        else:
+            local_vlane_split_axis = max(len(local_dims) - 1, 0)
+
+        # Case 0. Tile is 0-D scalar
+        if len(local_dims) == 0:
+            if not store_reduction:
+                local_tile_desc.set_tile_size([kg_tile_desc.get_used_vlane() * kg_tile_desc.vlane_stride])         # Force it to use vector instruction.
+                local_tile_desc.vlane_split_axis = local_vlane_split_axis    # last axis
+                local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
+            else:
+                local_tile_desc.set_tile_size([1])
+                local_tile_desc.vlane_split_axis = 0
+                local_tile_desc.vlane_stride = 1
+            dram_stride = [0] # Edge case
+        # Case 1. Tile is 1-D vector type
+        elif len(local_dims) == 1 and len(local_dims) <= self.reduction_depth:
+            local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(local_dims[0])])
+            local_tile_desc.vlane_split_axis = local_vlane_split_axis
+            local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
+        # Case 2. Tile is 1-D vector type with reduction
+        elif len(local_dims) == 1 and len(local_dims) == self.reduction_depth + 1:
+            local_tile_desc.set_tile_size([1, kg_tile_desc.get_dim_size(local_dims[0])])
+            local_tile_desc.vlane_split_axis = local_vlane_split_axis + 1
+            local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
+        # Case 3. Tile is 2-D tile
+        elif len(local_dims) == 2:
+            is_reduction = self.reduction_depth == 1 and not store_reduction
+            if is_reduction:
+                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in local_dims], [1, 0])
+                local_tile_desc.vlane_split_axis = local_vlane_split_axis
+                local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
+            else:
+                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in local_dims])
+                local_tile_desc.vlane_split_axis = local_vlane_split_axis
+                local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
+        # Case 3. Tile is 3-D tile
+        elif len(local_dims) == 3:
+            is_reduction = self.reduction_depth < 3 and not store_reduction
+            if is_reduction:
+                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in local_dims], [1, 2, 0])
+                local_tile_desc.vlane_split_axis = local_vlane_split_axis
+                local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
+            else:
+                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in local_dims])
+                local_tile_desc.vlane_split_axis = local_vlane_split_axis
+                local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
+        # Case 4. Tile is 4-D tile (e.g., Convolution epilogue)
+        elif len(local_dims) == 4:
+            is_reduction = self.reduction_depth < 3 and not store_reduction
+            if is_reduction:
+                raise NotImplementedError("Currently not implemented... ;)")
+            local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in local_dims])
+            local_tile_desc.vlane_split_axis = local_vlane_split_axis
+            local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
+        else:
+            raise NotImplementedError("Currently not implemented... ;)")
+
+        if len(implicit_local_dims)!=0 and len(local_dims) != len(implicit_local_dims) and self.is_modular_indexing(index):
+            tile_size = local_tile_desc.get_tile_size()
+            new_tile_size = []
+            new_vlane_split_axis = local_tile_desc.vlane_split_axis
+            implicit_dim_size = list(kg_tile_desc.implicit_dim_size.values())
+            for i, target_dim_size in enumerate(implicit_dim_size):
+                new_tile_size += [1]*(len(target_dim_size)-1) + tile_size[i:i+1]
+                if local_tile_desc.vlane_split_axis >= i:
+                    new_vlane_split_axis += len(target_dim_size)-1
+            # Update
+            local_tile_desc.set_tile_size(new_tile_size)
+            local_tile_desc.vlane_split_axis = new_vlane_split_axis
+
+        # Calculate dram stride
+        dram_stride = [0] * local_tile_desc.get_nr_dim()
+        if index.is_Symbol:
+            dim_idx = int(str(index)[5:])
+            dram_stride[dim_idx] = 1
+        elif index.is_Number:
+            pass
+        else:
+            dram_dict = defaultdict(list)
+            # Assume that div will have high priority than mod
+            for arg in index.as_ordered_terms():
+                coeff, dim = arg.as_coeff_mul()
+                if len(dim) == 0:
+                    continue
+                real_dim = list(dim[0].free_symbols)[0]
+                dram_dict[str(real_dim)].append(coeff)
+            # Add missing dims if not added
+            max_dim = len(self.ranges) if not store_reduction else len(self.ranges) - 1
+            for i in range(max_dim):
+                target_dim = f"index{i}"
+                if target_dim not in str(index):
+                    dram_dict[target_dim] = [0]
+            sorted_keys = sorted(dram_dict.keys())
+            dram_stride = sum((dram_dict[key] for key in sorted_keys), [])
+
+        # FIXME. It will be nice to modify node instead of this exception handling...
+        if len(self.itervars) == 1 and self.reduction_depth == 0:
+            # In case of reduction loop only case, we will add dummy loop so shift it once
+            dram_stride = [0] + dram_stride[:-1]
+        return local_tile_desc, index_var, dram_stride
+
+    def get_dma_code(self, dma_type_name, vlane_split_axis, vlane_stride, mlir_dtype, dram_var, dram_index_var, sram_var, sram_index_var,
+                     dram_shape, tile_shape, attribute):
+        dma_key = (vlane_split_axis, vlane_stride, mlir_dtype)
+        if dma_type_name == "MVIN" and dma_key in self.dma_read_cache:
+            dma_type, vlane_split_axis, vlane_stride = self.dma_read_cache[dma_key]
+        elif dma_type_name == "MVOUT" and dma_key in self.dma_write_cache:
+            dma_type, vlane_split_axis, vlane_stride = self.dma_write_cache[dma_key]
+        else:
+            vlane_split_axis = self.get_const_cse(vlane_split_axis)
+            vlane_stride = self.get_const_cse(vlane_stride)
+            if dma_type_name == "MVIN":
+                dma_type = self.get_const_cse(DMA_TYPE[f"{dma_type_name}{self.dma_read_counter}"])
+                self.dma_read_counter += 1
+                self.dma_read_cache[dma_key] = [dma_type, vlane_split_axis, vlane_stride]
+            else:
+                dma_type = self.get_const_cse(DMA_TYPE[f"{dma_type_name}{self.dma_write_counter}"])
+                self.dma_write_cache[dma_key] = [dma_type, vlane_split_axis, vlane_stride]
+        tag = self.get_tag_cse()
+        zero_cse = self.get_const_cse(0)
+
+        # Prepare opearnds and attributes
+        dram_operand = f"%{dram_var}[%{dram_index_var}]"
+        sram_operand = f"%{sram_var}[{sram_index_var}]" # Use string
+        tag_var = f"%{tag}[%{zero_cse}]"
+        dma_attribute = f"%{vlane_split_axis}, %{vlane_stride}"
+        sram_shape = tile_shape
+        tag_shape = "memref<1xi32>"
+
+        if dma_type_name == "MVIN":
+            src_operand, dst_operand = dram_operand, sram_operand
+            src_shape, dst_shape = dram_shape, sram_shape
+        else:
+            src_operand, dst_operand = sram_operand, dram_operand
+            src_shape, dst_shape = sram_shape, dram_shape
+
+        return f"memref.dma_start {src_operand}, {dst_operand}, %{dma_type}, {tag_var}, {dma_attribute} : {src_shape}, {dst_shape}, {tag_shape} {attribute}"
+
+    def allocate_sram_buffer(self, dtype, dram_name, tile_desc, raw_index, buffer=None, forced_name=None):
+        c_type = mlir_common.DTYPE_TO_C[dtype]
+        mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
+        tile_numel_per_lane = tile_desc.get_numel_per_lane()
+        tile_shape = tile_desc.get_mlir_shape(mlir_dtype)
+        # Make sure each lane's buffer has at least two element
+        tile_size = max(tile_numel_per_lane, 2) * self.vector_lane
+
+        if buffer is None:
+            buffer = self.spad_buffer
+
+        if dram_name not in self.global_vars_dict:
+            self.global_vars_dict[dram_name] = dict()
+
+        if str(raw_index) not in self.global_vars_dict[dram_name]:
+            new_name = f"buf{self.spadbuf_counter}_spad" if forced_name is None else f"{forced_name}_spad"
+            self.spadbuf_counter+=1
             # Add definition to header
-            self.header.writeline(f"{c_type} {new_name}_spad[{tile_size // self.vector_lane}] __attribute__ ((section(\".spad\")));")
-            self.gem5_header.writeline(f"{c_type} {new_name}_spad[{tile_size}];")
-            self.global_vars.writeline(f"memref.global @{new_name}_spad : memref<{dram_tile_shape}x{mlir_type}, 1>")
-            self.global_vars_dict[name].append(str(raw_index))
+            self.header.writeline(f"{c_type} {new_name}[{tile_size // self.vector_lane}] __attribute__ ((section(\".spad\")));")
+            self.gem5_header.writeline(f"{c_type} {new_name}[{tile_size}] __attribute__((aligned(64)));")
+            self.global_vars.writeline(f"memref.global @{new_name} : {tile_shape}")
+            self.global_vars_dict[dram_name][str(raw_index)] = new_name
         else:
-            new_name = f"{name}_{self.global_vars_dict[name].index(str(raw_index))}"
-        buffer = self.cse.generate(code_buffer, f"memref.get_global @{new_name}_spad : memref<{dram_tile_shape}x{mlir_type}, 1>")
-        return buffer, indices
+            new_name = self.global_vars_dict[dram_name][str(raw_index)]
+        return new_name
 
-    def roundup_vectorlane(self, size, amp=1):
-        return ((size + self.vector_lane - 1) // self.vector_lane) * self.vector_lane * amp
+    def get_scratchpad_buffer(self, dtype, dram_name, tile_desc, raw_index, buffer=None):
+        if buffer is None:
+            buffer = self.spad_buffer
 
-from . import mlir_lowering
+        mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
+        tile_shape = tile_desc.get_mlir_shape(mlir_dtype)
+        new_name = self.allocate_sram_buffer(dtype, dram_name, tile_desc, raw_index, buffer=buffer)
+        sram_var = self.spad_cse.generate(buffer, f"memref.get_global @{new_name} : {tile_shape}")
 
-@dataclasses.dataclass
-class LoopLevel:
-    var: sympy.Expr
-    size: sympy.Expr
-    idx: int
-    start: int = 0
-    tile_row: int = 4
-    tile_col: int = 4
-    reduction_vars: Dict[str, str] = None
+        zero_cse = self.get_const_cse(0)
+        sram_index_var = ",".join([f"%{zero_cse}"] * tile_desc.get_nr_dim())
+        return sram_var, sram_index_var
 
-    def lines(self):
-        step = 1
-        if self.idx == -2:
-            step = self.tile_row
-        elif self.idx == -1:
-            step = self.tile_col
-        if self.reduction_vars:
-            acc = ', '.join([f"%{acc.name}" for acc in self.reduction_vars.keys()])
-            args = ', '.join([f"%{iter.name} = %{init.name}" for (_, iter, init, _) in self.reduction_vars.values()])
-            dtype = ', '.join([f"{dtype}" for (_, _, _, dtype) in self.reduction_vars.values()])
-            line = f"{acc} = affine.for %{self.var} = {self.start} to {self.size} step {step} iter_args({args}) -> ({dtype})"
+    def get_const_cse(self, value, dtype="index") -> common.CSEVariable:
+        # Type convert
+        if dtype[0] == "f":
+            value = float(value)
         else:
-            line = f"affine.for %{self.var} = {self.start} to {self.size} step {step}"
+            value = int(value)
 
-        return [line]
+        if value not in self.consts:
+            self.consts[str(value)+dtype] = self.const_cse.generate(self.const_buffer, f"arith.constant {value} : {dtype}")
+        return self.consts[str(value)+dtype]
 
-@dataclasses.dataclass
-class LoopNest:
-    loops: List[LoopLevel]
+    def get_tag_cse(self, value=None, shape="memref<1xi32>"):
+        if value is None:
+            value = self.dma_tag_id
+            self.dma_tag_id += 1
+        if value not in self.tags:
+            self.tags[value] = self.alloc_cse.generate(self.alloc_buffer, f"memref.alloc() : {shape} // {value}")
+        return self.tags[value]
 
-    def __bool__(self):
-        return bool(self.loops)
+    def get_mask(self):
+        if self.compute_body_loop.size % self.compute_body_loop.step == 0:
+            return None, None
+        compute_vec_size = self.kernel_group.tile_desc.get_compute_vec_size()
+        index_shape = f"vector<{self.compute_body_loop.step}xindex>"
+        mask_shape = f"vector<{compute_vec_size}xi1>"
 
-    def mark_reduction(self, reduction_vars):
-        for loop in self.loops:
-            loop.reduction_vars = reduction_vars
+        upper_bound = self.get_const_cse(self.compute_body_loop.size)
+        step_vec = self.const_cse.generate(self.const_buffer, f"vector.step : {index_shape}")
 
-    def mark_parallel(self, par_depth):
-        loops = self.loops
-        loops[0].parallel = par_depth
-        for i in range(1, par_depth):
-            loops[i].collapsed = True
-        loops[0].simd = loops[par_depth - 1].simd
+        gap = self.mask_cse.generate(self.masks, f"arith.subi %{upper_bound}, %{self.compute_idx} : index")
+        gap_vec = self.mask_cse.generate(self.masks, f"vector.broadcast %{gap} : index to {index_shape}")
+        mask_var = self.mask_cse.generate(self.masks, f"arith.cmpi ult, %{step_vec}, %{gap_vec} : {index_shape}")
+        self.register_var_info(mask_var, [compute_vec_size, "i1"])
+        return mask_shape, mask_var
 
-class MLIRWrapperKenrelGroup(cpp.KernelGroup):
-    def __init__(self):
-        super().__init__()
-        self.args = mlir_common.MLIRKernelArgs()
+    def convert_indirect_indexing(self, index :sympy.Expr):
+        if "tmp" not in str(index):
+            return index
 
-class MLIRScheduling(BaseScheduling):
-    count = 0
-    target_kernel = MLIRKernel
-    def __init__(self, scheduler):
-        self.scheduler = scheduler
-        self.kernel_group = MLIRWrapperKenrelGroup()
-        self._ready_to_flush = False
-        self.outer_function = set()
-        config.inplace_buffers = False # FIXME. inout kernel makes trouble.. So disabled it!
+        # Process start
+        indirect_dims = [str(dim) for dim in index.free_symbols if "tmp" in str(dim)]
+        indirect_dims.sort()
+        first_dim = indirect_dims[0]
+        spad_vars = dict()
+        tmp_comp, self.compute = self.compute, self.dma_loads
 
-    def _set_flush_status(self, status: bool):
-        self._ready_to_flush = status
+        # Load indirect operands
+        for target_dim in indirect_dims:
+            sram_var, _, tile_numel_per_lane, sram_index_var, tile_shape, vshape = self.spad_buffer_dict[target_dim]
+            mlir_dtype = vshape.split("x")[1][:-1]
+            vshape = f"vector<{tile_numel_per_lane}x{mlir_dtype}>" # FIXME. Maybe require fine grain compute...
+            if tile_numel_per_lane > 1:
+                operation = "affine.vector_load"
+                line = f"{operation} %{sram_var}[{sram_index_var}] : {tile_shape}, {vshape} // For indirect access"
+            else:
+                operation = "affine.load"
+                line = f"{operation} %{sram_var}[{sram_index_var}] : {tile_shape} // For indirect access"
+            out = self.cse.generate(self.dma_loads, line)
+            self.register_var_info(out, [tile_numel_per_lane, mlir_dtype])
+            spad_vars[target_dim] = out
 
-    def can_fuse_vertical(self, node1, node2):
-        return False
-        return self.can_fuse_horizontal(node1, node2) and not node1.is_reduction()
+        # Apply stride
+        for arg in index.args:
+            if "tmp" not in str(arg):
+                continue
+            if arg.is_Mul and arg.args[0].is_number:
+                coeff_dtype = self.var_info[spad_vars[str(arg.args[1])]][1]
+                coeff = ops.constant(int(arg.args[0]), coeff_dtype)
+                spad_vars[str(arg.args[1])] = ops.mul(spad_vars[str(arg.args[1])], coeff)
+            index = index.replace(arg, 0)
 
-    def can_fuse_horizontal(self, node1, node2):
-        return False
-        _, (vars1, reduce1) = node1.group
-        _, (vars2, reduce2) = node2.group
-        if vars1 == vars2 and reduce1 == reduce2:
-            return True
-        #TODO: Temporary solution determining the fusion condition similar to CPP/OpenMP
-        v1_total = math.prod(vars1) if len(vars1) else 0
-        v2_total = math.prod(vars2) if len(vars2) else 0
-        r1_total = math.prod(reduce1) if len(reduce1) else 0
-        r2_total = math.prod(reduce2) if len(reduce2) else 0
-        if reduce1 == () \
-            and v1_total == (v2_total + r2_total):
-            # and node1.node.layout.size == node2.node.layout.size:     #FIXME: Need to check layout too?
-            return True
-        return False
+        # Sum
+        for dim, var in spad_vars.items():
+            if dim == first_dim:
+                continue
+            spad_vars[first_dim] = ops.add(spad_vars[first_dim], var)
 
-    def group_fn(self, sizes):
-        return tuple(tuple(map(V.graph.sizevars.simplify, s)) for s in sizes)
-
-    def codegen_nodes(self, nodes):
-        _, (group, reduction_group) = max(
-            nodes, key=lambda x: int(x.is_reduction())
-        ).group
-        ex_kernel = self.target_kernel()
-        ex_kernel.kernel_group = self.kernel_group
-
-        kernel_name = f"extension_kernel_{MLIRScheduling.count}"
-        MLIRScheduling.count += 1
-        src_code = ex_kernel.codegen_nodes(nodes, kernel_name)
-        self.define_kernel(src_code, kernel_name, ex_kernel.vector_lane,
-                           ex_kernel.spad_info, origins= {str(i) for i in nodes[0].node.origins})
-        ex_kernel.call_kernel(kernel_name)
-        _, args, _, _ = ex_kernel.args.mlir_argdefs()
-        args = ", ".join(args)
-        if (extension_config.CONFIG_BACKENDSIM_EAGER_MODE):
-            V.graph.wrapper_code.writeline(
-                f"yield ({kernel_name}, ({args}))"
-            )
-        self._set_flush_status(True)
-
-    def ready_to_flush(self):
-        return self._ready_to_flush
-
-    def codegen_sync(self):
-        pass
-
-    def flush(self):
-        self.kernel_group.codegen_define_and_call(V.graph.wrapper_code)
-        self.kernel_group = MLIRWrapperKenrelGroup()
-        self._set_flush_status(False)
-
-    def define_function(self, kernel):
-        code, function_name = kernel.def_function()
-        if code is not None and function_name not in self.outer_function:
-            wrapper = V.graph.wrapper_code
-            wrapper.header.writeline(code)
-            self.outer_function.add(function_name)
-
-    def define_kernel(self, src_code, kernel_name, vector_lane, spad_info, tile_size=[1, 1, 1], loop_size=None, origins={}):
-        wrapper = V.graph.wrapper_code
-        if src_code in wrapper.src_to_kernel:
-            kernel_name = wrapper.src_to_kernel[src_code]
+        # Store index var
+        sram_var, _, tile_numel_per_lane, sram_index_var, tile_shape, vshape = self.spad_buffer_dict[first_dim]
+        mlir_dtype = vshape.split("x")[1][:-1]
+        vshape = f"vector<{tile_numel_per_lane}x{mlir_dtype}>" # FIXME. Maybe require fine grain compute...
+        if tile_numel_per_lane > 1:
+            operation = "affine.vector_store"
+            line = f"{operation} %{spad_vars[first_dim]}, %{sram_var}[{sram_index_var}] : {tile_shape}, {vshape}"
         else:
-            wrapper.src_to_kernel[src_code] = kernel_name
+            operation = "affine.store"
+            line = f"{operation} %{spad_vars[first_dim]}, %{sram_var}[{sram_index_var}] : {tile_shape}"
+        out = self.cse.generate(self.dma_loads, line, assignment=False)
 
-            codecache_def = IndentedBuffer()
-            codecache_def.writeline(f"custom_async_compile.mlir('''{src_code}''', ")
-            codecache_def.writeline(f"vectorlane_size={vector_lane},")
-            codecache_def.writeline(f"tile_size={tile_size},")
-            codecache_def.writeline(f"loop_size={loop_size},")
-            codecache_def.writeline(f"spad_info={spad_info},")
-            codecache_def.writeline(f"origins={origins},")
-            codecache_def.writeline("arg_attributes=arg_attributes)")
-            wrapper.define_kernel(kernel_name, codecache_def.getvalue(), cuda=False)
-        return kernel_name
-
-    def codegen_src_code(self, kernel, render, template_node, epilogue_nodes):
-        with kernel:
-            for node in [template_node, *epilogue_nodes]:
-                    node.mark_run()
-            partial_code = render()
-            for node in epilogue_nodes:
-                ranges = node.get_ranges()
-                node.codegen(kernel.set_ranges(ranges[0], ranges[1], None))
-        with V.set_kernel_handler(kernel):
-            src_code = (
-                partial_code
-                if isinstance(partial_code, str)
-                else partial_code.finalize()
-            )
-            src_code = kernel.add_extra_global_vars(src_code)
-        return src_code
-
-    def codegen_template(self, template_node, epilogue_nodes):
-        _, (numel, rnumel) = template_node.group
-        template_buffer = template_node.node
-        kernel, render, codegen_header = template_buffer.make_kernel_render(template_buffer, epilogue_nodes=epilogue_nodes)
-        _, _, _, kernel.buffer_types = kernel.args.mlir_argdefs()
-
-        src_code = self.codegen_src_code(kernel, render, template_node, epilogue_nodes)
-        wrapper = V.graph.wrapper_code
-
-        if src_code in wrapper.src_to_kernel: # [CONV] check inner function is already defined
-            kernel_name = wrapper.src_to_kernel[src_code]
-            kernel, render, codegen_header = template_buffer.make_kernel_render(template_buffer, epilogue_nodes=epilogue_nodes, kernel_name=kernel_name) # update kernel name
-            src_code = self.codegen_src_code(kernel, render, template_node, epilogue_nodes)
-
-        with V.set_kernel_handler(kernel):
-            codegen_header(src_code, (kernel.header.getvalue(), kernel.gem5_header.getvalue()))
-            # node_schedule = [template_node, *epilogue_nodes]
-            kernel.meta_kernel()
-            kernel_name = self.define_kernel(src_code, kernel.kernel_name, kernel.vector_lane, kernel.spad_info,
-                                             kernel.tile_size, kernel.loop_size, origins={str(i) for i in template_node.node.origins})
-            self.define_function(kernel)
-
-        kernel.call_kernel(kernel_name)
-        V.graph.removed_buffers |= kernel.removed_buffers
-        _, args, _, _ = kernel.args.mlir_argdefs()
-        args = ", ".join(args)
-        if (extension_config.CONFIG_BACKENDSIM_EAGER_MODE):
-            target_kernel_name = kernel_name if kernel.outer_func_name is None else kernel.outer_func_name
-            V.graph.wrapper_code.writeline(
-                f"yield ({target_kernel_name}, ({args}))"
-            )
-        self._set_flush_status(True)
+        # Conversion
+        mlir_dtype = self.var_info[spad_vars[first_dim]][1]
+        line = f"affine.load %{sram_var}[{sram_index_var}] : {tile_shape}"
+        out = self.cse.generate(self.dma_loads, line)
+        if mlir_dtype != "index":
+            line = f"arith.index_cast %{out} : {mlir_dtype} to {'index'}"
+            out = self.cse.generate(self.dma_loads, line)
+        self.register_var_info(out, [1, "index", [1]])
+        self.compute = tmp_comp
+        return index + sympy.Symbol(str(out))

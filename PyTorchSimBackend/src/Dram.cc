@@ -1,204 +1,211 @@
 #include "Dram.h"
 
-uint32_t Dram::get_channel_id(MemoryAccess* access) {
+uint32_t Dram::get_channel_id(mem_fetch* access) {
   uint32_t channel_id;
   if (_n_ch_per_partition >= 16)
-    channel_id = ipoly_hash_function((new_addr_type)access->dram_address/_config.dram_req_size, 0, _n_ch_per_partition);
+    channel_id = ipoly_hash_function((new_addr_type)access->get_addr()/_req_size, 0, _n_ch_per_partition);
   else
-    channel_id = ipoly_hash_function((new_addr_type)access->dram_address/_config.dram_req_size, 0, 16) % _n_ch_per_partition;
-  
-  channel_id += ((access->numa_id % _n_partitions)* _n_ch_per_partition);
+    channel_id = ipoly_hash_function((new_addr_type)access->get_addr()/_req_size, 0, 16) % _n_ch_per_partition;
+
+  channel_id += ((access->get_numa_id() % _n_partitions)* _n_ch_per_partition);
   return channel_id;
 }
 
-/* FIXME: Simple DRAM has bugs */
-SimpleDram::SimpleDram(SimulationConfig config)
-    : _latency(config.dram_latency) {
-  _cycles = 0;
-  _config = config;
+Dram::Dram(SimulationConfig config, cycle_type* core_cycle) {
+  _core_cycles = core_cycle;
   _n_ch = config.dram_channels;
-  _n_partitions = config.dram_num_partitions;
-  _n_ch_per_partition = _n_ch / _n_partitions;
-  _waiting_queue.resize(_n_ch);
-  _response_queue.resize(_n_ch);
-}
-
-bool SimpleDram::running() { return false; }
-
-void SimpleDram::cycle() {
-  for (uint32_t ch = 0; ch < _n_ch; ch++) {
-    if (!_waiting_queue[ch].empty() &&
-        _waiting_queue[ch].front().first <= _cycles) {
-      _response_queue[ch].push(_waiting_queue[ch].front().second);
-      _waiting_queue[ch].pop();
-    }
-  }
-
-  _cycles++;
-}
-
-bool SimpleDram::is_full(uint32_t cid, MemoryAccess* request) { return false; }
-
-void SimpleDram::push(uint32_t cid, MemoryAccess* request) {
-  request->request = false;
-  std::pair<uint64_t, MemoryAccess*> entity;
-  entity.first = MAX(_cycles + _latency, _last_finish_cycle);
-  _last_finish_cycle = entity.first;
-  entity.second = request;
-  _waiting_queue[cid].push(entity);
-}
-
-bool SimpleDram::is_empty(uint32_t cid) { return _response_queue[cid].empty(); }
-
-MemoryAccess* SimpleDram::top(uint32_t cid) {
-  assert(!is_empty(cid));
-  return _response_queue[cid].front();
-}
-
-void SimpleDram::pop(uint32_t cid) {
-  assert(!is_empty(cid));
-  _response_queue[cid].pop();
-}
-
-DramRamulator::DramRamulator(SimulationConfig config)
-    : _mem(std::make_unique<ram::Ramulator>(config.dram_config_path,
-                                            config.num_cores, false)) {
-  _n_ch = config.dram_channels;
-  _config = config;
-  _cycles = 0;
-  _total_processed_requests.resize(_n_ch);
-  _processed_requests.resize(_n_ch);
-  for (int ch = 0; ch < _n_ch; ch++) {
-    _total_processed_requests[ch] = 0;
-    _processed_requests[ch] = 0;
-  }
-}
-
-bool DramRamulator::running() { return false; }
-
-void DramRamulator::cycle() {
-  _mem->tick();
-  _cycles++;
-  int interval = _config.dram_print_interval? _config.dram_print_interval: INT32_MAX;
-  int average = 0;
-  if (_cycles % interval == 0) {
-    for (int ch = 0; ch < _n_ch; ch++) {
-      float util = ((float)_processed_requests[ch]) / interval * 100;
-      _total_processed_requests[ch] += _processed_requests[ch];
-      average += _processed_requests[ch];
-      _processed_requests[ch] = 0;
-    }
-    spdlog::info("Avg DRAM: BW Util {:.2f}%", (float)average / (interval * _n_ch) * 100);
-  }
-}
-
-bool DramRamulator::is_full(uint32_t cid, MemoryAccess* request) {
-  return !_mem->isAvailable(cid, request->dram_address, request->write);
-}
-
-void DramRamulator::push(uint32_t cid, MemoryAccess* request) {
-  const addr_type atomic_bytes = _mem->getAtomicBytes();
-  const addr_type target_addr = request->dram_address;
-  // align address
-  const addr_type start_addr = target_addr - (target_addr % atomic_bytes);
-  assert(start_addr == target_addr);
-  assert(request->size == atomic_bytes);
-  int count = 0;
-  request->request = false;
-  _mem->push(cid, target_addr, request->write, request->core_id, request);
-}
-
-bool DramRamulator::is_empty(uint32_t cid) { return _mem->isEmpty(cid); }
-
-MemoryAccess* DramRamulator::top(uint32_t cid) {
-  assert(!is_empty(cid));
-  return (MemoryAccess*)_mem->top(cid);
-}
-
-void DramRamulator::pop(uint32_t cid) {
-  assert(!is_empty(cid));
-  _mem->pop(cid);
-  _processed_requests[cid]++;
-}
-
-void DramRamulator::print_stat() {
-  uint32_t total_reqs = 0;
-  for (int ch = 0; ch < _n_ch; ch++) {
-    _total_processed_requests[ch] += _processed_requests[ch];
-    float util = ((float)_total_processed_requests[ch]) / _cycles * 100;
-    spdlog::info("DRAM CH[{}]: AVG BW Util {:.2f}%", ch, util);
-    total_reqs += _total_processed_requests[ch];
-  }
-  float util = ((float)total_reqs / _n_ch) / _cycles * 100;
-  spdlog::info("DRAM: AVG BW Util {:.2f}%", util);
-  _mem->print_stats();
-}
-
-DramRamulator2::DramRamulator2(SimulationConfig config) {
-  _n_ch = config.dram_channels;
+  _n_bl = config.dram_nbl;
   _req_size = config.dram_req_size;
   _n_partitions = config.dram_num_partitions;
   _n_ch_per_partition = _n_ch / _n_partitions;
   _config = config;
+
+  spdlog::info("[Config/DRAM] DRAM Bandwidth {} GB/s, Freq: {} MHz, Channels: {}, Request_size: {}", config.max_dram_bandwidth(), config.dram_freq, _n_ch, _req_size);
+  /* Initialize DRAM Channels */
+  for (int ch = 0; ch < _n_ch; ch++) {
+    m_to_crossbar_queue.push_back(std::queue<mem_fetch*>());
+    m_from_crossbar_queue.push_back(std::queue<mem_fetch*>());
+  }
+
+  /* Initialize L2 cache */
+  _m_caches.resize(_n_ch);
+  if (config.l2d_type == L2CacheType::NOCACHE) {
+    std::string name = "No cache";
+    spdlog::info("[Config/L2Cache] No L2 cache");
+    for (int ch = 0; ch < _n_ch; ch++)
+      _m_caches[ch] = new NoL2Cache(name, _m_cache_config, ch, _core_cycles, &m_to_crossbar_queue[ch], &m_from_crossbar_queue[ch]);
+  } else if (config.l2d_type == L2CacheType::DATACACHE) {
+    std::string name = "L2 cache";
+    _m_cache_config.init(config.l2d_config_str);
+    spdlog::info("[Config/L2Cache] Total Size: {} KB, Partition Size: {} KB, Set: {}, Assoc: {}, Line Size: {}B Sector Size: {}B",
+            _m_cache_config.get_total_size_in_kb() * _n_ch, _m_cache_config.get_total_size_in_kb(),
+            _m_cache_config.get_num_sets(), _m_cache_config.get_num_assoc(),
+            _m_cache_config.get_line_size(), _m_cache_config.get_sector_size());
+    for (int ch = 0; ch < _n_ch; ch++)
+      _m_caches[ch] = new L2DataCache(name, _m_cache_config, ch, _core_cycles, _config.l2d_hit_latency, &m_to_crossbar_queue[ch], &m_from_crossbar_queue[ch]);
+  } else {
+    spdlog::error("[Config/L2D] Invalid L2 cache type...!");
+    exit(EXIT_FAILURE);
+  }
+}
+
+DramRamulator2::DramRamulator2(SimulationConfig config, cycle_type* core_cycle) : Dram(config, core_cycle) {
+  /* Initialize DRAM Channels */
   _mem.resize(_n_ch);
   for (int ch = 0; ch < _n_ch; ch++) {
-    _mem[ch] = std::make_unique<NDPSim::Ramulator2>(
-      ch, _n_ch, config.dram_config_path, "Ramulator2", _config.dram_print_interval, 1);
+    _mem[ch] = std::make_unique<Ramulator2>(
+      ch, _n_ch, config.dram_config_path, "Ramulator2", _config.dram_print_interval, _n_bl);
   }
   _tx_log2 = log2(_req_size);
   _tx_ch_log2 = log2(_n_ch_per_partition) + _tx_log2;
 }
 
 bool DramRamulator2::running() {
+  for (int ch = 0; ch < _n_ch; ch++) {
+    if (mem_fetch* req = _mem[ch]->return_queue_top())
+      return true;
+    if (mem_fetch* req = _m_caches[ch]->top())
+      return true;
+  }
   return false;
 }
 
 void DramRamulator2::cycle() {
   for (int ch = 0; ch < _n_ch; ch++) {
     _mem[ch]->cycle();
+
+    // From Cache to DRAM
+    if (mem_fetch* req = _m_caches[ch]->top()) {
+      _mem[ch]->push(req);
+      _m_caches[ch]->pop();
+    }
+
+    // From DRAM to Cache
+    if (mem_fetch* req = _mem[ch]->return_queue_top()) {
+      if(_m_caches[ch]->push(req))
+        _mem[ch]->return_queue_pop();
+    }
   }
 }
 
-bool DramRamulator2::is_full(uint32_t cid, MemoryAccess* request) {
-  return _mem[cid]->full();
+void DramRamulator2::cache_cycle()  {
+  for (int ch = 0; ch < _n_ch; ch++) {
+    _m_caches[ch]->cycle();
+  }
 }
 
-void DramRamulator2::push(uint32_t cid, MemoryAccess* request) {
-  addr_type atomic_bytes =_config.dram_req_size;
-  addr_type target_addr = request->dram_address;
-  // align address
-  addr_type start_addr = target_addr - (target_addr % atomic_bytes);
-  assert(start_addr == target_addr);
-  assert(request->size == atomic_bytes);
-  target_addr = (target_addr >> _tx_ch_log2) << _tx_log2;
-  NDPSim::mem_fetch* mf = new NDPSim::mem_fetch();
-  mf->addr = target_addr;
-  mf->size = request->size;
-  mf->write = request->write;
-  mf->request = true;
-  mf->origin_data = request;
-  _mem[cid]->push(mf);
+bool DramRamulator2::is_full(uint32_t cid, mem_fetch* request) {
+  return false; //m_from_crossbar_queue[cid].full(); Infinite length
+}
+
+void DramRamulator2::push(uint32_t cid, mem_fetch* request) {
+  addr_type target_addr = (request->get_addr() >> _tx_ch_log2) << _tx_log2;
+  request->set_addr(target_addr);
+  m_from_crossbar_queue[cid].push(request);
 }
 
 bool DramRamulator2::is_empty(uint32_t cid) {
-  return _mem[cid]->return_queue_top() == NULL;
+  return m_to_crossbar_queue[cid].empty();
 }
 
-MemoryAccess* DramRamulator2::top(uint32_t cid) {
+mem_fetch* DramRamulator2::top(uint32_t cid) {
   assert(!is_empty(cid));
-  NDPSim::mem_fetch* mf = _mem[cid]->return_queue_top();
-  ((MemoryAccess*)mf->origin_data)->request = false;
-  return (MemoryAccess*)mf->origin_data;
+  return m_to_crossbar_queue[cid].front();
 }
 
 void DramRamulator2::pop(uint32_t cid) {
   assert(!is_empty(cid));
-  NDPSim::mem_fetch* mf = _mem[cid]->return_queue_pop();
-  delete mf;
+  m_to_crossbar_queue[cid].pop();
 }
 
 void DramRamulator2::print_stat() {
   for (int ch = 0; ch < _n_ch; ch++) {
     _mem[ch]->print(stdout);
+  }
+}
+
+void DramRamulator2::print_cache_stats() {
+  for (int ch = 0; ch < _n_ch; ch++) {
+    _m_caches[ch]->print_stats();
+  }
+}
+
+SimpleDRAM::SimpleDRAM(SimulationConfig config, cycle_type* core_cycle) : Dram(config, core_cycle) {
+  /* Initialize DRAM Channels */
+  spdlog::info("[SimpleDRAM] DRAM latecny: {}", config.dram_latency);
+  for (int ch = 0; ch < _n_ch; ch++) {
+    _mem.push_back(std::make_unique<DelayQueue<mem_fetch*>>("SimpleDRAM", true, -1));
+  }
+  _latency =  config.dram_latency;
+  _tx_log2 = log2(_req_size);
+  _tx_ch_log2 = log2(_n_ch_per_partition) + _tx_log2;
+}
+
+bool SimpleDRAM::running() {
+  for (int ch = 0; ch < _n_ch; ch++) {
+    if (!_mem[ch]->queue_empty())
+      return true;
+    if (mem_fetch* req = _m_caches[ch]->top())
+      return true;
+  }
+  return false;
+}
+
+void SimpleDRAM::cycle() {
+  for (int ch = 0; ch < _n_ch; ch++) {
+    _mem[ch]->cycle();
+
+    // From Cache to DRAM
+    if (mem_fetch* req = _m_caches[ch]->top()) {
+      //spdlog::info("[Cache->DRAM] mem_fetch: addr={:#x}", req->get_addr());
+
+      _mem[ch]->push(req, _latency);
+      _m_caches[ch]->pop();
+    }
+
+    // From DRAM to Cache
+    if (_mem[ch]->arrived()) {
+      mem_fetch* req = _mem[ch]->top();
+      req->set_reply();
+      //spdlog::info("[DRAM->Cache] mem_fetch: addr={:#x}", req->get_addr());
+      if(_m_caches[ch]->push(req))
+        _mem[ch]->pop();
+    }
+  }
+}
+
+void SimpleDRAM::cache_cycle()  {
+  for (int ch = 0; ch < _n_ch; ch++) {
+    _m_caches[ch]->cycle();
+  }
+}
+
+bool SimpleDRAM::is_full(uint32_t cid, mem_fetch* request) {
+  return false; //m_from_crossbar_queue[cid].full(); Infinite length
+}
+
+void SimpleDRAM::push(uint32_t cid, mem_fetch* request) {
+  m_from_crossbar_queue[cid].push(request);
+}
+
+bool SimpleDRAM::is_empty(uint32_t cid) {
+  return m_to_crossbar_queue[cid].empty();
+}
+
+mem_fetch* SimpleDRAM::top(uint32_t cid) {
+  assert(!is_empty(cid));
+  return m_to_crossbar_queue[cid].front();
+}
+
+void SimpleDRAM::pop(uint32_t cid) {
+  assert(!is_empty(cid));
+  m_to_crossbar_queue[cid].pop();
+}
+
+void SimpleDRAM::print_stat() {}
+
+void SimpleDRAM::print_cache_stats() {
+  for (int ch = 0; ch < _n_ch; ch++) {
+    _m_caches[ch]->print_stats();
   }
 }
