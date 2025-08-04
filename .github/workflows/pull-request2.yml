@@ -1,0 +1,36 @@
+name: PR test CI
+
+on:
+  pull_request:
+    branches: [ "master", "develop" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          submodules: recursive
+
+      # Step 2: Set up Docker
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      # Step 3: Build Docker Image (no push)
+      - name: Build Docker Image
+        run: |
+          docker build \
+            --build-arg TORCHSIM_SHA=${{ github.event.pull_request.head.sha }} \
+            -t torchsim-ci:${{ github.sha }} .
+
+      # Step 4: Run test_add.py
+      - name: Run test_add.py
+        run: |
+          echo "Running test_add.py"
+          docker run --rm \
+            torchsim-ci:${{ github.sha }} \
+            python3 PyTorchSim/tests/test_add.py
