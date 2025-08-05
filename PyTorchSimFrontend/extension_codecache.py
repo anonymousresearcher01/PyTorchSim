@@ -5,8 +5,6 @@ import subprocess
 
 from torch._inductor.codecache import AsyncCompile, get_lock_dir, get_hash, write
 from AsmParser.tog_generator import tog_generator
-from AsmParser.riscv_parser import riscv_parser
-from PyTorchSimFrontend.llvm.llvm_caller_codegen import LLVMKernelCallerCodeGen
 from PyTorchSimFrontend.mlir.mlir_caller_codegen import MLIRKernelCallerCodeGen
 from PyTorchSimFrontend import extension_config
 from Simulator.simulator import FunctionalSimulator, CycleSimulator, BackendSimulator
@@ -259,75 +257,6 @@ class MLIRCodeCache:
             )
         return key
 
-class LLVMCodeCache:
-    cache = dict()
-    clear = staticmethod(cache.clear)   # Todo: Cache
-
-    @staticmethod
-    def _load_library(path):
-        pass
-
-    @classmethod
-    def load(cls, source_code,
-             validation_wrapper_name="validation_wrapper",
-             validation_binary_name="validation_bin",
-             cycle_wrapper_name="cycle_wrapper",
-             cycle_binary_name="cycle_bin",
-             arg_attributes=[], loop_info={},
-             load_tile_info={}, store_tile_info={}, **kwargs):
-        write_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(source_code.strip())))
-        key, input_path = write(source_code, "ll", specified_dir=write_path)
-        output_path = input_path[:-2] + "s"
-
-        cmds = llvm_compile_command(input_path, output_path)
-        opt_cmd = shlex.split(cmds[0])
-        llc_cmd = shlex.split(cmds[1])
-
-        from filelock import FileLock
-        lock_dir = get_lock_dir()
-        lock = FileLock(os.path.join(lock_dir, key + ".lock"), timeout=LOCK_TIMEOUT)
-        with lock:
-            # if not os.path.exists(output_path):
-            try:
-                subprocess.check_call(opt_cmd)
-                subprocess.check_call(llc_cmd)
-            except subprocess.CalledProcessError as e:
-                print("Command failed with exit code", e.returncode)
-                print("Error output:", e.output)
-                assert(0)   # Todo: make LLVMCompileError
-
-            # Launch tile graph generator
-            tile_graph_generator = riscv_parser()
-            tile_graph_generator.load_file(output_path,
-                                            loop_info=loop_info,
-                                            load_tile_info=load_tile_info,
-                                            store_tile_info=store_tile_info)
-            # Create code for sampling
-            tile_graph_generator.dump_sampling_code(output_path[:-2] + "_sample.s")
-
-            # Generate LLVM kernel calller and binary for validation
-            if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE:
-                val_llvm_caller = LLVMKernelCallerCodeGen(extension_config.CONFIG_TORCHSIM_VALIDATION_MODE, arg_attributes)
-                val_llvm_caller.generate_wrapper_file(write_path, validation_wrapper_name)
-                val_llvm_caller.compile_wih_kernel(write_path, key, validation_wrapper_name, validation_binary_name)
-
-            # Generate LLVM kernel calller and binary for cycle calculation
-            cycle_llvm_caller = LLVMKernelCallerCodeGen(False, arg_attributes)
-            cycle_llvm_caller.generate_wrapper_file(write_path, cycle_wrapper_name)
-            cycle_llvm_caller.compile_wih_kernel(write_path, key + "_sample", cycle_wrapper_name, cycle_binary_name)
-            array_size = []
-            for (arg_name, arg_attribute) in arg_attributes:
-                array_size.append(str(arg_attribute[2]))
-
-            # Run cyclesim
-            cyclesim = CycleSimulator()
-            cycle_list = cyclesim.compile_and_simulate(os.path.join(write_path, cycle_binary_name), " ".join(array_size), vectorlane_size)
-
-            if extension_config.CONFIG_TORCHSIM_DUMP_FILE:
-                tile_graph_generator.dump_basic_block_graph(os.path.join(write_path, "basic_block.onnx"))
-            tile_graph_generator.cycle_analysis(cycle_list=cycle_list, name=os.path.join(write_path, "tile_graph"))
-        return key
-
 class CustomAsyncCompile(AsyncCompile):
     def __init__(self):
         self.validation_wrapper_name = "validation_wrapper"
@@ -417,49 +346,3 @@ class CustomAsyncCompile(AsyncCompile):
         target_simulator.arg_attributes = arg_attributes
         target_simulator.future = future
         return target_simulator
-
-    def llvm(self, source_code, arg_attributes=[], **kwargs):
-        def task():
-            key = LLVMCodeCache.load(source_code,
-                                          valdiation_wrapper_name=self.validation_binary_name,
-                                          validation_binary_name=self.validation_binary_name,
-                                          arg_attributes=arg_attributes, **kwargs)
-            return key
-        future = self.submit(task)
-
-        def dummy_simulator(*args, **kwargs):
-            # Wait for compilation
-            key = future.result()
-
-            # Run simulator pass
-            result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
-            print("Running dummy simulator!")
-            print("OUTPUT PATH > ", result_path)
-
-            # Dump arguments and meta data
-            dump_metadata(args, arg_attributes, result_path)
-            if extension_config.CONFIG_TORCHSIM_VALIDATION_MODE:
-                funcsim = FunctionalSimulator(result_path, key)
-                funcsim.run_spike(args, arg_attributes,
-                                  os.path.join(result_path, self.validation_binary_name),
-                                  kwargs['intermediate_op'] if 'intermediate_op' in kwargs else None)
-
-            assembly_path = os.path.join(result_path, f'{key}.s')
-            try:
-                with open(assembly_path, 'r') as file:
-                    file_contents = file.read()
-                    print("Assembly > \n", file_contents)
-            except FileNotFoundError:
-                print(f'{assembly_path} not found.')
-            except Exception as e:
-                print(f"Error while reading.")
-
-            onnx_path = os.path.join(result_path, "tile_graph.onnx")
-            attribute_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "attribute")
-            backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
-            backsim = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
-            attribute_path = backsim.create_attribute_file(attribute_path, args)
-            result_path = backsim.simulation(onnx_path, attribute_path)
-            result = BackendSimulator.get_result_from_file(result_path)
-            return result
-        return dummy_simulator
