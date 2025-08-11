@@ -411,6 +411,20 @@ jobs:
             -e TORCHSIM_SPAD_SIZE="${{ inputs.spad_size }}" \
             ${{ inputs.image_name }} python3 PyTorchSim/tests/Mixtral_8x7B/test_attention.py
 
+  test_vit:
+    name: Run test_vit
+    runs-on: self-hosted
+    steps:
+      - name: Run test_vit.py
+        run: |
+          echo "Running test_vit.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            -e TORCHSIM_VECTOR_LANE="${{ inputs.vector_lane }}" \
+            -e TORCHSIM_SPAD_SIZE="${{ inputs.spad_size }}" \
+            ${{ inputs.image_name }} python3 PyTorchSim/tests/test_vit.py
+
   test_indirect:
     name: Run test_indirect
     runs-on: self-hosted
