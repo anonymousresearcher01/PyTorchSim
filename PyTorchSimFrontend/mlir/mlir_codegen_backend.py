@@ -113,10 +113,8 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
         self.header.splice(
             f"""
             def sram_plan_prefix(buffer_name, buffer):
-                #if CONFIG_SRAM_BUFFER_PLAN is None:
-                #    return
-                #elif buffer_name not in CONFIG_SRAM_BUFFER_PLAN:
-                #    return
+                if CONFIG_SRAM_BUFFER_PLAN and (buffer_name not in CONFIG_SRAM_BUFFER_PLAN):
+                    return
                 buffer_size = buffer.element_size() * buffer.untyped_storage().size()
                 start = buffer.data_ptr()
                 end = start + buffer_size
@@ -124,10 +122,8 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
                 BackendSimulator.sram_alloc(buffer_name, [start, end])
 
             def sram_plan_postfix(buffer_name, buffer):
-                #if CONFIG_SRAM_BUFFER_PLAN is None:
-                #    return
-                #elif buffer_name not in CONFIG_SRAM_BUFFER_PLAN:
-                #    return
+                if CONFIG_SRAM_BUFFER_PLAN and (buffer_name not in CONFIG_SRAM_BUFFER_PLAN):
+                    return
                 buffer_size = buffer.element_size() * buffer.untyped_storage().size()
                 start = buffer.data_ptr()
                 end = start + buffer_size
