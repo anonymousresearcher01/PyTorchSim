@@ -2,7 +2,8 @@ import contextlib
 import sympy
 import re
 import os
-import math
+from functools import reduce
+from operator import mul
 import torch
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -1116,63 +1117,61 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 reduction_key = src_dtype, reduction_type, value
                 sum = self.reduction(dtype, src_dtype, "sum", value)
                 sqr_sum = self.reduction(dtype, src_dtype, "sum", ops.mul(value, value))
-                self.welford_reduce_out = (sum, sqr_sum, None)
-                return sum, sqr_sum, None
+                if self.welford_reduce_out is not None:
+                    return self.welford_reduce_out
+                else:
+                    self.welford_reduce_out = (sum, sqr_sum, None)
+                    return sum, sqr_sum, None
 
         # Prepare reduction loop
-        reduction_key = src_dtype, reduction_type, value
-        acc = self.reduction_cse.generate(
-            self.loads, f"reduction {reduction_key}", write=False
-        )
-        iterator = self.iterator_cse.generate(
-            self.loads, f"reduction {reduction_key}", write=False
-        )
-        init = self.init_cse.generate(
-            self.loads, f"reduction {reduction_key}", write=False
-        )
-        init_vec = self.init_vec_cse.generate(
-            self.loads, f"reduction {reduction_key}", write=False
-        )
         type_name = mlir_common.DTYPE_TO_MLIR[dtype]
-        init = self.const_cse.generate(self.const_buffer, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
         vec_len = self.kernel_group.tile_desc.get_compute_vec_size()
         reduced_shape = self.kernel_group.tile_desc.get_mlir_vshape(type_name)
 
-        # Set accumulation var
-        if vec_len == 1: # 1-D vector to scalar
-            # Edge case for scalar
-            init_vec = init
-        else:
-            # Adjust shape and inital value
-            init_vec = self.const_cse.generate(self.const_buffer, f"vector.broadcast %{init} : {type_name} to {reduced_shape}")
-            self.register_var_info(init_vec, [vec_len, type_name])
-        acc_var = init_vec
+        # Prepare reduction init
+        init = self.const_cse.generate(self.const_buffer, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
+        init_vec = init if vec_len == 1 else self.const_cse.generate(self.const_buffer, f"vector.broadcast %{init} : {type_name} to {reduced_shape}")
+        self.register_var_info(init_vec, [vec_len, type_name])
+
+        acc_var_list = []
+        iter_var_list = []
+        for reduction_depth in range(self.get_nr_rdim()):
+            # Create reduction key
+            reduction_key = src_dtype, reduction_type, value, reduction_depth
+            acc_init_var = init_vec if reduction_depth == 0 else iter_var_list[-1]
+
+            acc = self.reduction_cse.generate(self.loads, f"reduction {reduction_key}", write=False)
+            iterator = self.iterator_cse.generate(self.loads, f"reduction {reduction_key}", write=False)
+            acc_var_list.append(acc)
+            iter_var_list.append(iterator)
+
+            # Register reduction info
+            self.reduction_vars[acc] = (reduction_type, iterator, acc_init_var, reduced_shape, reduction_depth)
+            self.reduction_cse.reduction_cache[reduction_key] = acc
 
         # Reduction body prepare
-        body_acc = self.reduction_cse.generate(
-            self.compute, f"reduction {reduction_key}body_acc", write=False
-        )
-        body_iter_arg = self.iterator_cse.generate(
-            self.compute, f"reduction {reduction_key}body_iter_arg", write=False
-        )
+        # Note: reduction body is inner most loop body. So it doesn't need reduction depth.
+        body_key = src_dtype, reduction_type, value
+        body_acc = self.reduction_cse.generate(self.compute, f"reduction {body_key}body_acc", write=False)
+        body_iter_arg = self.iterator_cse.generate(self.compute, f"reduction {body_key}body_iter_arg", write=False)
         self.register_var_info(body_iter_arg, [vec_len, type_name])
-
-        self.reduction_vars[acc] = (reduction_type, iterator, acc_var, reduced_shape)
-        self.affine_yield[body_acc] = reduced_shape
-        self.reduction_cse.reduction_cache[reduction_key] = acc
-        self.iterator_cse.reduction_cache[reduction_key] = iterator
-        self.init_cse.reduction_cache[reduction_key] = init_vec
+        acc_var_list.append(body_acc)
 
         # Reduction body codegen
-        mask_shape, mask_var = self.get_mask()
+        _, mask_var = self.get_mask()
         if mask_var is not None:
             value = ops.where(mask_var, value, init_vec)
         result = reduction_partial_combine_vec(reduction_type, value, body_iter_arg)
-        self.compute_body_loop.reduction_vars[body_acc] = (reduction_type, body_iter_arg, iterator, reduced_shape)
+        self.compute_body_loop.reduction_vars[body_acc] = (reduction_type, body_iter_arg, iter_var_list[-1], reduced_shape)
         self.compute_body_loop.affine_yield[result] = reduced_shape
 
+        # Register affine yield var
+        for reduction_depth, acc in enumerate(acc_var_list[1:]):
+            self.affine_yield[acc] = reduced_shape, reduction_depth
+
         # Final reduction
-        reduction_size = self.kernel_group.tile_desc.get_numel_per_lane() // self.kernel_group.tile_desc.get_tile_size()[-1]
+        acc = acc_var_list[0] # Set outermost acc var
+        reduction_size = self.kernel_group.tile_desc.get_numel_per_lane() // self.kernel_group.tile_desc.get_reduction_numel()
         assert(vec_len % reduction_size==0)
         if vec_len > reduction_size:
             init = self.const_cse.generate(self.reductions_suffix, f"arith.constant {reduction_init(reduction_type, dtype)} : {type_name}")
@@ -1214,7 +1213,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         dram_shape = mlir_common.MLIRKernelArgs.get_mlir_shape(self.buffer_types[name])
         tile_shape = local_tile_desc.get_mlir_shape(mlir_dtype)
         tile_stride = local_tile_desc.get_tile_stride()
-        compute_vec_size = self.kernel_group.tile_desc.get_numel_per_lane() // self.kernel_group.tile_desc.get_tile_size()[-1]
+        compute_vec_size = self.kernel_group.tile_desc.get_numel_per_lane() // self.kernel_group.tile_desc.get_reduction_numel()
         if compute_vec_size == 1:
             vshape = f"{mlir_dtype}"
         else:
@@ -1223,7 +1222,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         if self.welford_reduce_out is not None:
             sum, sqr_sum, _ = self.welford_reduce_out
             # mean
-            divider = self.cse.generate(self.reductions_suffix, f"arith.constant {float(self.ranges[self.reduction_depth])} : f32")
+            reduction_numel = reduce(mul, self.ranges[self.reduction_depth:], 1)
+            divider = self.cse.generate(self.reductions_suffix, f"arith.constant {float(reduction_numel)} : f32")
             if self.buffer_types[name][1] > 1:
                 divider_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %{divider} : f32 to vector<{self.var_info[sum][0]}x{mlir_dtype}>")
             else:
@@ -1440,10 +1440,11 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             with contextlib.ExitStack() as stack:
                 # Add reduction loops
                 if len(reductions.loops):
-                    reduction_lines = reductions.loops[0].lines()
-                    epilogue = reductions.loops[0].epilogue_line()
-                    code.writelines(reduction_lines)
-                    stack.enter_context(code.indent(attribute="{accumulation_loop=true}", suffix=epilogue))
+                    for reduction_loop in reductions.loops:
+                        reduction_lines = reduction_loop.lines()
+                        epilogue = reduction_loop.epilogue_line()
+                        code.writelines(reduction_lines)
+                        stack.enter_context(code.indent(attribute="{accumulation_loop=true}", suffix=epilogue))
                 code.splice(self.applys)
                 code.splice(self.indexed_buffer)
                 code.splice(self.dma_loads)
@@ -1633,7 +1634,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         elif len(local_dims) == 3:
             is_reduction = self.reduction_depth < 3 and not store_reduction
             if is_reduction:
-                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in local_dims], [1, 2, 0])
+                axis_order = [1, 2, 0] if self.get_nr_rdim()==1 else [2, 1, 0]
+                local_tile_desc.set_tile_size([kg_tile_desc.get_dim_size(dim) for dim in local_dims], axis_order)
                 local_tile_desc.vlane_split_axis = local_vlane_split_axis
                 local_tile_desc.vlane_stride = kg_tile_desc.vlane_stride
             else:

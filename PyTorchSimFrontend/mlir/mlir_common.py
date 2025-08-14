@@ -332,7 +332,7 @@ class MLIRMultiDimTile():
             return self.vec_size
         if self.nr_rdim:
             assert self.nr_rdim!=0
-            val = self.get_numel_per_lane() // self._tile_size[-1]
+            val = self.get_numel_per_lane() // self.get_reduction_numel()
             if self.get_numel_per_lane() >= val * 8:
                 return val*8
             elif self.get_numel_per_lane() >= val * 4:
@@ -389,6 +389,9 @@ class MLIRMultiDimTile():
             return
         else:
             raise ValueError(f"Unknown mode: {mode}. Supported modes are 'pad' and 'split'.")
+
+    def get_reduction_numel(self):
+        return reduce(mul, self.get_tile_size()[-1*self.nr_rdim:], 1)
 
 class MLIRWrapperKenrelGroup(cpp.KernelGroup):
     def __init__(self):
@@ -451,6 +454,9 @@ class BaseMLIRKernel(common.Kernel, BaseMLIRHardwareInfo):
             self.itervars[: self.reduction_depth],
             self.itervars[self.reduction_depth :],
         )
+
+    def get_nr_rdim(self):
+        return len(self.itervars[self.reduction_depth:])
 
     def load(self, name: str, index: sympy.Expr):
         raise NotImplementedError()
@@ -951,9 +957,9 @@ class LoopNest:
         return bool(self.loops)
 
     def mark_reduction(self, reduction_vars, affine_yield=dict()):
-        for loop in self.loops:
-            loop.reduction_vars = reduction_vars
-            loop.affine_yield = affine_yield
+        for loop_depth, loop in enumerate(self.loops):
+            loop.reduction_vars = {key: list(val)[:-1] for key, val in reduction_vars.items() if val[-1] == loop_depth}
+            loop.affine_yield = {key: val[0] for key, val in affine_yield.items() if val[-1] == loop_depth}
 
     def mark_parallel(self, par_depth):
         loops = self.loops
