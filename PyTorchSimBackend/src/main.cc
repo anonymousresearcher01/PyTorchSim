@@ -12,8 +12,8 @@ namespace po = boost::program_options;
 const char* env_value = std::getenv("BACKENDSIM_DRYRUN");
 bool isDryRun = (env_value != nullptr && std::string(env_value) == "1");
 
-void launchKernel(Simulator* simulator, std::string onnx_path, std::string attribute_path, cycle_type request_time=0, int partiton_id=0) {
-  auto graph_praser = TileGraphParser(onnx_path, attribute_path);
+void launchKernel(Simulator* simulator, std::string onnx_path, std::string attribute_path, std::string config_path, cycle_type request_time=0, int partiton_id=0) {
+  auto graph_praser = TileGraphParser(onnx_path, attribute_path, config_path);
   std::unique_ptr<TileGraph>& tile_graph = graph_praser.get_tile_graph();
   tile_graph->set_arrival_time(request_time ? request_time : simulator->get_core_cycle());
   spdlog::info("[Scheduler {}] Register graph path: {} operation: {} at {}", partiton_id, onnx_path, tile_graph->get_name(), simulator->get_core_cycle());
@@ -46,16 +46,16 @@ void interactive_mode(Simulator* simulator) {
     // Parse the first part of the command (e.g., "launch", "until", "quit")
     iss >> token;
     if (token == "launch") {
-      std::string onnx_path, attribute_path;
+      std::string onnx_path, attribute_path, config_path;
       cycle_type request_time = 0;
       int partition_id = 0;
-      iss >> onnx_path >> attribute_path >> request_time >> partition_id;
+      iss >> config_path >> onnx_path >> attribute_path >> request_time >> partition_id;
 
       // Check if both paths were provided
       if (onnx_path.empty() || attribute_path.empty()) {
         spdlog::error("Error: Please provide both ONNX path and Attribute path in the format: launch onnx/path attribute/path");
       } else {
-        launchKernel(simulator, onnx_path, attribute_path, request_time, partition_id);
+        launchKernel(simulator, onnx_path, attribute_path, config_path, request_time, partition_id);
         std::cerr << "launch done" << std::endl;
       }
     } else if (token == "until") {
@@ -135,7 +135,7 @@ int main(int argc, char** argv) {
     cmd_parser.set_if_defined("attributes_list", &attribute_path);
 
     /* launch kernels */
-    launchKernel(simulator, onnx_path, attribute_path);
+    launchKernel(simulator, onnx_path, attribute_path, config_path);
     simulator->run_simulator();
     if (simulator->get_core_cycle()==0)
       simulator->until(1);

@@ -699,8 +699,9 @@ void TileLoopNode::print_node() {
   spdlog::debug("{} stride: {} ", spaces, _stride);
 }
 
-TileGraphParser::TileGraphParser(std::string onnx_path, std::string attribute_path) {
+TileGraphParser::TileGraphParser(std::string onnx_path, std::string attribute_path, std::string config_path) {
   loadConfig(attribute_path, _attribute_json);
+  loadConfig(config_path, _config_json);
   _attribute_path = attribute_path;
 
   /* Note: this parsing algorithm assume that all node are sorted in topological-order */
@@ -727,7 +728,7 @@ TileGraphParser::TileGraphParser(std::string onnx_path, std::string attribute_pa
       spdlog::info("[TOGParser/Attribute] Address numa info key: {} numa stride : {}", it.key(), fmt::join(_arg_numa_stride[it.key()], ", "));
     }
   }
-  if (_attribute_json.contains("sram_alloc") and _attribute_json.contains("l2d_type") and _attribute_json["l2d_type"] == "datacache") {
+  if (_attribute_json.contains("sram_alloc") and _config_json.contains("l2d_type") and _config_json["l2d_type"] == "datacache") {
     auto sram_alloc_list = _attribute_json["sram_alloc"];
     spdlog::info("[TOGParser/Attribute] ================= SRAM Alloc Plan ================");
     for (auto it = sram_alloc_list.begin(); it != sram_alloc_list.end(); ++it) {
