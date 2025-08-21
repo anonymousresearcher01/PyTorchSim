@@ -139,8 +139,8 @@ class MLIRConvSingleBatchTemplate(MLIRTemplate):
         self.padding = kwargs["padding"]
         self.dilation = kwargs["dilation"]
         self.weight_shape = [str(i) for i in input_nodes[1].layout.size]
-        self.input_shape = [i for i in input_nodes[0].layout.size]
-        self.function_name = "Conv2D_" + "_".join(self.weight_shape)+ "_" \
+        self.input_shape = [str(i) for i in input_nodes[0].layout.size]
+        self.function_name = "Conv2D_" + "_".join(self.input_shape) + "_".join(self.weight_shape)+ "_" \
             + "_".join([str(i) for i in self.stride]) \
             + "_" + "_".join([str(i) for i in self.padding]) \
             + "_" + "_".join([str(i) for i in self.dilation])

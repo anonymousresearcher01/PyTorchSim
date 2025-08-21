@@ -1007,6 +1007,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         # Extract index var
         indirect_args = [f"%{i}" for i in indirect_dims]
+        if len(indirect_args):
+            comments = "{indirect_access} " + comments # Add indirect access attribute
         expr_str = str(expr)
         if "//" in expr_str:
             expr_str = expr_str.replace("//", " floordiv ")
@@ -1057,8 +1059,18 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
     def load(self, name: str, index: sympy.Expr):
         index = self.rename_indexing(index)
-        index = self.convert_indirect_indexing(index)
+        index, comptute_depedency = self.convert_indirect_indexing(index)
         padding = self.get_padding_type()
+
+        # In case of special form of indirect access, we need to put load in dma_store buffer
+        if comptute_depedency:
+            apply_buffer = self.dma_stores
+            dma_buffer = self.dma_stores
+            load_buffer = self.dma_stores
+        else:
+            apply_buffer = None
+            dma_buffer = self.dma_loads
+            load_buffer = self.loads
 
         # Extract dram info
         dram_var = self.kernel_group.args.input(name)
@@ -1067,7 +1079,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         mlir_dtype = mlir_common.DTYPE_TO_MLIR[dtype]
 
         # Extract sram info
-        local_tile_desc, index_var, dram_stride = self.get_dma_info(name, index)
+        local_tile_desc, index_var, dram_stride = self.get_dma_info(name, index, buffer=apply_buffer)
         vlane_split_axis = local_tile_desc.vlane_split_axis
         vlane_stride = local_tile_desc.vlane_stride
         tile_numel_per_lane = local_tile_desc.get_numel_per_lane()
@@ -1085,19 +1097,27 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         attribute = f"{{dram_stride={dram_stride}, sram_stride={tile_stride}, padding={padding}}}"
         code = self.get_dma_code("MVIN", vlane_split_axis, vlane_stride, mlir_dtype, dram_var, index_var, sram_var, sram_index_var,
                                  dram_shape, tile_shape, attribute)
-        self.cse.generate(self.dma_loads, code, assignment = False) # FIXME: assignment = False does not support caching
-        compute_index_var = ",".join(sram_index_var.split(",")[:-1] + [f"%{self.compute_idx}"])
-        # Generate vector load instruction
-        if compute_vec_size > 1:
-            operation = "affine.vector_load"
-            line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}, {vshape}"
+        self.cse.generate(dma_buffer, code, assignment = False) # FIXME: assignment = False does not support caching
+
+        if not comptute_depedency:
+            compute_index_var = ",".join(sram_index_var.split(",")[:-1] + [f"%{self.compute_idx}"])
+            # Generate vector load instruction
+            if compute_vec_size > 1:
+                operation = "affine.vector_load"
+                line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}, {vshape}"
+            else:
+                operation = "affine.load"
+                line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}"
+
+            out = self.cse.generate(load_buffer, line)
+            self.register_var_info(out, [compute_vec_size, mlir_dtype])
+            self.spad_buffer_dict[str(out)] = [sram_var, local_tile_desc.get_tile_size(), tile_numel_per_lane, sram_index_var, tile_shape, vshape]
+            return out
         else:
-            operation = "affine.load"
-            line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}"
-        out = self.cse.generate(self.loads, line)
-        self.register_var_info(out, [compute_vec_size, mlir_dtype])
-        self.spad_buffer_dict[str(out)] = [sram_var, local_tile_desc.get_tile_size(), tile_numel_per_lane, sram_index_var, tile_shape, vshape]
-        return out
+            out = sram_var
+            self.register_var_info(out, [compute_vec_size, mlir_dtype])
+            self.spad_buffer_dict[str(out)] = [sram_var, local_tile_desc.get_tile_size(), tile_numel_per_lane, sram_index_var, tile_shape, vshape]
+            return out
 
     def store(self, name: str, index: sympy.Expr, value, *args, **kwargs):
         index = self.rename_indexing(index)
@@ -1312,6 +1332,13 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         return str(index_var)
 
     def _index_expr(self, tile_desc, renamed_expression, index, base_vector_index):
+        # In case of index expr, dimension size should be divisible by tile size
+        if not self.kernel_group.tile_desc.is_dim_dividable(self.ranges):
+            new_tile_size = self.kernel_group.tile_desc.adjust_tile_to_divisible(self.ranges)
+            self.kernel_group.tile_desc.set_tile_size(new_tile_size)
+            self.reset("recompile")
+            raise mlir_common.RecompileSignal(f"Index access (tile size {self.kernel_group.tile_desc.get_tile_size()} is not divisible by {self.ranges})")
+
         tile_size = tile_desc.get_tile_size_per_lane()
         compute_vec_size = tile_desc.get_compute_vec_size()
         strides = tile_desc.get_tile_stride_per_lane()
@@ -1892,22 +1919,50 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
     def convert_indirect_indexing(self, index :sympy.Expr):
         if "tmp" not in str(index):
-            return index
+            return index, None
+
+        # Note: In case of indirect indexing, dimensions should be divisible by tile size
+        if not self.kernel_group.tile_desc.is_dim_dividable(self.ranges):
+            new_tile_size = self.kernel_group.tile_desc.adjust_tile_to_divisible(self.ranges)
+            self.kernel_group.tile_desc.set_tile_size(new_tile_size)
+            self.reset("recompile")
+            raise mlir_common.RecompileSignal(f"Indirect access (tile size {self.kernel_group.tile_desc.get_tile_size()} is not divisible by {self.ranges})")
 
         # Process start
         indirect_dims = [str(dim) for dim in index.free_symbols if "tmp" in str(dim)]
         indirect_dims.sort()
         first_dim = indirect_dims[0]
         spad_vars = dict()
-        tmp_comp, self.compute = self.compute, self.dma_loads
+        old_compute, old_dma_lods, old_dma_stores = self.compute, self.dma_loads, self.dma_stores
+        compute_dependecy = any([target_dim not in self.spad_buffer_dict for target_dim in indirect_dims])
+        if compute_dependecy:
+            self.compute = old_dma_stores
+            target_dma_buffers = self.dma_stores
+        else:
+            self.compute = old_dma_lods
+            target_dma_buffers = self.dma_loads
 
         # Load indirect operands
         for target_dim in indirect_dims:
             if target_dim in self.spad_buffer_dict:
                 sram_var, _, tile_numel_per_lane, sram_index_var, tile_shape, vshape = self.spad_buffer_dict[target_dim]
             else:
-                raise NotImplementedError("TODO.")
+                # FIXME.
+                var_info = [v for k, v in self.var_info.items() if str(k) == target_dim][0]
+                dtype = mlir_common.MLIR_TO_DTYPE[var_info[1]]
 
+                local_tile_desc = self.kernel_group.tile_desc
+                tile_numel_per_lane = local_tile_desc.get_numel_per_lane()
+                tile_shape = local_tile_desc.get_mlir_shape(var_info[1])
+                vshape = f"vector<{var_info[0]}x{var_info[1]}>"
+                sram_var, sram_index_var = self.get_scratchpad_buffer(dtype, target_dim, local_tile_desc, target_dim)
+                self.spad_buffer_dict[target_dim] = [sram_var, local_tile_desc.get_tile_size(), tile_numel_per_lane, sram_index_var, tile_shape, vshape]
+
+                # Store the indirect index variable
+                opeartion = "affine.vector_store"
+                compute_index_var = ",".join(sram_index_var.split(",")[:-1] + [f"%{self.compute_idx}"])
+                line = f"{opeartion} %{target_dim}, %{sram_var}[{compute_index_var}] : {tile_shape}, {vshape}"
+                self.stores.writeline(line)
             mlir_dtype = vshape.split("x")[1][:-1]
             vshape = f"vector<{tile_numel_per_lane}x{mlir_dtype}>" # FIXME. Maybe require fine grain compute...
             if tile_numel_per_lane > 1:
@@ -1916,7 +1971,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             else:
                 operation = "affine.load"
                 line = f"{operation} %{sram_var}[{sram_index_var}] : {tile_shape} // For indirect access"
-            out = self.cse.generate(self.dma_loads, line)
+            out = self.cse.generate(target_dma_buffers, line)
             self.register_var_info(out, [tile_numel_per_lane, mlir_dtype])
             spad_vars[target_dim] = out
 
@@ -1946,15 +2001,15 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         else:
             operation = "affine.store"
             line = f"{operation} %{spad_vars[first_dim]}, %{sram_var}[{sram_index_var}] : {tile_shape}"
-        out = self.cse.generate(self.dma_loads, line, assignment=False)
+        out = self.cse.generate(target_dma_buffers, line, assignment=False)
 
         # Conversion
         mlir_dtype = self.var_info[spad_vars[first_dim]][1]
         line = f"affine.load %{sram_var}[{sram_index_var}] : {tile_shape}"
-        out = self.cse.generate(self.dma_loads, line)
+        out = self.cse.generate(target_dma_buffers, line)
         if mlir_dtype != "index":
             line = f"arith.index_cast %{out} : {mlir_dtype} to {'index'}"
-            out = self.cse.generate(self.dma_loads, line)
+            out = self.cse.generate(target_dma_buffers, line)
         self.register_var_info(out, [1, "index", [1]])
-        self.compute = tmp_comp
-        return index + sympy.Symbol(str(out))
+        self.compute, self.dma_loads, self.dma_stores = old_compute, old_dma_lods, old_dma_stores
+        return index + sympy.Symbol(str(out)), compute_dependecy

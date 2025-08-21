@@ -50,7 +50,7 @@ class MLIRScheduling(BaseScheduling):
                 try:
                     stride = [i.strip()[:-1].split(",")[-1].strip() for i in str(node2.get_nodes()[0].node).split("\n") if "r0" in i][1]
                     stride = int(sympify(stride).coeff(target_symbol))
-                except sympy.core.SympifyError:
+                except:
                     return False
 
                 # We can't fuse dim=-1
@@ -107,6 +107,9 @@ class MLIRScheduling(BaseScheduling):
 
         # Can't fuse two template node
         if node1.is_template() and node2.is_template():
+            return False
+
+        if '_unsafe_index' in node1.get_nodes()[0].node.origins or "_unsafe_index" in node2.get_nodes()[0].node.origins:
             return False
 
         # Check template node fusion

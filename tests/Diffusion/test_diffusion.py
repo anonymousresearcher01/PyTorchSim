@@ -4,7 +4,9 @@ import math
 import argparse
 import torch
 import torch._dynamo
-from diffusers.models.unets.unet_2d_blocks import CrossAttnDownBlock2D
+from diffusers.models.unets.unet_2d_blocks import CrossAttnDownBlock2D, CrossAttnUpBlock2D, UNetMidBlock2DCrossAttn
+from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
+from diffusers.models.upsampling import Upsample2D
 from diffusers.models.resnet import ResnetBlock2D
 
 def test_result(name, out, cpu_out, rtol=1e-4, atol=1e-4):
@@ -43,22 +45,16 @@ def test_unet_conditional(
     pipe = DiffusionPipeline.from_pretrained(model_id, torch_dtype=torch_dtype)
     pipe.to("cpu")
 
-    # UNet/구성 정보
     unet = pipe.unet.eval()
     in_ch = unet.config.in_channels
     latent_sz = getattr(unet.config, "sample_size", 64)
     cross_dim = getattr(unet.config, "cross_attention_dim", None)
 
-    # 입력(latents) 생성: [B, C, H, W]
     g = torch.Generator().manual_seed(0)
     latents = torch.randn(batch, in_ch, latent_sz, latent_sz, generator=g, dtype=torch_dtype)
-
-    # timestep (스칼라 또는 [B]) — UNet은 보통 float/long 모두 허용
     timestep = torch.tensor(999, dtype=torch.float32)
 
-    # encoder_hidden_states 준비
     enc_states_cpu = None
-    # 1) tokenizer + text_encoder 사용 가능하면 실제 임베딩 사용
     if hasattr(pipe, "tokenizer") and hasattr(pipe, "text_encoder") and cross_dim is not None:
         try:
             tokens = pipe.tokenizer(
@@ -70,19 +66,16 @@ def test_unet_conditional(
             )
             text_out = pipe.text_encoder(input_ids=tokens.input_ids).last_hidden_state  # [B, T, D]
             if text_out.shape[-1] != cross_dim:
-                # 크기가 맞지 않는 특수 파이프라인은 랜덤으로 폴백
                 print(f"Warning: text_encoder dim {text_out.shape[-1]} != cross_attn dim {cross_dim}. Fallback to random.")
                 raise RuntimeError("cross-dim mismatch")
             enc_states_cpu = text_out.to(dtype=torch_dtype)
         except Exception as e:
             print(f"Text encoder unavailable or mismatch: {e}. Fallback to random encoder states.")
-    # 2) 폴백: 랜덤 임베딩 (cross_attention_dim이 정의된 경우)
     if enc_states_cpu is None:
         if cross_dim is None:
-            # cross-attn이 없는 UNet이면 None 전달 (일부 모델)
             enc_states_cpu = None
         else:
-            seq_len = 77  # 일반적인 텍스트 토큰 길이
+            seq_len = 77
             enc_states_cpu = torch.randn(batch, seq_len, cross_dim, generator=g, dtype=torch_dtype)
 
     latents_dev = latents.to(device)
@@ -112,6 +105,197 @@ def test_unet_conditional(
     test_result(f"UNet({model_id}) forward", out_dev, out_cpu, rtol=rtol, atol=atol)
     print("Max diff >", torch.max(torch.abs(out_dev.cpu() - out_cpu)).item())
     print("UNet Simulation Done")
+
+def test_unet_mid_block2d_cross_attn(
+    device,
+    in_channels=320,
+    temb_channels=320,
+    cross_attention_dim=768,
+    batch=1,
+    height=32,
+    width=32,
+    rtol=1e-4,
+    atol=1e-4,
+    num_layers=1,
+    num_attention_heads=8,
+    dual_cross_attention=False,
+):
+    print(f"Testing UNetMidBlock2DCrossAttn on device: {device}")
+
+    cpu_block = UNetMidBlock2DCrossAttn(
+        in_channels=in_channels,
+        temb_channels=temb_channels,
+        num_layers=num_layers,
+        cross_attention_dim=cross_attention_dim,
+        num_attention_heads=num_attention_heads,
+        dual_cross_attention=dual_cross_attention,
+    ).to("cpu").eval()
+
+    g = torch.Generator().manual_seed(0)
+    hidden_states_cpu = torch.randn(batch, in_channels, height, width, generator=g)
+    temb_cpu = torch.randn(batch, temb_channels, generator=g)
+    encoder_hidden_states_cpu = torch.randn(batch, 77, cross_attention_dim, generator=g)
+
+    with torch.no_grad():
+        cpu_out = cpu_block(
+            hidden_states=hidden_states_cpu,
+            temb=temb_cpu,
+            encoder_hidden_states=encoder_hidden_states_cpu,
+        )
+
+    dev_block = cpu_block.to(device).eval()
+    dev_block = torch.compile(dev_block, dynamic=False)
+
+    hidden_states_dev = hidden_states_cpu.to(device)
+    temb_dev = temb_cpu.to(device)
+    encoder_hidden_states_dev = encoder_hidden_states_cpu.to(device)
+
+    with torch.no_grad():
+        dev_out = dev_block(
+            hidden_states=hidden_states_dev,
+            temb=temb_dev,
+            encoder_hidden_states=encoder_hidden_states_dev,
+        )
+
+    test_result("UNetMidBlock2DCrossAttn", dev_out, cpu_out, rtol=rtol, atol=atol)
+    print("Max diff >", torch.max(torch.abs(dev_out.cpu() - cpu_out)).item())
+    print("UNetMidBlock2DCrossAttn simulation done.")
+
+def test_cross_attn_up_block2d(
+    device,
+    in_channels=320,
+    out_channels=320,
+    prev_output_channel=320,
+    temb_channels=1280,
+    cross_attention_dim=768,
+    batch=1,
+    height=32,
+    width=32,
+    rtol=1e-4,
+    atol=1e-4,
+    num_layers=1,
+    num_attention_heads=8,
+    dual_cross_attention=False,
+):
+    print(f"Testing CrossAttnUpBlock2D on device: {device}")
+
+    cpu_block = CrossAttnUpBlock2D(
+        in_channels=in_channels,
+        out_channels=out_channels,
+        prev_output_channel=prev_output_channel,
+        temb_channels=temb_channels,
+        num_layers=num_layers,
+        cross_attention_dim=cross_attention_dim,
+        num_attention_heads=num_attention_heads,
+        dual_cross_attention=dual_cross_attention,
+        # add_upsample=add_upsample,
+    ).to("cpu").eval()
+
+    g = torch.Generator().manual_seed(0)
+    hidden_states_cpu = torch.randn(batch, in_channels, height, width, generator=g)
+    temb_cpu = torch.randn(batch, temb_channels, generator=g)
+    encoder_hidden_states_cpu = torch.randn(batch, 77, cross_attention_dim, generator=g)
+
+    res_hidden_states_tuple_cpu = tuple(
+        torch.randn(batch, prev_output_channel, height, width, generator=g) for _ in range(num_layers)
+    )
+
+    with torch.no_grad():
+        cpu_out = cpu_block(
+            hidden_states=hidden_states_cpu,
+            res_hidden_states_tuple=res_hidden_states_tuple_cpu,
+            temb=temb_cpu,
+            encoder_hidden_states=encoder_hidden_states_cpu,
+        )
+
+    dev_block = cpu_block.to(device).eval()
+    dev_block = torch.compile(dev_block, dynamic=False)
+
+    hidden_states_dev = hidden_states_cpu.to(device)
+    temb_dev = temb_cpu.to(device)
+    encoder_hidden_states_dev = encoder_hidden_states_cpu.to(device)
+    res_hidden_states_tuple_dev = tuple(t.to(device) for t in res_hidden_states_tuple_cpu)
+
+    with torch.no_grad():
+        dev_out = dev_block(
+            hidden_states=hidden_states_dev,
+            res_hidden_states_tuple=res_hidden_states_tuple_dev,
+            temb=temb_dev,
+            encoder_hidden_states=encoder_hidden_states_dev,
+        )
+
+    test_result("CrossAttnUpBlock2D", dev_out, cpu_out, rtol=rtol, atol=atol)
+    print("Max diff >", torch.max(torch.abs(dev_out.cpu() - cpu_out)).item())
+    print("CrossAttnUpBlock2D simulation done.")
+
+def test_unet2d_condition_model(
+    device,
+    batch=1,
+    in_channels=4,
+    out_channels=4,
+    sample_size=32,
+    cross_attention_dim=[768, 768],
+    seq_len=77,
+    block_out_channels=(64, 64),
+    layers_per_block=[1, 1],
+    attention_head_dim=(8, 8),
+    rtol=1e-4,
+    atol=1e-4,
+    stride=None,
+):
+    down_block_types = ("CrossAttnDownBlock2D", "DownBlock2D")
+    up_block_types   = ("UpBlock2D", "CrossAttnUpBlock2D")
+
+    unet_cpu = UNet2DConditionModel(
+        sample_size=sample_size,
+        in_channels=in_channels,
+        out_channels=out_channels,
+        down_block_types=down_block_types,
+        up_block_types=up_block_types,
+        block_out_channels=block_out_channels,
+        layers_per_block=layers_per_block,
+        cross_attention_dim=cross_attention_dim,
+        attention_head_dim=attention_head_dim,
+    ).to("cpu").eval()
+
+    g = torch.Generator().manual_seed(0)
+
+    if stride is not None:
+        x_cpu = torch.empty_strided([batch, in_channels, sample_size, sample_size], stride).normal_(generator=g)
+    else:
+        x_cpu = torch.randn(batch, in_channels, sample_size, sample_size, generator=g)
+
+    t_cpu = torch.randint(low=0, high=1000, size=(batch,), generator=g, dtype=torch.long)
+    encoder_hidden_states_cpu = torch.randn(batch, seq_len, cross_attention_dim[0], generator=g)
+
+    # CPU result
+    with torch.no_grad():
+        y_cpu = unet_cpu(
+            sample=x_cpu,
+            timestep=t_cpu,
+            encoder_hidden_states=encoder_hidden_states_cpu,
+        ).sample  # UNet2DConditionOutput.sample (Tensor)
+
+    # Device + torch.compile
+    unet_dev = unet_cpu.to(device).eval()
+    unet_dev = torch.compile(unet_dev, dynamic=False)
+
+    x_dev = x_cpu.to(device)
+    t_dev = t_cpu.to(device)
+    encoder_hidden_states_dev = encoder_hidden_states_cpu.to(device)
+
+    with torch.no_grad():
+        y_dev = unet_dev(
+            sample=x_dev,
+            timestep=t_dev,
+            encoder_hidden_states=encoder_hidden_states_dev,
+        ).sample
+
+    for idx, (cpu, dev) in enumerate(zip(y_cpu, y_dev)):
+        test_result(f"[{idx}] UNet2DConditionModel", dev.cpu(), cpu, rtol=rtol, atol=atol)
+        max_diff = torch.max(torch.abs(dev.detach().cpu() - cpu)).item()
+        print("Max diff >", max_diff)
+    print("UNet2DConditionModel simulation done.")
 
 def test_cross_attn_down_block2d(
     device,
@@ -177,10 +361,11 @@ def test_cross_attn_down_block2d(
     print("Max diff >", torch.max(torch.abs(dev_out.cpu() - cpu_out)).item())
     print("CrossAttnDownBlock2D simulation done.")
 
-def test_resnetblock2d_down(
+def test_resnetblock2d(
     device,
     batch=1,
-    channels=320,          # in_channels == out_channels
+    in_channels=320,
+    out_channels=320,
     height=32,
     width=32,
     temb_channels=128,
@@ -197,10 +382,7 @@ def test_resnetblock2d_down(
 ):
     print(f"Testing ResnetBlock2D(down=True) on device: {device}")
 
-    in_channels = channels
-    out_channels = channels
     g = torch.Generator().manual_seed(0)
-
     cpu_blk = ResnetBlock2D(
         in_channels=in_channels,
         out_channels=out_channels,
@@ -242,7 +424,7 @@ def test_resnetblock2d_down(
 
     max_diff = torch.max(torch.abs(y_dev.cpu() - y_cpu)).item()
     print("Max diff >", max_diff)
-    print("ResnetBlock2D(down=True) simulation done.")
+    print("ResnetBlock2D simulation done.")
 
 def test_groupnorm(
     device,
@@ -303,6 +485,62 @@ def test_groupnorm(
     print("Max diff >", torch.max(torch.abs(dev_out.cpu() - cpu_out)).item())
     print("GroupNorm simulation done.")
 
+def test_upsample2d(
+    device,
+    batch=1,
+    channels=320,
+    height=32,
+    width=32,
+    rtol=1e-4,
+    atol=1e-4,
+    use_conv=True,
+    use_conv_transpose=False,
+    out_channels=320,
+    name="conv",
+    kernel_size=None,
+    padding=1,
+    norm_type=None,
+    eps=None,
+    elementwise_affine=None,
+    bias=True,
+    interpolate=True,
+    stride=None,
+):
+    cpu_block = Upsample2D(
+        channels=channels,
+        use_conv=use_conv,
+        use_conv_transpose=use_conv_transpose,
+        out_channels=out_channels,
+        name=name,
+        kernel_size=kernel_size,
+        padding=padding,
+        norm_type=norm_type,
+        eps=eps,
+        elementwise_affine=elementwise_affine,
+        bias=bias,
+        interpolate=interpolate,
+    ).to("cpu").eval()
+
+    g = torch.Generator().manual_seed(0)
+    if stride is not None:
+        x_cpu = torch.empty_strided([batch, channels, height, width], stride).normal_(generator=g)
+    else:
+        x_cpu = torch.randn(batch, channels, height, width, generator=g)
+
+    with torch.no_grad():
+        y_cpu = cpu_block(x_cpu)
+
+    dev_block = cpu_block.to(device).eval()
+    dev_block = torch.compile(dev_block, dynamic=False)
+    x_dev = x_cpu.to(device)
+
+    with torch.no_grad():
+        y_dev = dev_block(x_dev)
+
+    test_result("Upsample2D", y_dev, y_cpu, rtol=rtol, atol=atol)
+    print("Max diff >", torch.max(torch.abs(y_dev.cpu() - y_cpu)).item())
+    print("Upsample2D simulation done.")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run UNet (diffusers) test with comparison")
     parser.add_argument("--model", type=str, default="runwayml/stable-diffusion-v1-5",
@@ -319,10 +557,15 @@ if __name__ == "__main__":
     module = ExecutionEngine.setup_device()
     device = module.custom_device()
 
-    test_groupnorm(device)
-    test_groupnorm(device, stride=[1, 1, 320*32, 320])
-    test_resnetblock2d_down(device)
+    #test_upsample2d(device)
+    #test_groupnorm(device)
+    #test_groupnorm(device, stride=[1, 1, 320*32, 320])
+    #test_resnetblock2d(device, in_channels=640, out_channels=320, temb_channels=320)
+    #test_resnetblock2d(device, in_channels=640, out_channels=320, temb_channels=1280)
     #test_cross_attn_down_block2d(device)
+    #test_unet_mid_block2d_cross_attn(device)
+    #test_cross_attn_up_block2d(device)
+    test_unet2d_condition_model(device)
     #test_unet_conditional(
     #    device=device,
     #    model_id=args.model,

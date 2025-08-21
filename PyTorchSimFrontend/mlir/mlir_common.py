@@ -48,6 +48,17 @@ DTYPE_TO_MLIR = {
     torch.bfloat16: "bf16",
 }
 
+MLIR_TO_DTYPE = {
+    "f32": torch.float32,
+    "f64": torch.float64,
+    "f16": torch.float16,
+    "i64": torch.int64,
+    "i32": torch.int32,
+    "i16": torch.int16,
+    "i8":  torch.int8,
+    "bf16": torch.bfloat16,
+}
+
 DTYPE_TO_C = {
     torch.float32: "float",
     torch.float64: "double",
@@ -392,6 +403,22 @@ class MLIRMultiDimTile():
 
     def get_reduction_numel(self):
         return reduce(mul, self.get_tile_size()[-1*self.nr_rdim:], 1)
+
+    def is_dim_dividable(self, dim_sizes):
+        if len(dim_sizes) != len(self._tile_size):
+            raise ValueError("dim_sizes must match the tile size dimensions.")
+        return all(d % t == 0 for d, t in zip(dim_sizes, self._tile_size))
+
+    def adjust_tile_to_divisible(self, dim_sizes):
+        def _adjust_one(dim_size, tile_size):
+            for candidate in range(tile_size, 0, -1):
+                if dim_size % candidate == 0:
+                    return candidate
+            return 1
+
+        if len(dim_sizes) != len(self._tile_size):
+            raise ValueError("dim_sizes must match the tile size dimensions.")
+        return [_adjust_one(d, t) for d, t in zip(dim_sizes, self._tile_size)]
 
 class MLIRWrapperKenrelGroup(cpp.KernelGroup):
     def __init__(self):
