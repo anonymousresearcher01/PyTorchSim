@@ -46,10 +46,15 @@ class MLIRScheduling(BaseScheduling):
             if (isinstance(base_template_node1[0].node.template, MLIRGemmTemplate) or isinstance(base_template_node1[0].node.template, MLIRBMMTemplate)) and node2.is_reduction():
                 # For matmul/bmm+reduction case
                 size_match = node1.get_nodes()[0].node.get_numel() == reduce(operator.mul, node2.get_nodes()[0].node.get_size(), 1) * reduce(operator.mul, node2.get_nodes()[0].node.get_reduction_size(), 1)
-                stride = [i.strip()[:-1].split(",")[-1].strip() for i in str(node2.get_nodes()[0].node).split("\n") if "r0" in i][1]
                 target_symbol = symbols("r0")
+                try:
+                    stride = [i.strip()[:-1].split(",")[-1].strip() for i in str(node2.get_nodes()[0].node).split("\n") if "r0" in i][1]
+                    stride = int(sympify(stride).coeff(target_symbol))
+                except:
+                    return False
+
                 # We can't fuse dim=-1
-                layout_possible = int(sympify(stride).coeff(target_symbol)) != 1
+                layout_possible = stride != 1
                 # Directed linked?
                 dependency_check = node2.get_nodes()[0] in [node.node for node in base_template_node1[0].users]# and len(node2.read_writes.reads)==1
                 dependency_size = all([i.get_numel() == node1.get_nodes()[0].node.get_numel() for i in node2.read_writes.reads])
@@ -102,6 +107,9 @@ class MLIRScheduling(BaseScheduling):
 
         # Can't fuse two template node
         if node1.is_template() and node2.is_template():
+            return False
+
+        if '_unsafe_index' in node1.get_nodes()[0].node.origins or "_unsafe_index" in node2.get_nodes()[0].node.origins:
             return False
 
         # Check template node fusion
@@ -277,15 +285,15 @@ class MLIRScheduling(BaseScheduling):
                     vars, reduction_vars = kernel.set_ranges(group, reduction_group)
                     for node in prologue_nodes:
                         # Reuse created spad
-                        read_list = sorted(list(node.read_writes.reads))
+                        read_list = sorted([i.name for i in node.read_writes.reads])
                         candidate_found = False
                         # Why? There is a case that memdep.get_size() != data.get_size()
                         buf_dict = {}
                         buf_dict.update({val.name : val for val in V.graph.buffers})
                         buf_dict.update(V.graph.graph_inputs)
                         for candidate_read in read_list:
-                            if candidate_read.name in buf_dict and reduce(operator.mul, buf_dict[candidate_read.name].get_size(), 1) == node.node.get_numel():
-                                prologue_input_arg = candidate_read.name
+                            if candidate_read in buf_dict and reduce(operator.mul, buf_dict[candidate_read].get_size(), 1) == node.node.get_numel():
+                                prologue_input_arg = candidate_read
                                 candidate_found = True
                                 break
                         assert(candidate_found)
