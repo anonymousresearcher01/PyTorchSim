@@ -407,7 +407,11 @@ class MLIRMultiDimTile():
     def is_dim_dividable(self, dim_sizes):
         if len(dim_sizes) != len(self._tile_size):
             raise ValueError("dim_sizes must match the tile size dimensions.")
-        return all(d % t == 0 for d, t in zip(dim_sizes, self._tile_size))
+        dim_sizes_cpy = [int(d) for d in dim_sizes]
+        remain = dim_sizes_cpy[self.vlane_split_axis] % self.vlane_stride
+        if remain:
+            dim_sizes_cpy[self.vlane_split_axis] += self.vlane_stride - remain
+        return all(d % t == 0 for d, t in zip(dim_sizes_cpy, self._tile_size))
 
     def adjust_tile_to_divisible(self, dim_sizes):
         def _adjust_one(dim_size, tile_size):
@@ -418,7 +422,13 @@ class MLIRMultiDimTile():
 
         if len(dim_sizes) != len(self._tile_size):
             raise ValueError("dim_sizes must match the tile size dimensions.")
-        return [_adjust_one(d, t) for d, t in zip(dim_sizes, self._tile_size)]
+        candidate_tile_size = [_adjust_one(d, t) for d, t in zip(dim_sizes, self._tile_size)]
+        # FIXME. Is this the only solution?
+        # Round up
+        remain = candidate_tile_size[self.vlane_split_axis] % self.vlane_stride
+        if remain:
+            candidate_tile_size[self.vlane_split_axis] += self.vlane_stride - remain
+        return candidate_tile_size
 
 class MLIRWrapperKenrelGroup(cpp.KernelGroup):
     def __init__(self):
