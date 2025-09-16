@@ -302,7 +302,7 @@ class BackendSimulator():
             return None
 
     def launch(self, onnx_path, attribute_path, arrival_time=0, partion_id=0):
-        command = f"launch {onnx_path} {attribute_path} {arrival_time} {partion_id}"
+        command = f"launch {self.config_path} {onnx_path} {attribute_path} {arrival_time} {partion_id}"
         ret = self.send_command(command)
         return 0
 

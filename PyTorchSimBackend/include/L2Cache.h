@@ -27,6 +27,10 @@ protected:
   CacheConfig l_cache_config; // L2 cache config
   uint32_t l_id;              // L2 partition id
   uint32_t l2d_hit_latency;
+  uint32_t n_read_port = 2; // Number of read ports (CMEM Read 2TB/s)
+  uint32_t n_write_port = 1; // Number of write ports (CMEM Write 1TB/s)
+  std::vector<uint32_t> read_port; // Current read port
+  std::vector<uint32_t> write_port; // Current write port
   std::queue<mem_fetch*> *l_to_xbar_queue;
   std::queue<mem_fetch*> *l_from_xbar_queue;
   std::queue<mem_fetch*> l_to_mem_queue;
@@ -47,9 +51,14 @@ class L2DataCache : public L2CacheBase {
 public:
   typedef IntervalTree<new_addr_type, int> CachePlan;
   L2DataCache(std::string name,  CacheConfig &cache_config, uint32_t id, cycle_type *core_cycle,
-    uint32_t l2d_hit_latency, std::queue<mem_fetch*> *to_xbar_queue,
+    uint32_t l2d_hit_latency, uint32_t num_cores, std::queue<mem_fetch*> *to_xbar_queue,
     std::queue<mem_fetch*> *from_xbar_queue);
   void cycle() override;
   bool push(mem_fetch* req) override;  // Push memory response from DRAM
+  bool port_free(mem_fetch* req);
+  void clear_port() { std::fill(read_port.begin(), read_port.end(), 0);
+                      std::fill(write_port.begin(), write_port.end(), 0); }
   virtual void print_stats() override;
+private:
+  uint32_t _n_cores;
 };

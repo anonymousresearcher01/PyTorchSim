@@ -68,7 +68,7 @@ class TileNode {
 
 class TileGraphParser {
  public:
-  TileGraphParser(std::string onnx_path, std::string attribute_path);
+  TileGraphParser(std::string onnx_path, std::string attribute_path, std::string config_path);
   std::shared_ptr<TileNode> get_top_loop();
   std::unique_ptr<TileGraph>& get_tile_graph() { return _tile_graph; }
   addr_type lookup(std::string key);
@@ -136,6 +136,7 @@ class TileGraphParser {
   int _loop_stack_pointer = 0;
 
   json _attribute_json;
+  json _config_json;
   std::string _tog_path;
   std::string _attribute_path;
   uint64_t indirect_counter = 0;

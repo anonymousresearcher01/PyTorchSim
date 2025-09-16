@@ -42,7 +42,7 @@ Dram::Dram(SimulationConfig config, cycle_type* core_cycle) {
             _m_cache_config.get_num_sets(), _m_cache_config.get_num_assoc(),
             _m_cache_config.get_line_size(), _m_cache_config.get_sector_size());
     for (int ch = 0; ch < _n_ch; ch++)
-      _m_caches[ch] = new L2DataCache(name, _m_cache_config, ch, _core_cycles, _config.l2d_hit_latency, &m_to_crossbar_queue[ch], &m_from_crossbar_queue[ch]);
+      _m_caches[ch] = new L2DataCache(name, _m_cache_config, ch, _core_cycles, _config.l2d_hit_latency, _config.num_cores, &m_to_crossbar_queue[ch], &m_from_crossbar_queue[ch]);
   } else {
     spdlog::error("[Config/L2D] Invalid L2 cache type...!");
     exit(EXIT_FAILURE);
