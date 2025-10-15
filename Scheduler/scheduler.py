@@ -140,7 +140,7 @@ class SchedulerDNNModel:
     def register_model(model_name : str, compiled_model):
         SchedulerDNNModel.MODEL_MAP[model_name] = compiled_model
 
-class ExecutionEngine:
+class PyTorchSimExecutionEngine:
     PARTITION_BUSY = 0
     PARTITION_IDLE = 1
     SELECT_NOTHING = 2
@@ -262,7 +262,7 @@ class ExecutionEngine:
         self.partition_state[partion_idx] = self.PARTITION_BUSY
         return self.backend_simulator.launch(onnx_path, attribute_path, current_cycle, partion_idx)
 
-class FIFOExecutionEngine(ExecutionEngine):
+class FIFOExecutionEngine(PyTorchSimExecutionEngine):
     def __init__(self, backend_simulator: BackendSimulator, num_partion=1) -> None:
         super().__init__(backend_simulator, num_partion)
 
@@ -297,7 +297,7 @@ class FIFOExecutionEngine(ExecutionEngine):
         # No proper kernel now
         return self.SELECT_NOTHING
 
-class RRExecutionEngine(ExecutionEngine):
+class RRExecutionEngine(PyTorchSimExecutionEngine):
     def __init__(self, backend_simulator: BackendSimulator, num_partion=1) -> None:
         super().__init__(backend_simulator, num_partion)
         self.next_pointer = None
@@ -480,7 +480,7 @@ class Scheduler:
         def execute_cycle():
             launch_ret_info = []
             for i in range(self.execution_engine.num_partion):
-                if self.execution_engine.partition_state[i] == ExecutionEngine.PARTITION_IDLE:
+                if self.execution_engine.partition_state[i] == PyTorchSimExecutionEngine.PARTITION_IDLE:
                     ret = self.execution_engine.launch_kernel(self.current_cycle, i)
                     launch_ret_info.append(ret)
 
@@ -495,7 +495,7 @@ class Scheduler:
 
             for core_idx in result_list:
                 # Kernel is finished. So set idle state
-                self.execution_engine.partition_state[core_idx] = ExecutionEngine.PARTITION_IDLE
+                self.execution_engine.partition_state[core_idx] = PyTorchSimExecutionEngine.PARTITION_IDLE
 
             return result_list
 

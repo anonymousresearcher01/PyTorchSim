@@ -783,9 +783,9 @@ def train_moe_single_iteration(device, iter_idx, is_evaluation=0):
         train(opt_model, train_loader)
 
 if __name__ == "__main__":
-    from Scheduler.scheduler import ExecutionEngine
+    from Scheduler.scheduler import PyTorchSimExecutionEngine
     torch.set_printoptions(threshold=float('inf'), linewidth=600)
-    module = ExecutionEngine.setup_device()
+    module = PyTorchSimExecutionEngine.setup_device()
     device = module.custom_device()
 
     test_moe(device)
