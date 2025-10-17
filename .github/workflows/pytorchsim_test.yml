@@ -20,6 +20,13 @@ jobs:
     name: Run test_add.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_add.py
         run: |
           echo "Running test_add.py"
@@ -30,10 +37,38 @@ jobs:
             -e TORCHSIM_SPAD_SIZE="${{ inputs.spad_size }}" \
             ${{ inputs.image_name }} python3 PyTorchSim/tests/test_add.py
 
+  test_transcendental:
+    name: Run test_transcendental.py
+    runs-on: self-hosted
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run test_add.py
+        run: |
+          echo "Running test_transcendental.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            -e TORCHSIM_VECTOR_LANE="${{ inputs.vector_lane }}" \
+            -e TORCHSIM_SPAD_SIZE="${{ inputs.spad_size }}" \
+            ${{ inputs.image_name }} python3 PyTorchSim/tests/test_transcendental.py
+
   test_activation:
     name: Run test_activation.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_activation.py
         run: |
           echo "Running test_activation.py"
@@ -48,6 +83,13 @@ jobs:
     name: Run test_batchnorm.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_batchnorm.py
         run: |
           echo "Running test_batchnorm.py"
@@ -62,6 +104,13 @@ jobs:
     name: Run test_bmm.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_bmm.py
         run: |
           echo "Running test_bmm.py"
@@ -76,6 +125,13 @@ jobs:
     name: Run test_cnn.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_cnn.py
         run: |
           echo "Running test_cnn.py"
@@ -90,6 +146,13 @@ jobs:
     name: Run test_conv2d.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_conv2d.py
         run: |
           echo "Running test_conv2d.py"
@@ -104,6 +167,13 @@ jobs:
     name: Run test_matmul.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_matmul.py
         run: |
           echo "Running test_matmul.py"
@@ -118,6 +188,13 @@ jobs:
     name: Run test_reduce.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_reduce.py
         run: |
           echo "Running test_reduce.py"
@@ -132,6 +209,13 @@ jobs:
     name: Run test_softmax.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_softmax.py
         run: |
           echo "Running test_softmax.py"
@@ -146,6 +230,13 @@ jobs:
     name: Run test_transpose2D.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_transpose2D.py
         run: |
           echo "Running test_transpose2D.py"
@@ -160,6 +251,13 @@ jobs:
     name: Run test_view3D_2D.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_view3D_2D.py
         run: |
           echo "Running test_view3D_2D.py"
@@ -174,6 +272,13 @@ jobs:
     name: Run test_layernorm.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_layernorm.py
         run: |
           echo "Running test_layernorm.py"
@@ -188,6 +293,13 @@ jobs:
     name: Run test_mlp.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_mlp.py
         run: |
           echo "Running test_mlp.py"
@@ -233,6 +345,13 @@ jobs:
     name: Run test_transformer.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_transformer.py
         run: |
           echo "Running test_transformer.py"
@@ -247,6 +366,13 @@ jobs:
     name: Run test_transpose3D.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_transpose3D.py
         run: |
           echo "Running test_transpose3D.py"
@@ -261,6 +387,13 @@ jobs:
     name: Run test_sparsity.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_sparsity.py
         run: |
           echo "Running test_sparsity.py"
@@ -275,6 +408,13 @@ jobs:
     name: Run test_pool.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_pool.py
         run: |
           echo "Running test_pool.py"
@@ -289,6 +429,13 @@ jobs:
     name: Run test_perceptron.py
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_single_perceptron.py
         run: |
           echo "Running test_single_perceptron.py"
@@ -303,6 +450,13 @@ jobs:
     name: Run test_fusion
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_addmm_residual.py
         run: |
           echo "Running test_addmm_residual.py"
@@ -387,6 +541,13 @@ jobs:
     name: Run test_moe
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_moe.py
         run: |
           echo "Running test_moe.py"
@@ -401,6 +562,13 @@ jobs:
     name: Run test_mistral
     runs-on: self-hosted
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_mistral.py
         run: |
           echo "Running test_mistral.py"
@@ -411,16 +579,62 @@ jobs:
             -e TORCHSIM_SPAD_SIZE="${{ inputs.spad_size }}" \
             ${{ inputs.image_name }} python3 PyTorchSim/tests/Mixtral_8x7B/test_attention.py
 
+  test_vit:
+    name: Run test_vit
+    runs-on: self-hosted
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run test_vit.py
+        run: |
+          echo "Running test_vit.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            -e TORCHSIM_VECTOR_LANE="${{ inputs.vector_lane }}" \
+            -e TORCHSIM_SPAD_SIZE="${{ inputs.spad_size }}" \
+            ${{ inputs.image_name }} python3 PyTorchSim/tests/test_vit.py
+
+  test_diffusion:
+    name: Run test_diffusion
+    runs-on: self-hosted
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run test_diffusion.py
+        run: |
+          echo "Running test_diffusion.py"
+          docker run --rm \
+            -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
+            -e TORCHSIM_DUMP_PATH=/dump \
+            -e TORCHSIM_VECTOR_LANE="${{ inputs.vector_lane }}" \
+            -e TORCHSIM_SPAD_SIZE="${{ inputs.spad_size }}" \
+            ${{ inputs.image_name }} python3 PyTorchSim/tests/Diffusion/test_diffusion.py
+
   test_indirect:
     name: Run test_indirect
     runs-on: self-hosted
-    env:
-      GIT_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_indirect.py
         run: |
           echo "Running test_indirect.py"
-          echo $GIT_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
           docker run --rm \
             -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
             -e TORCHSIM_DUMP_PATH=/dump \
@@ -431,13 +645,17 @@ jobs:
   test_scheduler:
     name: Run test_scheduler
     runs-on: self-hosted
-    env:
-      GIT_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run test_scheduler.py
         run: |
           echo "Running test_scheduler.py"
-          echo $GIT_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
           docker run --rm \
             -v /tmp/torchsim-ci/${GITHUB_SHA}:/dump \
             -e TORCHSIM_DUMP_PATH=/dump \

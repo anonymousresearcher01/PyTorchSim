@@ -1,7 +1,7 @@
 from typing import List, Optional, Sequence
 
 import torch
-from torch._inductor.lowering import lowerings
+from torch._inductor.lowering import lowerings, index_impl
 from torch._inductor.kernel.mm_common import mm_args
 # from torch._inductor.select_algorithm import ExternKernelChoice
 from torch._inductor import ir
@@ -175,10 +175,17 @@ def sparse_addmm(*args, **kwargs):
         )
     return aten_spmm.bind((sp_mat1, sp_mat2), layout).output_node()
 
+def custom_unsafe_index(x, indices):
+    # We can't fuse indirect access + indexed_expression + computation
+    if isinstance(x, TensorBox):
+        x.realize()
+    return index_impl(x, indices, check=False)
+
 lowerings.update({getattr(aten.mm, overload): tuned_mm for overload in aten.mm.overloads()})
 lowerings.update({getattr(aten.addmm, overload): tuned_addmm for overload in aten.addmm.overloads()})
 lowerings.update({getattr(aten.convolution, overload): convolution for overload in aten.convolution.overloads()})
 lowerings.update({getattr(aten.bmm, overload): tuned_bmm for overload in aten.bmm.overloads()})
 lowerings.update({getattr(aten._sparse_addmm, overload): sparse_addmm for overload in aten._sparse_addmm.overloads()})
+lowerings.update({getattr(aten._unsafe_index, overload): custom_unsafe_index for overload in aten._unsafe_index.overloads()})
 if CONFIG_USE_TIMING_POOLING:
     lowerings.update({getattr(aten.max_pool2d_with_indices, overload): custom_maxpool for overload in aten.max_pool2d_with_indices.overloads()}) # FIXME: maxpool should be implemented as a template
