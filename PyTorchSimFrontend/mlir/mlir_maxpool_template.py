@@ -40,6 +40,7 @@ class MLIRMaxPoolTemplate(MLIRTemplate):
                kernel: MLIRTemplateKernel,
                template_buffer_node = None,
                epilogue_nodes: Optional[List[IRNode]] = None,
+               tile_info = None,
                **kwargs):
         if template_buffer_node is not None:
             self.output_node = template_buffer_node
