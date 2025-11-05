@@ -20,7 +20,9 @@ from torch._inductor.codegen.cuda.cuda_kernel import CUDATemplateCaller
 from torch._inductor.autotune_process import TensorMeta
 from torch._inductor.virtualized import V, NullHandler, _ops as ops
 from torch._inductor.utils import IndentedBuffer
+from torch._inductor.codecache import write_atomic
 
+import PyTorchSimFrontend.extension_codecache as extension_codecache
 from PyTorchSimFrontend.mlir.mlir_autotune import MLIRBenchmarkRequest
 from PyTorchSimFrontend.mlir.mlir_common import BaseMLIRHardwareInfo
 from PyTorchSimFrontend.mlir.mlir_codegen_backend import MLIRKernel, reduction_init, reduction_partial_combine_vec, reduction_combine_vec, is_welford_reduction
@@ -447,14 +449,14 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             kernel_name if self.outer_func_name is None else self.outer_func_name + f"_{len(call_args)}",
             call_args, cuda=False)
 
-    def codegen_template_code(self, render, template_node, prologue_nodes, epilogue_nodes):
+    def codegen_template_code(self, render, template_node, prologue_nodes, epilogue_nodes, tile_info):
         with self as kernel:
             _, _, _, kernel.buffer_types = self.kernel_group.args.mlir_argdefs()
             for node in [template_node, *prologue_nodes, *epilogue_nodes]:
                 node.mark_run()
 
             # Partial codgen template nodes
-            partial_code = render()
+            partial_code = render(kwargs={**render.keywords['kwargs'], 'tile_info': tile_info})
 
             # Swap load/store functions
             kernel.load = kernel.load_epilogue
@@ -522,36 +524,42 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
                 else partial_code.finalize()
             )
 
-        # For consistency, white space could make wrong write_path
-        buffer = IndentedBuffer()
-        buffer.splice(src_code)
-        return buffer.getvalue()
+            # For consistency, white space could make wrong write_path
+            buffer = IndentedBuffer()
+            buffer.splice(src_code)
+            src_code = buffer.getvalue()
+            self._prepare_simulator_headers(src_code)
+        return src_code
 
-    def make_choices(self, render, template_node, prologue_nodes, epilogue_nodes):
+    def make_choices(self, tile_candidates, render, template_node, prologue_nodes, epilogue_nodes):
         choices = []
-        for i in range(3):
-            self.autotune_idx = i
-            self.reset(reason=None)
-            src_code = self.codegen_template_code(render, template_node, prologue_nodes, epilogue_nodes)
+        for tile_info in tile_candidates:
+            src_code = self.codegen_template_code(render, template_node, prologue_nodes, epilogue_nodes, tile_info)
             bench_runner = self.run_bench([template_node], self.kernel_name, src_code)
             choices.append((bench_runner, src_code, self.kernel_group))
+            self.reset(reason=None)
         return choices
 
-    def codegen_nodes(self, render, codegen_header, template_node, prologue_nodes, epilogue_nodes):
-        src_code = self.codegen_template_code(render, template_node, prologue_nodes, epilogue_nodes)
-
-        if False:# CONFIG_AUTOTUNE_TEMPLATE and not CONFIG_BACKENDSIM_SPIKE_ONLY:
-            src_code = self.autotune(render, template_node, prologue_nodes, epilogue_nodes)
+    def codegen_nodes(self, tile_candidates, render, template_node, prologue_nodes, epilogue_nodes):
+        src_code = self.autotune(tile_candidates, render, template_node, prologue_nodes, epilogue_nodes)
 
         with V.set_kernel_handler(self):
-            self._prepare_simulator_headers(src_code, codegen_header)
             self.meta_kernel()
         return src_code
 
-    def _prepare_simulator_headers(self, src_code, codegen_header):
+    def _prepare_simulator_headers(self, src_code):
         spad_end_symbol = f"int spad_end[0] __attribute__ ((section(\".spad\")));\n"
         spad_section_end_symbol = f"int spad_section_end[0] __attribute__ ((section(\".spad\"), aligned({self.spad_info['spad_size']*self.vector_lane})));"
-        codegen_header(src_code, (self.header.getvalue()+spad_end_symbol+spad_section_end_symbol, self.gem5_header.getvalue()))
+
+        write_path = extension_codecache.get_write_path(src_code)
+        if not os.path.exists(write_path):
+            os.makedirs(write_path, exist_ok=True)
+        spike_write_path = os.path.join(write_path, "global_var.h")
+        gem5_write_path = os.path.join(write_path, "gem5_global_var.h")
+        if not os.path.exists(spike_write_path):
+            write_atomic(spike_write_path, self.header.getvalue()+spad_end_symbol+spad_section_end_symbol)
+        if not os.path.exists(gem5_write_path):
+            write_atomic(gem5_write_path, self.gem5_header.getvalue())
 
     def codegen_prologue_body(self):
         body = IndentedBuffer()
@@ -1256,7 +1264,8 @@ class MLIRTemplate(KernelTemplate):
                 template=self,
                 kwargs=kwargs
             )
-            return kernel, render, self.codegen_header
+            tile_candidates = self.get_tile_candidates(**kwargs)
+            return kernel, tile_candidates, render
 
         return MLIRTemplateCaller(
             kernel_hash_name,
@@ -1267,6 +1276,9 @@ class MLIRTemplate(KernelTemplate):
             bmreq,
             self,
         )
+
+    def get_tile_candidates(self, **kwargs):
+        return []
 
     def render(self, **kwargs) -> str:
         raise NotImplementedError

@@ -8,8 +8,6 @@ import sympy
 from PyTorchSimFrontend.mlir.mlir_template import MLIRTemplate
 from PyTorchSimFrontend.mlir.mlir_template import MLIRTemplateKernel
 from torch._inductor.ir import IRNode
-from torch._inductor.codecache import write_atomic
-import PyTorchSimFrontend.extension_codecache as extension_codecache
 from PyTorchSimFrontend import extension_config
 from PyTorchSimFrontend.mlir import mlir_common
 
@@ -114,30 +112,13 @@ class MLIRGemmTemplate(MLIRTemplate):
                template_buffer_node = None,
                epilogue_nodes: Optional[List[IRNode]] = None,
                prologue_nodes: Optional[List[IRNode]] = None,
+               tile_info = None,
                **kwargs):
-        if template_buffer_node is not None:
-            self.output_node = template_buffer_node
-
-        # Extract input arguments info
-        X, W, Y = self.input_nodes[0], self.input_nodes[1], self.output_node
-        X_tensor = empty_strided(X.layout.size, X.layout.stride)
-        W_tensor = empty_strided(W.layout.size, W.layout.stride)
-        if len(W_tensor.size()) > 2 or len(X_tensor.size()) > 2:
-            raise NotImplementedError("Please report this case to us...")
-
-        # Extract fusion info
-        n_epilogue_node = len(epilogue_nodes) if epilogue_nodes is not None else 0
-        n_prologue_node = len(prologue_nodes) if prologue_nodes is not None else 0
-        n_extra_read = set()
-        if epilogue_nodes is not None:
-            for enode in epilogue_nodes:
-                n_extra_read.update(enode.node.get_read_names())
-            if self.output_node.name in n_extra_read:
-                n_extra_read.remove(self.output_node.name)
-
-        # Select tile size
-        M, N, K = X_tensor.size()[0], W_tensor.size()[1], X_tensor.size()[1]
-        TILE_M, TILE_N, TILE_K, SUB_TILE_M, SUB_TILE_N, SUB_TILE_K = self.select_tile(kernel, M, N, K, n_epilogue_node, n_extra_read, n_prologue_node)
+        X, W, Y, M, N, K, n_epilogue_node, n_prologue_node, n_extra_read = self.extract_info(template_buffer_node, epilogue_nodes, prologue_nodes)
+        if tile_info is None:
+            TILE_M, TILE_N, TILE_K, SUB_TILE_M, SUB_TILE_N, SUB_TILE_K = self.select_tile(kernel, M, N, K, n_epilogue_node, n_extra_read, n_prologue_node)
+        else:
+            TILE_M, TILE_N, TILE_K, SUB_TILE_M, SUB_TILE_N, SUB_TILE_K = tile_info
 
         # Select template code
         if (M == 0) or (N == 0) or (K == 0): # exception for MoE
@@ -281,6 +262,41 @@ class MLIRGemmTemplate(MLIRTemplate):
         kernel.add_loop_info([kernel.render_options["M"], kernel.render_options["N"], kernel.render_options["K"]], [kernel.render_options["TILE_M"], kernel.render_options["TILE_N"], kernel.render_options["TILE_K"]])
         return code
 
+    def get_tile_candidates(self,
+               kernel: MLIRTemplateKernel,
+               template_buffer_node = None,
+               epilogue_nodes: Optional[List[IRNode]] = None,
+               prologue_nodes: Optional[List[IRNode]] = None,
+               **kwargs):
+        X, W, Y, M, N, K, n_epilogue_node, n_prologue_node, n_extra_read = self.extract_info(template_buffer_node, epilogue_nodes, prologue_nodes)
+        TILE_M, TILE_N, TILE_K, SUB_TILE_M, SUB_TILE_N, SUB_TILE_K = self.select_tile(kernel, M, N, K, n_epilogue_node, n_extra_read, n_prologue_node)
+        return [[TILE_M, TILE_N, TILE_K, SUB_TILE_M, SUB_TILE_N, SUB_TILE_K]]
+
+    def extract_info(self, template_buffer_node, epilogue_nodes, prologue_nodes):
+        if template_buffer_node is not None:
+            self.output_node = template_buffer_node
+
+        # Extract input arguments info
+        X, W, Y = self.input_nodes[0], self.input_nodes[1], self.output_node
+        X_tensor = empty_strided(X.layout.size, X.layout.stride)
+        W_tensor = empty_strided(W.layout.size, W.layout.stride)
+        if len(W_tensor.size()) > 2 or len(X_tensor.size()) > 2:
+            raise NotImplementedError("Please report this case to us...")
+
+        # Extract fusion info
+        n_epilogue_node = len(epilogue_nodes) if epilogue_nodes is not None else 0
+        n_prologue_node = len(prologue_nodes) if prologue_nodes is not None else 0
+        n_extra_read = set()
+        if epilogue_nodes is not None:
+            for enode in epilogue_nodes:
+                n_extra_read.update(enode.node.get_read_names())
+            if self.output_node.name in n_extra_read:
+                n_extra_read.remove(self.output_node.name)
+
+        # Select tile size
+        M, N, K = X_tensor.size()[0], W_tensor.size()[1], X_tensor.size()[1]
+        return X,W,Y,M,N,K,n_epilogue_node,n_prologue_node,len(n_extra_read)
+
     def select_tile(self, kernel, M, N, K, n_extra_node, n_extra_read, n_prologue_node):
         # Check cheat sheet
         cheatsheet_path = extension_config.CONFIG_GEMM_CHEATSHEET_PATH
@@ -292,19 +308,21 @@ class MLIRGemmTemplate(MLIRTemplate):
                     data = json.load(f)
 
         gemm_shape = f"{M}_{K}_{N}"
-        if gemm_shape in data:
+        if extension_config.CONFIG_MANUAL_TILE_SIZE:
+            # case 1: use manual tile size
+            TILE_M = extension_config.CONFIG_TILE_M
+            TILE_N = extension_config.CONFIG_TILE_N
+            TILE_K = extension_config.CONFIG_TILE_K
+        elif gemm_shape in data:
+            # case 2: cached tile size
             tile_info = data[gemm_shape]
             TILE_M = tile_info["TILE_M"]
             TILE_N = tile_info["TILE_N"]
             TILE_K = tile_info["TILE_K"]
-        else: # case 2: use gemm_combination_mapping
+        else:
+            # case 3: use gemm_combination_mapping
             min_tile = (n_extra_node + n_prologue_node) == 0
-            TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K, max(len(n_extra_read)-2, 0), n_prologue_node, min_tile=True)
-        # case 3: use manual tile size
-        if extension_config.CONFIG_MANUAL_TILE_SIZE:
-            TILE_M = extension_config.CONFIG_TILE_M
-            TILE_N = extension_config.CONFIG_TILE_N
-            TILE_K = extension_config.CONFIG_TILE_K
+            TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K, max(n_extra_read-2, 0), n_prologue_node, min_tile=True)
 
         # Edge case
         if (M == 0) or (N == 0) or (K == 0):
@@ -330,14 +348,3 @@ class MLIRGemmTemplate(MLIRTemplate):
             SUB_TILE_N = TILE_N
             SUB_TILE_K = TILE_K
         return TILE_M,TILE_N,TILE_K, SUB_TILE_M,SUB_TILE_N,SUB_TILE_K
-
-    def codegen_header(self, code, extra_headers):
-        write_path = extension_codecache.get_write_path(code)
-        if not os.path.exists(write_path):
-            os.makedirs(write_path, exist_ok=True)
-        spike_write_path = os.path.join(write_path, "global_var.h")
-        gem5_write_path = os.path.join(write_path, "gem5_global_var.h")
-        if not os.path.exists(spike_write_path):
-            write_atomic(spike_write_path, extra_headers[0])
-        if not os.path.exists(gem5_write_path):
-            write_atomic(gem5_write_path, extra_headers[1])

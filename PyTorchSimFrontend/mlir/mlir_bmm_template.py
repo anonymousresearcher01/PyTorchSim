@@ -6,8 +6,6 @@ import sympy
 from PyTorchSimFrontend.mlir.mlir_template import MLIRTemplate
 from PyTorchSimFrontend.mlir.mlir_template import MLIRTemplateKernel
 from torch._inductor.ir import IRNode
-from torch._inductor.codecache import write_atomic
-import PyTorchSimFrontend.extension_codecache as extension_codecache
 from PyTorchSimFrontend.mlir import mlir_common
 
 BMM_TEMPLATE = r"""
@@ -184,14 +182,10 @@ class MLIRBMMTemplate(MLIRTemplate):
 
         # Select tile size
         n_extra_node = len(epilogue_nodes) if epilogue_nodes is not None else 0
-        TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K, n_extra_node=n_extra_node)
-        SUB_TILE_M = TILE_M if (TILE_M < kernel.vector_lane) or prologue_nodes else kernel.vector_lane
-        SUB_TILE_N = TILE_N # if (TILE_N < kernel.vector_lane) or prologue_nodes else kernel.vector_lane
-        SUB_TILE_K = TILE_K # if (TILE_K < kernel.vector_lane) or prologue_nodes else kernel.vector_lane
+        TILE_M, TILE_N, TILE_K, SUB_TILE_M, SUB_TILE_N, SUB_TILE_K = self.select_tile(kernel, M, N, K, n_extra_node, 0, len(prologue_nodes))
 
         TOG_latency = M if TILE_M > M else TILE_M
         kernel.loop_size = [TOG_latency, TILE_N, TILE_K]
-        TILE_K = TILE_K // 2 if prologue_nodes else TILE_K
 
         # Select template code
         nr_reduction_nodes = [node for node in epilogue_nodes if node.is_reduction()] if epilogue_nodes is not None else []
@@ -329,13 +323,10 @@ class MLIRBMMTemplate(MLIRTemplate):
         kernel.add_loop_info([kernel.render_options["M"], kernel.render_options["N"], kernel.render_options["K"]], [kernel.render_options["TILE_M"], kernel.render_options["TILE_N"], kernel.render_options["TILE_K"]])
         return code
 
-    def codegen_header(self, code, extra_headers):
-        write_path = extension_codecache.get_write_path(code)
-        if not os.path.exists(write_path):
-            os.makedirs(write_path)
-        spike_write_path = os.path.join(write_path, "global_var.h")
-        gem5_write_path = os.path.join(write_path, "gem5_global_var.h")
-        if not os.path.exists(spike_write_path):
-            write_atomic(spike_write_path, extra_headers[0])
-        if not os.path.exists(gem5_write_path):
-            write_atomic(gem5_write_path, extra_headers[1])
+    def select_tile(self, kernel, M, N, K, n_extra_node, n_extra_read, n_prologue_node):
+        TILE_M, TILE_N, TILE_K = kernel.gemm_combination_mapping(M, N, K, n_extra_node=n_extra_node)
+        SUB_TILE_M = TILE_M if (TILE_M < kernel.vector_lane) or n_prologue_node else kernel.vector_lane
+        SUB_TILE_N = TILE_N # if (TILE_N < kernel.vector_lane) or prologue_nodes else kernel.vector_lane
+        SUB_TILE_K = TILE_K # if (TILE_K < kernel.vector_lane) or prologue_nodes else kernel.vector_lane
+        TILE_K = TILE_K // 2 if n_prologue_node else TILE_K
+        return TILE_M,TILE_N,TILE_K,SUB_TILE_M,SUB_TILE_N,SUB_TILE_K

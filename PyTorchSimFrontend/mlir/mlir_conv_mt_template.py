@@ -7,10 +7,7 @@ from PyTorchSimFrontend.mlir.mlir_common import MLIRKernelArgs
 from PyTorchSimFrontend.mlir.mlir_template import MLIRTemplate
 from PyTorchSimFrontend.mlir.mlir_template import MLIRTemplateKernel
 from torch._inductor.ir import IRNode
-from torch._inductor.codecache import write_atomic
-import PyTorchSimFrontend.extension_codecache as extension_codecache
 from PyTorchSimFrontend.mlir import mlir_common
-from torch._inductor.codecache import get_hash
 from PyTorchSimFrontend import extension_config
 
 CONV_TEMPLATE = r"""
@@ -185,8 +182,9 @@ class MLIRConvMultiTileTemplate(MLIRTemplate):
 
         # Select tile size adn template
         conv_template = CONV_TEMPLATE
-        TILE_K_H, TILE_K_W, TILE_O_H, TILE_O_W, TILE_M, TILE_N, TILE_K, TILE_I_H, TILE_I_W, SUB_TILE_I_H, SUB_TILE_I_W, SUB_TILE_K_H, SUB_TILE_K_W, SUB_TILE_M, SUB_TILE_N, SUB_TILE_K, TOG_latency = self.select_tile(kernel, n_extra_node, BATCH, I_C, O_C, K_H, K_W, O_H, O_W)
+        TILE_K_H, TILE_K_W, TILE_O_H, TILE_O_W, TILE_M, TILE_N, TILE_K, TILE_I_H, TILE_I_W, SUB_TILE_I_H, SUB_TILE_I_W, SUB_TILE_K_H, SUB_TILE_K_W, SUB_TILE_M, SUB_TILE_N, SUB_TILE_K = self.select_tile(kernel, n_extra_node, BATCH, I_C, O_C, K_H, K_W, O_H, O_W)
         SUB_TILE_N = TILE_N if TILE_N > 512 else SUB_TILE_N
+        TOG_latency = O_W if TILE_M > O_W else TILE_M
         TOG_latency = 8 if TOG_latency < 8 else TOG_latency
         kernel.loop_size = [TOG_latency, TILE_N, TILE_K]
 
@@ -294,8 +292,7 @@ class MLIRConvMultiTileTemplate(MLIRTemplate):
         SUB_TILE_I_H, SUB_TILE_I_W, SUB_TILE_K_H, SUB_TILE_K_W = 1, 1, 1, 1
         SUB_TILE_K = TILE_K
 
-        TOG_latency = O_W if TILE_M > O_W else TILE_M
-        return TILE_K_H,TILE_K_W,TILE_O_H,TILE_O_W,TILE_M,TILE_N,TILE_K,TILE_I_H,TILE_I_W,SUB_TILE_I_H,SUB_TILE_I_W,SUB_TILE_K_H,SUB_TILE_K_W,SUB_TILE_M,SUB_TILE_N,SUB_TILE_K,TOG_latency
+        return TILE_K_H,TILE_K_W,TILE_O_H,TILE_O_W,TILE_M,TILE_N,TILE_K,TILE_I_H,TILE_I_W,SUB_TILE_I_H,SUB_TILE_I_W,SUB_TILE_K_H,SUB_TILE_K_W,SUB_TILE_M,SUB_TILE_N,SUB_TILE_K
 
     def outer_func_render(self, kernel_name, input_args):
         X, W = self.input_nodes[0], self.input_nodes[1]
@@ -338,15 +335,3 @@ class MLIRConvMultiTileTemplate(MLIRTemplate):
         arg_attributes.append([X.data.data.name, [MLIRKernelArgs.MLIR_ARGS_IN, X.layout.dtype, math.prod(X_shape), X_shape, X_stride]])
 
         return arg_attributes
-
-    def codegen_header(self, code, extra_headers):
-        write_path = extension_codecache.get_write_path(code)
-        if not os.path.exists(write_path):
-            os.makedirs(write_path, exist_ok=True)
-        spike_write_path = os.path.join(write_path, "global_var.h")
-        gem5_write_path = os.path.join(write_path, "gem5_global_var.h")
-        if not os.path.exists(spike_write_path):
-            write_atomic(spike_write_path, extra_headers[0])
-        if not os.path.exists(gem5_write_path):
-            write_atomic(gem5_write_path, extra_headers[1])
-        self.hash_value = get_hash(code.strip())
