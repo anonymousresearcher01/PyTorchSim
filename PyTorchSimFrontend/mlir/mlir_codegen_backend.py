@@ -17,8 +17,7 @@ from torch._inductor.utils import (
     sympy_product
 )
 from torch.utils._sympy.functions import ModularIndexing, FloorDiv
-import PyTorchSimFrontend.extension_codecache as extension_codecache
-
+from PyTorchSimFrontend import extension_codecache
 from PyTorchSimFrontend import extension_config
 from . import mlir_common
 from .mlir_common import LoopLevel, LoopNest
@@ -1565,10 +1564,10 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             current_tile_sz = tuple(self.kernel_group.tile_desc.get_tile_size())
             search_space.add(current_tile_sz)
 
-            print(f"[Auto-tune] Trying tile size: {current_tile_sz}, vlane_stride: {vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
+            print(f"[Auto-tune] Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
             self._prepare_simulator_headers(src_code)
             bench_runner = self.run_bench(nodes, kernel_name, src_code)
-            choices.append((bench_runner, src_code, self.kernel_group))
+            choices.append((bench_runner, src_code, current_tile_sz, self.kernel_group.tile_desc.vmap.vlane_stride))
 
             while prevent_infinite_loop < 10 and candidate_axes:
                 for axis in list(candidate_axes):
@@ -1593,6 +1592,13 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                     src_code = super().codegen_nodes(nodes, kernel_name)
                     current_tile_sz = tuple(self.kernel_group.tile_desc.get_tile_size())
 
+                    # FIXME. How to intergrate this constraint to tile system?
+                    pad = self.kernel_group.tile_desc.vmap.get_used_vlane(current_tile_sz) * self.kernel_group.tile_desc.vmap.vlane_stride
+                    vlane_size = current_tile_sz[self.kernel_group.tile_desc.vmap.vlane_split_axis]
+                    if vlane_size > pad and vlane_size % pad:
+                        prevent_infinite_loop += 1
+                        continue
+
                     # If tile size is converged for this axis, remove from candidate axes
                     if current_tile_sz in search_space:
                         candidate_axes.remove(axis)
@@ -1600,26 +1606,25 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
                     # Add this choice
                     search_space.add(current_tile_sz)
-                    print(f"[Auto-tune] Trying tile size: {current_tile_sz}, vlane_stride: {vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
+                    print(f"[Auto-tune] Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
                     self._prepare_simulator_headers(src_code)
                     bench_runner = self.run_bench(nodes, kernel_name, src_code)
-                    choices.append((bench_runner, src_code, self.kernel_group))
+                    choices.append((bench_runner, src_code, self.kernel_group.tile_desc.get_tile_size(), self.kernel_group.tile_desc.vmap.vlane_stride))
                     prevent_infinite_loop += 1
         self.kernel_group.tile_desc.prev_tail_threshold = prev_tail_threshold
         return choices
 
-    def autotune(self, nodes, kernel_name):
+    def autotune(self, *args):
         def get_cycle(choice):
-            bench_runner, src_code, kernel_group = choice
+            bench_runner = choice[0]
             for n_try in range(extension_config.CONFIG_MAX_AUTOTUNE_TRY): # TODO: make simple
                 try:
-                    # bench_runner = self.run_bench(nodes, kernel_name, src_code)
-                    out = bench_runner(validate=extension_config.CONFIG_TORCHSIM_VALIDATION_MODE, autotune=True)
+                    out = bench_runner()
                     return out[-1]
                 except (extension_codecache.SpadOverflowError, RuntimeError) as e:
                     return float("inf")
             return float("inf") # Exceeded maximum number of autotuning attempts
-        choices = self.make_choices(nodes, kernel_name)
+        choices = self.make_choices(*args)
 
         if len(choices) == 0: # can't autotune
             return None
@@ -1628,21 +1633,25 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         max_idx = results.index(min(results))
         if min(results) == float("inf"):
             raise RuntimeError("Failed to find optimal tile size...")
-        print(f"[Auto-tune] Optimal tile size: {choices[max_idx][2].tile_desc.get_tile_size()}, vlane_stride: {choices[max_idx][2].tile_desc.vmap.vlane_stride}, cycles: {results[max_idx]}")
+        self._log_autotune_result(choices[max_idx], results[max_idx])
         optimal_src_code = choices[max_idx][1]
         return optimal_src_code
+
+    def _log_autotune_result(self, best_choice, best_cycle):
+        print(
+            f"[Auto-tune] Optimal tile size: {list(best_choice[2])}, "
+            f"vlane_stride: {best_choice[3]}, "
+            f"cycles: {best_cycle}"
+        )
 
     def codegen_nodes(self, nodes, kernel_name):
         src_code = super().codegen_nodes(nodes, kernel_name)
         self._prepare_simulator_headers(src_code)
-        if not extension_config.CONFIG_AUTOTUNE or extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
-            return src_code
-        else:
+        if extension_config.CONFIG_AUTOTUNE and not extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
             optimal_src_code = self.autotune(nodes, kernel_name)
-            if optimal_src_code:
+            if optimal_src_code is not None:
                 return optimal_src_code
-            else:
-                return src_code
+        return src_code
 
     def _prepare_simulator_headers(self, src_code):
         write_path = extension_codecache.get_write_path(src_code)
