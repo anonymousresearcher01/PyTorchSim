@@ -256,6 +256,7 @@ class MLIRGemmTemplate(MLIRTemplate):
             dram_idx = Y_idx,
             dram_tile_desc = Y_tile_desc,
             nr_rdim = nr_rdim,
+            r_dim_size = M,
             dim_aliasing = epilogue_dim_aliasing
         )
         code = self._template_from_string(template).render(**kernel.render_options)

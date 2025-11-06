@@ -892,7 +892,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             vshape = f"vector<{vsize}x{mlir_dtype}>"
 
             if compute_vec_size > 1:
-                offset = self.cse.generate(self.loads, f"affine.apply affine_map<(d0, d1) -> (d0 + d1*{(self.reduction_axis_size)})>(%{self.compute_idx}, %{self.reduction_loop_idx})")
+                offset = self.cse.generate(self.loads, f"affine.apply affine_map<(d0, d1) -> (d0 + d1*{(self.r_tile_size)})>(%{self.compute_idx}, %{self.reduction_loop_idx})")
                 compute_index_var = ",".join([f"%{zero_var}"] * (self.kernel_group.tile_desc.get_nr_dim()-1) + [f"%{offset}"])
                 operation = "affine.vector_load"
                 line = f"{operation} %{sram_var}[{compute_index_var}] : {tile_shape}, {vshape}"
@@ -1077,12 +1077,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
 
             if self.welford_reduce_out is not None:
                 # NOTE: It not a real welford algorithm... We just used E(X^2) - E(X)^2
-                divider = self.cse.generate(self.reductions_suffix, f"arith.constant {float(self.reduction_axis_size)} : f32")
-                if self.reduction_axis_size - 1 > 0:
-                    divider2 = self.cse.generate(self.reductions_suffix, f"arith.constant {float(self.reduction_axis_size-1)} : f32")
-                else:
-                    divider2 = divider
-
+                divider = self.cse.generate(self.reductions_suffix, f"arith.constant {float(self.r_dim_size)} : f32")
                 if self.buffer_types[name][1] > 1:
                     divider_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %{divider} : f32 to {new_reduced_shape}")
                 else:
@@ -1121,15 +1116,16 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         if 'nr_rdim' in template_fusion_info and template_fusion_info['nr_rdim']==1:
             tile_desc.nr_rdim = 1
             numel_per_lane = tile_desc.get_numel_per_lane()
-            reduction_axis_size = tile_desc.get_tile_size()[-1]
-            nr_outer_loop = (numel_per_lane + reduction_axis_size-1) // reduction_axis_size
+            r_tile_size = tile_desc.get_tile_size()[-1]
+            nr_outer_loop = (numel_per_lane + r_tile_size-1) // r_tile_size
             tile_desc.vec_size = nr_outer_loop * 32 # Why? Emprically selected, other option failed to functionality...
 
             self.reduction_fusion = True
-            self.reduction_axis_size =  tile_desc.get_tile_size()[-1]
+            self.r_tile_size = tile_desc.get_tile_size()[-1]
+            self.r_dim_size = template_fusion_info['r_dim_size']
             self.reduction_nr_outer_loop = nr_outer_loop
             self.reduction_loop_idx = "reduce_loop_idx"
-            self.compute_body_loop.size = reduction_axis_size
+            self.compute_body_loop.size = r_tile_size
             self.compute_body_loop.step = tile_desc.get_compute_vec_size() // nr_outer_loop
             self.reduction_body_loop = mlir_common.LoopLevel(self.reduction_loop_idx, nr_outer_loop)
         else:
