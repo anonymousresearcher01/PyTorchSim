@@ -88,6 +88,11 @@ To download the latest Docker image and set up the environment, use the followin
 # Run the Docker container
 docker run -it --ipc=host --name torchsim -w /workspace/PyTorchSim ghcr.io/psal-postech/torchsim-ci:latest bash
 ```
+### Manual Setting (Optional)
+This script provides building [Gem5](https://github.com/PSAL-POSTECH/gem5.git), [LLVM](https://github.com/PSAL-POSTECH/llvm-project.git), and [Spike](https://github.com/PSAL-POSTECH/riscv-isa-sim.git) simulator from source code for specific experts.
+```bash
+bash script/build_from_source.sh
+```
 ### Run Examples
 The `tests` directory contains several AI workloads examples.
 ```bash
