@@ -265,6 +265,7 @@ We adopt and modified heuristic-based mapping of [GEMMINI](https://github.com/uc
 Heuristic method is not optimal for some cases. PyTorchSim provides auto-tuning to find best mapping for GEMM, CONV, and vector operations. It reduces searching space by sorting of scratchpad memory utilization and pick top-k candiates. Searching parameters are tile shape and vector lane stride.
 ```bash
 export AUTOTUNE=True
+export AUTOTUNE_TEMPLATE=True
 ```
 ### Manunal setting
 User can exploit third-party(e.g. Timeloop) mapping. Set the cheatsheet path and write down their own mapping.
