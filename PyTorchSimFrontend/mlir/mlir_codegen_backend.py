@@ -1287,7 +1287,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             # mean
             reduction_numel = reduce(mul, self.ranges[self.reduction_depth:], 1)
             divider = self.cse.generate(self.reductions_suffix, f"arith.constant {float(reduction_numel)} : f32")
-            if self.buffer_types[name][1] > 1:
+            if compute_vec_size > 1:
                 divider_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %{divider} : f32 to vector<{self.var_info[sum][0]}x{mlir_dtype}>")
             else:
                 divider_vec = divider
