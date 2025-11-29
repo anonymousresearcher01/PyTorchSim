@@ -29,7 +29,7 @@ from PyTorchSimFrontend.mlir.mlir_codegen_backend import MLIRKernel, reduction_i
 from PyTorchSimFrontend.mlir.mlir_scheduling import SchedulerNode
 from torch._inductor.codegen import common
 
-from PyTorchSimFrontend.extension_config import CONFIG_TORCHSIM_DIR, CONFIG_AUTOTUNE_TEMPLATE_TOPK
+from PyTorchSimFrontend.extension_config import CONFIG_TORCHSIM_DIR, CONFIG_AUTOTUNE_TEMPLATE_TOPK, CONFIG_AUTOTUNE_TEMPLATE
 from . import mlir_common
 
 class IndentedBufferGroup:
@@ -506,7 +506,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         )
 
     def codegen_nodes(self, tile_candidates, render, template_node, prologue_nodes, epilogue_nodes):
-        src_code = self.autotune(tile_candidates, render, template_node, prologue_nodes, epilogue_nodes)
+        src_code = self.autotune(tile_candidates, render, template_node, prologue_nodes, epilogue_nodes) if CONFIG_AUTOTUNE_TEMPLATE else self.codegen_template_code(render, template_node, prologue_nodes, epilogue_nodes, tile_candidates[0])
 
         with V.set_kernel_handler(self):
             self.meta_kernel()

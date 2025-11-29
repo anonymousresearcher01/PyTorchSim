@@ -147,7 +147,7 @@ Simulation consists of three steps
 
 If you want to turn off the `SpikeSimulator` for fast simulation, you can set as below.
 ```bash
-export TORCHSIM_VALIDATION_MODE=False
+export TORCHSIM_FUNCTIONAL_MODE=False
 ```
 Log contains memory & core stats.
 ```bash
