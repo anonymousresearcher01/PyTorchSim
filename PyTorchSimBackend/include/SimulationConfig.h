@@ -19,7 +19,6 @@ struct SimulationConfig {
   std::string stonne_config_path;
   uint32_t num_cores;
   uint32_t core_freq;
-  uint32_t sram_size;
   uint32_t core_print_interval = 0;
   uint32_t num_systolic_array_per_core = 1;
   uint32_t num_stonne_per_core = 1;
@@ -57,7 +56,6 @@ struct SimulationConfig {
   std::map<uint32_t, uint32_t> partiton_map;
 
   /* Other configs */
-  uint32_t precision;
   std::string layout;
 
   uint64_t align_address(uint64_t addr) {

@@ -156,9 +156,9 @@ Log contains memory & core stats.
 [info] ========= Core stat =========
 [info] Core [0] : Systolic array [0] Utilization(%) 0.00, active cycle 0, idle cycle 1014
 [info] Core [0] : Systolic array [1] Utilization(%) 12.62, active cycle 128, idle cycle 886
-[info] Core [0] : TMA active cycle 3 TMA idle cycle 1011 DRAM BW 182.000 GB/s (6144)
+[info] Core [0] : DMA active cycle 3 DMA idle cycle 1011 DRAM BW 182.000 GB/s (6144)
 [info] Core [0] : Vector Unit Utilization(%) 4.34, active cycle 44, idle_cycle 0
-[info] Core [0] : Numa hit count : 0, Numa miss count : 0
+[info] Core [0] : NUMA local access count : 0, NUMA remote access count : 0
 [info] Core [0] : Total cycle 1014
 [info] Total execution cycle: 1014
 [info] Simulation time: 0.039296 seconds

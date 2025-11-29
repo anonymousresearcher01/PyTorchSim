@@ -100,8 +100,8 @@ void SparseCore::checkStatus(uint32_t subcore_id) {
   int new_status = stonneCore->getMCFSMStats();
   int compute_cycle = stonneCore->getMSStats().n_multiplications;
   if (traceCoreStatus.at(subcore_id) != new_status) {
-    spdlog::trace("Stonne Core [{}][{}] status transition {} -> {}, Load/Store: {}/{}, compute_cycle: {}",
-      _id, _core_cycle, traceCoreStatus.at(subcore_id), new_status,
+    spdlog::trace("[{}]Stonne Core [{}] status transition {} -> {}, Load/Store: {}/{}, compute_cycle: {}",
+      _core_cycle, _id, traceCoreStatus.at(subcore_id), new_status,
       traceLoadTraffic.at(subcore_id).size(), traceStoreTraffic.at(subcore_id).size(), (compute_cycle - traceCoreCycle.at(subcore_id))/num_ms);
     if (traceLoadTraffic.at(subcore_id).size()) {
       TraceNode load_node = TraceNode(traceNodeList.at(subcore_id).size()+2, "load", TraceNode::StonneTraceLoad);
@@ -158,7 +158,7 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
       req->stonneId = subcore_id;
       std::tuple<uint64_t, mem_access_type, mf_type, int> key = std::make_tuple(target_addr, acc_type, type, allocTrafficID());
       registerMemfetch(key, [this, req, acc_type, type]() {
-        spdlog::trace("[SparseCore][{}] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
+        spdlog::trace("[{}][SparseCore] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
               _core_cycle, _core_cycle - req->request_time, req->getAddress(), int(req->getcmd()), _config.dram_req_size);
         req->setReply();
         stonneCores.at(req->stonneId)->pushResponse(req);
@@ -168,7 +168,7 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
     /* Finish stonne core */
     if (coreBusy.at(subcore_id) && stonneCore->isFinished()) {
       stonneCore->finish();
-      spdlog::info("[SparseCore][{}] Operation finished at {}", _id, _core_cycle);
+      spdlog::info("[{}][SparseCore] Operation finished at {}", _core_cycle, _id);
       std::shared_ptr<Tile> target_tile = percore_tiles.at(subcore_id).front();
       SST_STONNE::StonneOpDesc *opDesc = static_cast<SST_STONNE::StonneOpDesc*>(target_tile->get_custom_data());
       if (opDesc->trace_path != "")
@@ -239,7 +239,7 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
         {
           auto acc_type = mem_access_type::GLOBAL_ACC_R;
           auto type = mf_type::READ_REQUEST;
-          spdlog::trace("[StonneCore {}][{}][{}] {} ISSUED", _id, subcore_id, _core_cycle,
+          spdlog::trace("[{}][StonneCore {}][{}] {} ISSUED", _core_cycle, _id, subcore_id,
                         opcode_to_string(inst->get_opcode()));
           for (auto addr : inst->get_trace_address()) {
             addr = addr - (addr & _config.dram_req_size-1);
@@ -247,7 +247,7 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
             std::tuple<uint64_t, mem_access_type, mf_type, int> key = std::make_tuple(addr, acc_type, type, allocTrafficID());
             uint64_t current_time = _core_cycle;
             registerMemfetch(key, [this, inst, addr, current_time, type]() {
-              spdlog::trace("[SparseCore][{}] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
+              spdlog::trace("[{}][SparseCore] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
                 this->_core_cycle, this->_core_cycle - current_time, addr, int(type), _config.dram_req_size);
               inst->dec_waiting_request();
             });
@@ -260,7 +260,7 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
         {
           auto acc_type = mem_access_type::GLOBAL_ACC_W;
           auto type = mf_type::WRITE_REQUEST;
-          spdlog::trace("[StonneCore {}][{}][{}] {} ISSUED", _id, subcore_id, _core_cycle,
+          spdlog::trace("[{}][StonneCore {}][{}] {} ISSUED", _core_cycle, _id, subcore_id,
                         opcode_to_string(inst->get_opcode()));
           for (auto addr : inst->get_trace_address()) {
             addr = addr - (addr & _config.dram_req_size-1);
@@ -268,7 +268,7 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
             std::tuple<uint64_t, mem_access_type, mf_type, int> key = std::make_tuple(addr, acc_type, type, allocTrafficID());
             uint64_t current_time = _core_cycle;
             registerMemfetch(key, [this, inst, addr, current_time, type]() {
-              spdlog::trace("[SparseCore][{}] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
+              spdlog::trace("[{}][SparseCore] Round Trip Cycle: {}, Address: {:#x}, Request Type: {}, DRAM Req Size: {}", \
                 this->_core_cycle, this->_core_cycle - current_time, addr, int(type), _config.dram_req_size);
               inst->dec_waiting_request();
             });
@@ -285,7 +285,7 @@ void SparseCore::subCoreCycle(uint32_t subcore_id) {
             inst->finish_cycle = _core_cycle + inst->get_compute_cycle();
           else
             inst->finish_cycle = target_pipeline.back()->finish_cycle + inst->get_compute_cycle();
-          spdlog::trace("[Core {}][{}][{}] {} ISSUED, finsh at {}", _id, subcore_id, _core_cycle,
+          spdlog::trace("[{}][Core {}][{}] {} ISSUED, finsh at {}", _core_cycle, _id, subcore_id,
                           opcode_to_string(inst->get_opcode()), inst->finish_cycle);
           target_pipeline.push(inst);
           issued = true;
@@ -313,7 +313,7 @@ void SparseCore::cycle() {
     for (auto& req_pair : request_merge_table) {
       _request_queue.push(req_pair.second);
       request_merge_table.erase(req_pair.first);
-      spdlog::debug("[SparseCore][{}][{}] Address: {:#x}, Access Type: {}, Request Type: {}, DRAM Req Size: {}, nr_request: {}", \
+      spdlog::debug("[{}][SparseCore][{}] Address: {:#x}, Access Type: {}, Request Type: {}, DRAM Req Size: {}, nr_request: {}", \
               _core_cycle, _id, req_pair.second->get_addr(), int(req_pair.second->get_access_type()), int(req_pair.second->get_type()),
               _config.dram_req_size, nr_request);
       nr_request++;
@@ -406,11 +406,11 @@ void SparseCore::finish_instruction(std::shared_ptr<Instruction>& inst) {
   inst->finish_instruction();
   static_cast<Tile*>(inst->get_owner())->inc_finished_inst();
   if (inst->get_opcode() == Opcode::COMP) {
-    spdlog::info("[StonneCore {}][{}] {} FINISHED",
-      _id, _core_cycle, opcode_to_string(inst->get_opcode()));
+    spdlog::info("[{}][StonneCore {}] {} FINISHED",
+      _core_cycle, _id, opcode_to_string(inst->get_opcode()));
   } else if (inst->get_opcode() == Opcode::MOVIN || inst->get_opcode() == Opcode::MOVOUT) {
-    spdlog::info("[StonneCore {}][{}] {} FINISHED, free_sram_size: {}", _id, _core_cycle,
-      opcode_to_string(inst->get_opcode()), inst->get_free_sram_size());
+    spdlog::info("[{}][StonneCore {}] {} FINISHED", _core_cycle, _id,
+      opcode_to_string(inst->get_opcode()));
   }
 }
 
