@@ -163,7 +163,7 @@ class CycleSimulator():
         gem5_cmd = [extension_config.CONFIG_GEM5_PATH, "-r", "--stdout-file=sto.log", "-d", dir_path, extension_config.CONFIG_GEM5_SCRIPT_PATH, "-c", target_binary, "--vlane", str(vectorlane_size)]
         try:
             # Create progress thread
-            is_dryrun = int(os.environ.get('BACKENDSIM_DRYRUN', default=False)) or silent_mode
+            is_dryrun = int(os.environ.get('TOGSIM_DRYRUN', default=False)) or silent_mode
             if not is_dryrun:
                 print("[Gem5Simulator] cmd> ", " ".join(gem5_cmd))
                 finished = False
@@ -188,18 +188,18 @@ class CycleSimulator():
         cycle_list = cycle_list[:-1]
         return cycle_list
 
-class BackendSimulator():
-    BACKEND_RESULT_PATH_KEY = "BACKEND_RESULT_PATH"
+class TOGSimulator():
+    TOGSIM_RESULT_PATH_KEY = "TOGSIM_RESULT_PATH"
     FINISH_STR = "Simulation finished"
     ALLOC_POOL = dict() # For eagermode buffer plan
-    def __init__(self, backend_path, config_path, vectorlane_size=-1) -> None:
-        self.base_dir = backend_path
+    def __init__(self, togsim_path, config_path, vectorlane_size=-1) -> None:
+        self.base_dir = togsim_path
         self.config_path = config_path
         self.config_json = self.load_json(self.config_path)
         self.process = None
         self.vectorlane_size = vectorlane_size
 
-    def get_backend_command(self):
+    def get_togsim_command(self):
         bin = os.path.join(self.base_dir, "build/bin/Simulator")
         config = os.path.join(self.base_dir, self.config_path)
         cmd = f"{bin} --config {config}"
@@ -211,16 +211,16 @@ class BackendSimulator():
             while not finished:
                 i = (i + 1) % 3
                 tail = "." * i + " " * (3-i)
-                sys.stdout.write("\r[BackendSimulator] Simulation is still running." + tail)
+                sys.stdout.write("\r[TOGSimulator] Simulation is still running." + tail)
                 time.sleep(1)
             print("")
-        cmd = f"{self.get_backend_command()} --models_list {model_path}"
-        if extension_config.CONFIG_BACKENDSIM_DEBUG_LEVEL:
-            cmd += f" --log_level {extension_config.CONFIG_BACKENDSIM_DEBUG_LEVEL}"
+        cmd = f"{self.get_togsim_command()} --models_list {model_path}"
+        if extension_config.CONFIG_TOGSIM_DEBUG_LEVEL:
+            cmd += f" --log_level {extension_config.CONFIG_TOGSIM_DEBUG_LEVEL}"
         if attribute_path:
             cmd = f"{cmd} --attributes_list {attribute_path}"
         if not silent_mode:
-            print("[BackendSimulator] cmd> ", cmd)
+            print("[TOGSimulator] cmd> ", cmd)
 
         # Create progress thread
         if not silent_mode:
@@ -236,25 +236,25 @@ class BackendSimulator():
             if not silent_mode:
                 finished = True
                 progress_thread.join()
-                print("[BackendSimulator] Command failed with exit code", e.returncode)
-                print("[BackendSimulator] Error output:", e.output)
+                print("[TOGSimulator] Command failed with exit code", e.returncode)
+                print("[TOGSimulator] Error output:", e.output)
             assert 0
         # Save result to result_path
-        result_path = os.path.join(os.path.dirname(model_path), "backendsim_result")
+        result_path = os.path.join(os.path.dirname(model_path), "togsim_result")
         os.makedirs(result_path, exist_ok=True)
         file_name = str(len(os.listdir(result_path)))
         result_path = os.path.join(result_path, file_name)
         with open(result_path, "w") as f:
             f.write(result.decode())
-        print(f'[BackendSimulator] Simulation of "{model_path}" is stored to "{result_path}"')
+        print(f'[TOGSimulator] Simulation of "{model_path}" is stored to "{result_path}"')
         return result_path
 
     def interactive_simulation(self):
-        cmd = f"{self.get_backend_command()} --mode interactive"
-        if extension_config.CONFIG_BACKENDSIM_DEBUG_LEVEL:
-            cmd += f" --log_level {extension_config.CONFIG_BACKENDSIM_DEBUG_LEVEL}"
+        cmd = f"{self.get_togsim_command()} --mode interactive"
+        if extension_config.CONFIG_TOGSIM_DEBUG_LEVEL:
+            cmd += f" --log_level {extension_config.CONFIG_TOGSIM_DEBUG_LEVEL}"
 
-        print("[BackendSimulator] cmd> ", cmd)
+        print("[TOGSimulator] cmd> ", cmd)
         if self.process is None:
             self.process = subprocess.Popen(
                 shlex.split(cmd),
@@ -263,27 +263,27 @@ class BackendSimulator():
                 universal_newlines=True
             )
         else:
-            print("[BackendSimulator] Simulator is already running.")
+            print("[TOGSimulator] Simulator is already running.")
 
     def stop(self):
         if self.process:
             self.process.terminate()
             self.process.wait()
             self.process = None
-            print("[BackendSimulator] Simulator stopped.")
+            print("[TOGSimulator] Simulator stopped.")
 
     def wait(self):
         if self.process:
-            print("[BackendSimulator] Waiting for simulation to complete...")
+            print("[TOGSimulator] Waiting for simulation to complete...")
             self.quit()
             self.process.wait()
             self.process = None
-            print("[BackendSimulator] Simulation completed.")
+            print("[TOGSimulator] Simulation completed.")
 
     def send_command(self, command):
         if self.process:
             try:
-                if not extension_config.CONFIG_BACKENDSIM_DRYRUN:
+                if not extension_config.CONFIG_TOGSIM_DRYRUN:
                     print(command, flush=True)
                 self.process.stdin.write(command + '\n')
                 self.process.stdin.flush()
@@ -403,13 +403,13 @@ class BackendSimulator():
         simulation_finished_idx = -1
         simulation_finished = False
         for idx, line in enumerate(lines):
-            if BackendSimulator.FINISH_STR in line:
+            if TOGSimulator.FINISH_STR in line:
                 simulation_finished = True
                 simulation_finished_idx = idx
                 break
 
         if simulation_finished_idx == -1:
-            print("[BackendSimulator] Tried to parsing wrong formated output file!")
+            print("[TOGSimulator] Tried to parsing wrong formated output file!")
             return core_metrics, dram_channel_bw, avg_dram_bw, simulation_time
 
         total_stat_lines = lines[simulation_finished_idx:]
@@ -449,6 +449,6 @@ class BackendSimulator():
         return core_metrics, dram_channel_bw, avg_dram_bw, simulation_time, total_cycle
 
 if __name__ == "__main__":
-    sim = BackendSimulator("/workspace/PyTorchSim/PyTorchSimBackend", "/workspace/PyTorchSim/PyTorchSimBackend/configs/systolic_ws_128x128_c2_simple_noc_tpuv3_partition.json")
+    sim = TOGSimulator("/workspace/PyTorchSim/TOGSim", "/workspace/PyTorchSim/TOGSim/configs/systolic_ws_128x128_c2_simple_noc_tpuv3_partition.json")
     sim.interactive_simulation()
     sim.until(4000)

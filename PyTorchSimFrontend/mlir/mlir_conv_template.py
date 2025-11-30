@@ -125,7 +125,7 @@ def {{ FUNC_NAME }}{{kernel.def_wrapper()}}:
 
     # Launch kernel
     {{ KERNEL_NAME }}<DEF_CONV_WRAPPER>
-    {%- if BACKENDSIM_EAGER_MODE %}
+    {%- if TOGSIM_EAGER_MODE %}
     yield ({{KERNEL_NAME}}, <DEF_CONV_WRAPPER>)
     {%- endif %}
 """

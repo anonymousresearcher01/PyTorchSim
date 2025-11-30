@@ -98,8 +98,8 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
 
                 from torch import device, empty, empty_strided
                 from {extension_codecache.__name__} import CustomAsyncCompile
-                from PyTorchSimFrontend.extension_config import CONFIG_SRAM_BUFFER_PLAN, CONFIG_BACKENDSIM_EAGER_MODE
-                from Simulator.simulator import BackendSimulator
+                from PyTorchSimFrontend.extension_config import CONFIG_SRAM_BUFFER_PLAN, CONFIG_TOGSIM_EAGER_MODE
+                from Simulator.simulator import TOGSimulator
                 from PyTorchSimFrontend.extension_op import sparse_mm_dummy_stonne_outer
                 from torch._inductor.select_algorithm import extern_kernels
 
@@ -121,7 +121,7 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
                 start = buffer.data_ptr()
                 end = start + buffer_size
                 # print(f'Alloc {{buffer_name}}(0x{{start:x}} ~ 0x{{end:x}})')
-                BackendSimulator.sram_alloc(buffer_name, [start, end])
+                TOGSimulator.sram_alloc(buffer_name, [start, end])
 
             def sram_plan_postfix(buffer_name, buffer):
                 if CONFIG_SRAM_BUFFER_PLAN and (buffer_name not in CONFIG_SRAM_BUFFER_PLAN):
@@ -130,7 +130,7 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
                 start = buffer.data_ptr()
                 end = start + buffer_size
                 # print(f'Dealloc {{buffer_name}}(0x{{start:x}} ~ 0x{{end:x}})')
-                BackendSimulator.sram_dealloc(buffer_name, [start, end])
+                TOGSimulator.sram_dealloc(buffer_name, [start, end])
 
             def host2device_memcopy(buffer):
                 pass

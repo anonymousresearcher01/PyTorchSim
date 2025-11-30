@@ -9,7 +9,7 @@
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
 
-const char* env_value = std::getenv("BACKENDSIM_DRYRUN");
+const char* env_value = std::getenv("TOGSIM_DRYRUN");
 bool isDryRun = (env_value != nullptr && std::string(env_value) == "1");
 
 void launchKernel(Simulator* simulator, std::string onnx_path, std::string attribute_path, std::string config_path, cycle_type request_time=0, int partiton_id=0) {
@@ -38,7 +38,7 @@ int until(Simulator *simulator, cycle_type until_cycle) {
 void interactive_mode(Simulator* simulator) {
   std::string command;
 
-  std::cout << "[" << simulator->get_core_cycle() << "] BackendSim> ";
+  std::cout << "[" << simulator->get_core_cycle() << "] TOGSim> ";
   while (std::getline(std::cin, command)) {
 
     std::istringstream iss(command);
@@ -79,7 +79,7 @@ void interactive_mode(Simulator* simulator) {
       spdlog::error("Error: unknown command {} Available commands are: launch, until, quit.", token);
     }
     if (isDryRun)
-      std::cout << "[" << simulator->get_core_cycle() << "] BackendSim> ";
+      std::cout << "[" << simulator->get_core_cycle() << "] TOGSim> ";
   }
   simulator->cycle();
   if (simulator->get_core_cycle()==0)
