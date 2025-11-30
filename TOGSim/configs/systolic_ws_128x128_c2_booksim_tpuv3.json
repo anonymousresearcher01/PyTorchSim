@@ -9,7 +9,7 @@
   "dram_channels": 32,
   "dram_req_size_byte": 32,
   "dram_num_burst_length" : 2,
-  "dram_print_interval_cycle": 10000,
+  "dram_stats_print_period_cycles": 10000,
   "ramulator_config_path" : "../configs/ramulator2_configs/HBM2_TPUv3.yaml",
 
   "icnt_type" : "booksim2",

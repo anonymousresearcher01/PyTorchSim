@@ -108,8 +108,8 @@ SimulationConfig initialize_config(json config) {
     parsed_config.icnt_latency = config["icnt_latency"];
   if (config.contains("booksim_config_path"))
     parsed_config.icnt_config_path = config["booksim_config_path"];
-  if (config.contains("icnt_log_print_interval_cycle"))
-    parsed_config.icnt_stats_print_period_cycles = config["icnt_log_print_interval_cycle"];
+  if (config.contains("icnt_stats_print_interval_cycle"))
+    parsed_config.icnt_stats_print_period_cycles = config["icnt_stats_print_interval_cycle"];
   if (config.contains("icnt_node_per_core"))
     parsed_config.icnt_node_per_core = config["icnt_node_per_core"];
 
