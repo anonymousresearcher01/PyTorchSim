@@ -161,7 +161,7 @@ Log contains memory & core stats.
 [info] Core [0] : NUMA local access count : 0, NUMA remote access count : 0
 [info] Core [0] : Total cycle 1014
 [info] Total execution cycle: 1014
-[info] Simulation time: 0.039296 seconds
+[info] Simulation wall clock time: 0.039296 seconds
 ```
 The log is dumped in `TORCHSIM_DUMP_PATH` and you can set the path as below.
 ```bash

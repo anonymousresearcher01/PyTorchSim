@@ -229,7 +229,7 @@ void Simulator::cycle() {
     if (IS_ICNT_CYCLE(_cycle_mask))
       icnt_cycle();
   }
-  spdlog::info("Simulation Finished");
+  spdlog::info("Simulation finished");
   for (auto &core: _cores) {
     core->check_tag();
   }

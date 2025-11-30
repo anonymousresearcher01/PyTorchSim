@@ -26,8 +26,8 @@ std::shared_ptr<std::vector<mem_fetch*>> DMA::get_memory_access(cycle_type core_
   unsigned long long base_daddr = _current_inst->get_base_dram_address();
   // Todo. We use a ternsor level buffer allocation, so we don't need to check all memfetch
   bool is_cacheable = owner_subgraph->is_cacheable(base_daddr, base_daddr + _dram_req_size);
-  spdlog::trace("[{}][SRAM Trace] Core-{}, Address: 0x{:016x}, Is_cacheable: {}", core_cycle, _id, base_daddr, is_cacheable);
-  spdlog::trace("[{}][NUMA Trace] Core-{}, Subgraph id: {} , Numa id: {}, Arg: {} is_write: {}",
+  spdlog::trace("[{}][Core {}][SRAM] Address: 0x{:016x}, Is_cacheable: {}", core_cycle, _id, base_daddr, is_cacheable);
+  spdlog::trace("[{}][Core {}][NUMA] Subgraph id: {} , Numa id: {}, Arg: {} is_write: {}",
     core_cycle, _id, owner_subgraph->get_core_id(), _current_inst->get_numa_id(), _current_inst->get_addr_name(), _current_inst->is_dma_write());
 
   for (auto addr: *addr_set) {

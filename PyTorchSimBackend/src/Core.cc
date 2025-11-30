@@ -23,7 +23,7 @@ bool Core::can_issue(const std::shared_ptr<Tile>& op) {
 
 void Core::issue(std::shared_ptr<Tile> op) {
   if (op->get_instructions().size()){
-    spdlog::trace("[{}][Core {}] New Tile is issued",
+    spdlog::trace("[{}][Core {}][TILE_SCHEDULED]",
       _core_cycle, _id);
   }
   for (const auto& inst : op->get_instructions()) {
@@ -222,7 +222,7 @@ void Core::cycle() {
                 finish_instruction(inst);
               else
                 _dma.register_tag_waiter(inst->subgraph_id, key, inst);
-              spdlog::trace("[{}][Core {}] {} SKIPPED, addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}", _core_cycle, _id,
+              spdlog::trace("[{}][Core {}][SIKIPPED] {}, addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}", _core_cycle, _id,
                             opcode_to_string(inst->get_opcode()),
                             inst->get_addr_name(),
                             fmt::format("[{}]", fmt::join(inst->get_tag_id(), ", ")),
@@ -232,7 +232,7 @@ void Core::cycle() {
               _stat_tot_skipped_inst.at(static_cast<size_t>(inst->get_opcode()))++;
               break;
             } else {
-              spdlog::trace("[{}][Core {}] {} ISSUED, addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}", _core_cycle, _id,
+              spdlog::trace("[{}][Core {}][INST_ISSUED] {}, addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}", _core_cycle, _id,
                             opcode_to_string(inst->get_opcode()),
                             inst->get_addr_name(),
                             fmt::format("[{}]", fmt::join(inst->get_tag_id(), ", ")),
@@ -244,8 +244,12 @@ void Core::cycle() {
             }
           }
         case Opcode::MOVOUT:
-          spdlog::trace("[{}][Core {}] {} ISSUED", _core_cycle, _id,
-                        opcode_to_string(inst->get_opcode()));
+          spdlog::trace("[{}][Core {}][INST_ISSUED] {}, addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}", _core_cycle, _id,
+                        opcode_to_string(inst->get_opcode()),
+                        inst->get_addr_name(),
+                        fmt::format("[{}]", fmt::join(inst->get_tag_id(), ", ")),
+                        fmt::format("[{}]", fmt::join(inst->get_tag_idx_list(), ", ")),
+                        fmt::format("[{}]", fmt::join(inst->get_tag_stride_list(), ", ")));
           _st_inst_queue.push(inst);
           issued = true;
           break;
@@ -261,13 +265,14 @@ void Core::cycle() {
               inst->finish_cycle = target_pipeline.back()->finish_cycle + inst->get_compute_cycle() - overlapped_cycle;
               inst->bubble_cycle = bubble_cycle;
             }
+
             if (inst->get_compute_cycle() == 0) {
               inst->finish_instruction();
               static_cast<Tile*>(inst->get_owner())->inc_finished_inst();
               _stat_tot_skipped_inst.at(static_cast<size_t>(inst->get_opcode()))++;
               instructions.erase(it);
             } else {
-              spdlog::trace("[{}][Core {}][SA {}] {}-{} ISSUED, finsh at {}", _core_cycle, _id, _systolic_array_rr,
+              spdlog::trace("[{}][Core {}][INST_ISSUED][SA {}] {}-{}, finsh at {}", _core_cycle, _id, _systolic_array_rr,
                             opcode_to_string(inst->get_opcode()), inst->get_compute_type(), inst->finish_cycle);
               target_pipeline.push(inst);
               issued = true;
@@ -294,7 +299,7 @@ void Core::cycle() {
             } else {
               _dma.register_tag_waiter(inst->subgraph_id, key, inst);
             }
-            spdlog::trace("[{}][Core {}] {} ISSUED,  addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}", _core_cycle, _id,
+            spdlog::trace("[{}][Core {}][INST_ISSUED] {},  addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}", _core_cycle, _id,
                             opcode_to_string(inst->get_opcode()), inst->get_addr_name(),
                             fmt::format("[{}]", fmt::join(inst->get_tag_id(), ", ")),
                             fmt::format("[{}]", fmt::join(inst->get_tag_idx_list(), ", ")),
@@ -337,23 +342,23 @@ void Core::cycle() {
 
 void Core::finish_instruction(std::shared_ptr<Instruction>& inst) {
   if (inst->finished) {
-    spdlog::error("[{}][Core {}] {} FINISHED, inst already finished!!", _core_cycle, _id,
+    spdlog::error("[{}][Core {}][ERROR] {} inst already finished!!", _core_cycle, _id,
                   opcode_to_string(inst->get_opcode()));
     exit(EXIT_FAILURE);
   }
   inst->finish_instruction();
   static_cast<Tile*>(inst->get_owner())->inc_finished_inst();
   if (inst->get_opcode() == Opcode::COMP) {
-    spdlog::trace("[{}][Core {}] {}-{} FINISHED",
+    spdlog::trace("[{}][Core {}][INST_FINISHED] {}-{}",
       _core_cycle, _id, opcode_to_string(inst->get_opcode()), inst->get_compute_type());
   } else if (inst->get_opcode() != Opcode::BAR && inst->is_async_dma()){
-    spdlog::trace("[{}][Core {}] {} ASYNC REGISTERED, subgraph_id: {} addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}",
+    spdlog::trace("[{}][Core {}][ASYNC] {} subgraph_id: {} addr_name: {} tag_id: {} tag_idx_list: {} tag_stride_list: {}",
       _core_cycle, _id, opcode_to_string(inst->get_opcode()), inst->subgraph_id, inst->get_addr_name(),
       inst->get_tag_id(),
       fmt::format("[{}]", fmt::join(inst->get_tag_idx_list(), ", ")),
       fmt::format("[{}]", fmt::join(inst->get_tag_stride_list(), ", ")));
   } else if ((inst->get_opcode() == Opcode::MOVIN || inst->get_opcode() == Opcode::MOVOUT) && !inst->is_async_dma()) {
-    spdlog::trace("[{}][Core {}] {} FINISHED, addr_name: {}", _core_cycle, _id,
+    spdlog::trace("[{}][Core {}][INST_FINISHED] {} addr_name: {}", _core_cycle, _id,
       opcode_to_string(inst->get_opcode()), inst->get_addr_name());
   }
 }

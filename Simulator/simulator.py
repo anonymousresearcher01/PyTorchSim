@@ -190,7 +190,7 @@ class CycleSimulator():
 
 class BackendSimulator():
     BACKEND_RESULT_PATH_KEY = "BACKEND_RESULT_PATH"
-    FINISH_STR = "Simulation Finished"
+    FINISH_STR = "Simulation finished"
     ALLOC_POOL = dict() # For eagermode buffer plan
     def __init__(self, backend_path, config_path, vectorlane_size=-1) -> None:
         self.base_dir = backend_path
@@ -444,8 +444,8 @@ class BackendSimulator():
                 total_cycle = int(re.search(r'Total execution cycle: (\d+)', line).group(1))
 
             # Parse total simulation time
-            if 'Simulation time' in line:
-                simulation_time = float(re.search(r'Simulation time: (\d+\.?\d*) seconds', line).group(1))
+            if 'Simulation wall clock time' in line:
+                simulation_time = float(re.search(r'Simulation wall clock time: (\d+\.?\d*) seconds', line).group(1))
         return core_metrics, dram_channel_bw, avg_dram_bw, simulation_time, total_cycle
 
 if __name__ == "__main__":
