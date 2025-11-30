@@ -65,7 +65,7 @@ Simulator::Simulator(SimulationConfig config)
   _icnt_interval = config.icnt_stats_print_period_cycles;
 
   // Initialize Scheduler
-  for (int i=0; i<config.num_patition;i++)
+  for (int i=0; i<config.num_partition;i++)
     _partition_scheduler.push_back(std::make_unique<Scheduler>(Scheduler(config, &_core_cycles, &_core_time, i)));
 }
 

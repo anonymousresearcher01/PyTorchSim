@@ -49,7 +49,7 @@ struct SimulationConfig {
   uint32_t icnt_stats_print_period_cycles=0;
 
   /* Sheduler config */
-  uint32_t num_patition=1;
+  uint32_t num_partition=1;
   std::string scheduler_type;
 
   /* Core id, Partiton id mapping */
