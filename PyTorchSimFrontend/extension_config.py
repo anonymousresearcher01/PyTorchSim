@@ -32,12 +32,12 @@ CONFIG_TORCHSIM_CUSTOM_PASS_PATH = os.environ.get('TORCHSIM_CUSTOM_PASS_PATH',
 CONFIG_TORCHSIM_DUMP_MLIR_IR = int(os.environ.get("TORCHSIM_DUMP_MLIR_IR", default=False))
 CONFIG_TORCHSIM_DUMP_LLVM_IR = int(os.environ.get("TORCHSIM_DUMP_LLVM_IR", default=False))
 
-# Backendsim config
-CONFIG_TORCHSIM_BACKEND_CONFIG = os.environ.get('TORCHSIM_CONFIG',
-                                        default=f'{CONFIG_TORCHSIM_DIR}/PyTorchSimBackend/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json')
-CONFIG_BACKENDSIM_EAGER_MODE = int(os.environ.get("BACKENDSIM_EAGER_MODE", default=False))
-CONFIG_BACKENDSIM_DRYRUN = int(os.environ.get('BACKENDSIM_DRYRUN', default=False))
-CONFIG_BACKENDSIM_DEBUG_LEVEL = os.environ.get("BACKENDSIM_DEBUG_LEVEL", "")
+# TOGSim config
+CONFIG_TOGSIM_CONFIG = os.environ.get('TORCHSIM_CONFIG',
+                                        default=f'{CONFIG_TORCHSIM_DIR}/TOGSim/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json')
+CONFIG_TOGSIM_EAGER_MODE = int(os.environ.get("TOGSIM_EAGER_MODE", default=False))
+CONFIG_TOGSIM_DRYRUN = int(os.environ.get('TOGSIM_DRYRUN', default=False))
+CONFIG_TOGSIM_DEBUG_LEVEL = os.environ.get("TOGSIM_DEBUG_LEVEL", "")
 
 # GEM5 config
 CONFIG_GEM5_PATH = os.environ.get('GEM5_PATH', default="/workspace/gem5/build/RISCV/gem5.opt")

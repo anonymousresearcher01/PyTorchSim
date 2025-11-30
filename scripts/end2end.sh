@@ -7,15 +7,15 @@ BASE_PATH=$1 # Input as the first argument
 total_sum=0
 total_core=0
 total_vector=0
-# Find all backendsim_result folders
-mapfile -t backend_folders < <(find "$BASE_PATH" -type d -name "backendsim_result")
+# Find all togsim_result folders
+mapfile -t togsim_folders < <(find "$BASE_PATH" -type d -name "togsim_result")
 
-# Iterate over each backendsim_result folder
-for backend_folder in "${backend_folders[@]}"; do
-  # echo "Processing folder: $backend_folder"
+# Iterate over each togsim_result folder
+for togsim_folder in "${togsim_folders[@]}"; do
+  # echo "Processing folder: $togsim_folder"
 
-  # Find all files within the backendsim_result folder
-  mapfile -t files < <(find "$backend_folder" -type f)
+  # Find all files within the togsim_result folder
+  mapfile -t files < <(find "$togsim_folder" -type f)
 
   for file in "${files[@]}"; do
     # echo "Processing $file"

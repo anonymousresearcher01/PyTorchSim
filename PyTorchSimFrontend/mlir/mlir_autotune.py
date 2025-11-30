@@ -5,7 +5,7 @@ import dataclasses
 from torch._inductor.autotune_process import TensorMeta
 from torch._inductor.codecache import get_hash, write
 from PyTorchSimFrontend import extension_config
-from Simulator.simulator import BackendSimulator
+from Simulator.simulator import TOGSimulator
 
 from typing import (
     Any,
@@ -58,9 +58,9 @@ class MLIRBenchmarkRequest():
         # Check already cached result.
         write_path = get_write_path(self.source_code)
         key,  _ = write(self.source_code, "mlir", specified_dir=write_path)
-        result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "backendsim_result/0")
+        result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key), "togsim_result/0")
         if os.path.exists(result_path):
-            result = BackendSimulator.get_result_from_file(result_path)
+            result = TOGSimulator.get_result_from_file(result_path)
             def cached_run_fn(*args, **kwargs):
                 return result
             return cached_run_fn

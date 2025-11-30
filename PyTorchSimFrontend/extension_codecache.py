@@ -7,7 +7,7 @@ from torch._inductor.codecache import AsyncCompile, get_lock_dir, get_hash, writ
 from AsmParser.tog_generator import tog_generator
 from PyTorchSimFrontend.mlir.mlir_caller_codegen import MLIRKernelCallerCodeGen
 from PyTorchSimFrontend import extension_config
-from Simulator.simulator import FunctionalSimulator, CycleSimulator, BackendSimulator
+from Simulator.simulator import FunctionalSimulator, CycleSimulator, TOGSimulator
 
 LOCK_TIMEOUT = 600
 
@@ -295,12 +295,12 @@ class CustomAsyncCompile(AsyncCompile):
 
                 onnx_path = os.path.join(result_path, "tile_graph.onnx")
                 attribute_path = os.path.join(runtime_path, "attribute")
-                backend_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "PyTorchSimBackend")
-                backsim = BackendSimulator(backend_path, extension_config.CONFIG_TORCHSIM_BACKEND_CONFIG)
+                togsim_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "TOGSim")
+                backsim = TOGSimulator(togsim_path, extension_config.CONFIG_TOGSIM_CONFIG)
                 backsim.vectorlane_size = vectorlane_size
                 attribute_path = backsim.create_attribute_file(attribute_path, args, loop_size=loop_size)
                 result_path = backsim.simulation(onnx_path, attribute_path, silent_mode=silent_mode)
-                result = BackendSimulator.get_result_from_file(result_path)
+                result = TOGSimulator.get_result_from_file(result_path)
                 return result
 
         def dryrun_simulator(*args, **kwargs):
@@ -326,7 +326,7 @@ class CustomAsyncCompile(AsyncCompile):
                                     cleanup=extension_config.CONFIG_CLEANUP_DUMP_ARGS)
             return result_path, runtime_path, None
 
-        is_dryrun = int(os.environ.get('BACKENDSIM_DRYRUN', default=False)) and not autotune
+        is_dryrun = int(os.environ.get('TOGSIM_DRYRUN', default=False)) and not autotune
         target_simulator = dryrun_simulator if is_dryrun else dummy_simulator
         target_simulator.arg_attributes = arg_attributes
         target_simulator.future = future
