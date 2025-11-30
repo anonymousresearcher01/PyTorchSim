@@ -27,14 +27,14 @@ SparseCore::SparseCore(uint32_t id, SimulationConfig config) : Core(id, config) 
   }
 
   Config stonneConfig = stonneCores.at(0)->getStonneConfig();
-  unsigned int core_freq = config.core_freq; // MHz;
+  unsigned int core_freq_mhz = config.core_freq_mhz; // MHz;
   num_ms = stonneConfig.m_MSNetworkCfg.ms_size;
   r_port_nr = config.num_stonne_port;
   w_port_nr = config.num_stonne_port;
 
-  double compute_throughput = static_cast<double>(num_ms) * core_freq / 1e3; // FLOPs/sec
-  double dn_bandwidth = static_cast<double>(r_port_nr) * config.dram_req_size * core_freq * 1e6 / 8.0 / 1e9; // GB/s
-  double rn_bandwidth = static_cast<double>(w_port_nr) * config.dram_req_size * core_freq * 1e6 / 8.0 / 1e9; // GB/s
+  double compute_throughput = static_cast<double>(num_ms) * core_freq_mhz / 1e3; // FLOPs/sec
+  double dn_bandwidth = static_cast<double>(r_port_nr) * config.dram_req_size * core_freq_mhz * 1e6 / 8.0 / 1e9; // GB/s
+  double rn_bandwidth = static_cast<double>(w_port_nr) * config.dram_req_size * core_freq_mhz * 1e6 / 8.0 / 1e9; // GB/s
   for (int i=0; i<nr_cores; i++) {
     spdlog::info("[Config/StonneCore {}][{}] Compute Throughput: {:.2f} GFLOPs/sec", id, i, compute_throughput);
     spdlog::info("[Config/StonneCore {}][{}] Distribution Network Bandwidth: {:.2f} GB/s",

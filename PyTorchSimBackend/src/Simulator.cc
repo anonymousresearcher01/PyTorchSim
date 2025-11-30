@@ -3,7 +3,7 @@
 Simulator::Simulator(SimulationConfig config)
     : _config(config), _core_cycles(0) {
   // Create dram object
-  _core_period = 1000000 / (config.core_freq);
+  _core_period = 1000000 / (config.core_freq_mhz);
   _icnt_period = 1000000 / (config.icnt_freq);
   _dram_period = 1000000 / (config.dram_freq);
   _core_time = 0;
@@ -24,10 +24,10 @@ Simulator::Simulator(SimulationConfig config)
   for (int core_index = 0; core_index < _n_cores; core_index++) {
     if (config.core_type[core_index] == CoreType::WS_MESH) {
       spdlog::info("[Config/Core] Core {}: {} MHz, Systolic array per core: {}",
-        core_index, config.core_freq, config.num_systolic_array_per_core);
+        core_index, config.core_freq_mhz, config.num_systolic_array_per_core);
       _cores.at(core_index) = std::make_unique<Core>(core_index, _config);
     } else if(config.core_type[core_index] == CoreType::STONNE) {
-      spdlog::info("[Config/Core] Core {}: {} MHz, Stonne Core selected", core_index, config.core_freq);
+      spdlog::info("[Config/Core] Core {}: {} MHz, Stonne Core selected", core_index, config.core_freq_mhz);
       _cores.at(core_index) = std::make_unique<SparseCore>(core_index, _config);
     } else {
       throw std::runtime_error(fmt::format("Not implemented Core type {} ",

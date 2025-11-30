@@ -18,7 +18,7 @@ struct SimulationConfig {
   std::vector<CoreType> core_type;
   std::string stonne_config_path;
   uint32_t num_cores;
-  uint32_t core_freq;
+  uint32_t core_freq_mhz;
   uint32_t core_print_interval = 0;
   uint32_t num_systolic_array_per_core = 1;
   uint32_t num_stonne_per_core = 1;

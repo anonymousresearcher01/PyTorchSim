@@ -367,8 +367,8 @@ class BackendSimulator():
             raise ValueError(f"Invalid JSON format: {e}")
 
     def get_core_freq(self):
-        if "core_freq" in self.config_json:
-            return self.config_json["core_freq"] * 1000 * 1000 # MHz
+        if "core_freq_mhz" in self.config_json:
+            return self.config_json["core_freq_mhz"] * 1000 * 1000 # MHz
         else:
             raise KeyError("Key 'core_freq' not found in JSON.")
 

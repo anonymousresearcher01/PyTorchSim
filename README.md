@@ -347,7 +347,7 @@ export TORCHSIM_USE_TIMING_POOLING=0 # use lightweight pooling for timing
 `PyTorchSimBackend/configs` directory contains example NPU configuration files in the JSON format.
 ```
   "num_cores" : 2,                   // Number of NPU cores
-  "core_freq" : 940,                 // Core's frequency (MHz)
+  "core_freq_mhz" : 940,             // Core's frequency (MHz)
   "num_systolic_array_per_core" : 2, // Number of systolic array per core
 
   "dram_type" : "ramulator2",        // DRAM type (ex. ramulator2, simple)

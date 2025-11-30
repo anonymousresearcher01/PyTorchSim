@@ -39,7 +39,7 @@ SimulationConfig initialize_config(json config) {
     for (int i=0; i<parsed_config.num_cores; i++)
       parsed_config.core_type.push_back(CoreType::WS_MESH);
   }
-  parsed_config.core_freq = config["core_freq_mhz"];
+  parsed_config.core_freq_mhz = config["core_freq_mhz"];
   if (config.contains("num_systolic_array_per_core"))
     parsed_config.num_systolic_array_per_core = config["num_systolic_array_per_core"];
   if (config.contains("num_stonne_per_core"))
