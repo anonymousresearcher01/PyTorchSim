@@ -424,6 +424,10 @@ class ExtensionOverrides(common.OpOverrides):
         return f'math.exp %{operand} : {shape}', [tile_size, dtype]
 
     @staticmethod
+    def exp2(operand, *args, var_info=None, **kwargs):
+        raise NotImplementedError()
+
+    @staticmethod
     def erf(operand, *args, var_info=None, **kwargs):
         # Check scalar
         op_type = var_info[operand]
