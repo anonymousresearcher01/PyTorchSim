@@ -13,8 +13,8 @@ from collections import OrderedDict
 from typing import List, Optional
 from unittest.mock import patch
 
-from torch._inductor.codegen.common import Kernel, KernelTemplate, ChoiceCaller, OpOverrides, CSE, DeferredLine
-from torch._inductor.ir import Buffer, IRNode, TemplateBuffer, View
+from torch._inductor.codegen.common import KernelTemplate, ChoiceCaller, CSE, DeferredLine
+from torch._inductor.ir import Buffer, IRNode, TemplateBuffer
 from torch._inductor.select_algorithm import PartialRender
 from torch._inductor.codegen.cuda.cuda_kernel import CUDATemplateCaller
 from torch._inductor.autotune_process import TensorMeta
@@ -29,7 +29,7 @@ from PyTorchSimFrontend.mlir.mlir_codegen_backend import MLIRKernel, reduction_i
 from PyTorchSimFrontend.mlir.mlir_scheduling import SchedulerNode
 from torch._inductor.codegen import common
 
-from PyTorchSimFrontend.extension_config import CONFIG_TORCHSIM_DIR, CONFIG_AUTOTUNE_TEMPLATE_TOPK
+from PyTorchSimFrontend import extension_config
 from . import mlir_common
 
 class IndentedBufferGroup:
@@ -234,7 +234,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
                     used_spad_size_per_lane = (weight_size_per_lane + input_size_per_lane + output_size_per_lane) * self.precision
                     check_spad_size = (used_spad_size < max_spad_size and used_spad_size_per_lane < max_spad_per_lane)
                     if check_spad_size:
-                        dir_path = f"{CONFIG_TORCHSIM_DIR}/validation/gemm_candidates"
+                        dir_path = f"{extension_config.CONFIG_TORCHSIM_DIR}/validation/gemm_candidates"
                         os.makedirs(dir_path, exist_ok=True)
                         file_path = f"{dir_path}/gemm_{M}_{K}_{N}.txt"
                         line_to_write = f"{tile_M} {tile_K} {tile_N}\n"
@@ -494,7 +494,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             print(f"[Auto-tune] Trying tile size: {list(tile_info)}")
             src_code = self.codegen_template_code(render, template_node, prologue_nodes, epilogue_nodes, tile_info)
             bench_runner = self.run_bench([template_node], self.kernel_name, src_code)
-            choices.append((bench_runner, src_code, tile_info))
+            choices.append((bench_runner, src_code, tile_info, self.loop_size))
             self.reset(reason=None)
         return choices
 
@@ -506,7 +506,12 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         )
 
     def codegen_nodes(self, tile_candidates, render, template_node, prologue_nodes, epilogue_nodes):
-        src_code = self.autotune(tile_candidates, render, template_node, prologue_nodes, epilogue_nodes)
+        if extension_config.CONFIG_AUTOTUNE_TEMPLATE and len(tile_candidates):
+            src_code, loop_size = self.autotune(tile_candidates, render, template_node, prologue_nodes, epilogue_nodes)
+            self.loop_size = loop_size
+        else:
+            tile_info = tile_candidates[0] if tile_candidates else None
+            src_code = self.codegen_template_code(render, template_node, prologue_nodes, epilogue_nodes, tile_info)
 
         with V.set_kernel_handler(self):
             self.meta_kernel()
@@ -1118,7 +1123,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             numel_per_lane = tile_desc.get_numel_per_lane()
             r_tile_size = tile_desc.get_tile_size()[-1]
             nr_outer_loop = (numel_per_lane + r_tile_size-1) // r_tile_size
-            tile_desc.vec_size = nr_outer_loop * 32 # Why? Emprically selected, other option failed to functionality...
+            tile_desc.vmap.forced_vec_size = nr_outer_loop * 32 # Why? Emprically selected, other option failed to functionality...
 
             self.reduction_fusion = True
             self.r_tile_size = tile_desc.get_tile_size()[-1]
@@ -1129,7 +1134,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
             self.compute_body_loop.step = tile_desc.get_compute_vec_size() // nr_outer_loop
             self.reduction_body_loop = mlir_common.LoopLevel(self.reduction_loop_idx, nr_outer_loop)
         else:
-            tile_desc.vec_size=64
+            tile_desc.vmap.forced_vec_size = 64
 
             if prologue:
                 self.prologue_compute_body_loop.size = tile_desc.get_numel_per_lane()
@@ -1225,7 +1230,7 @@ class MLIRTemplate(KernelTemplate):
                 template=self,
                 kwargs=kwargs
             )
-            tile_candidates = self.get_tile_candidates(**kwargs)[:CONFIG_AUTOTUNE_TEMPLATE_TOPK]
+            tile_candidates = self.get_tile_candidates(**kwargs)[:extension_config.CONFIG_AUTOTUNE_TEMPLATE_TOPK]
             return kernel, tile_candidates, render
 
         return MLIRTemplateCaller(

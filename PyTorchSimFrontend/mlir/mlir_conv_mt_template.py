@@ -5,7 +5,6 @@ from PyTorchSimFrontend.mlir.mlir_conv_common import MLIRConvCommonTemplate
 from PyTorchSimFrontend.mlir.mlir_template import MLIRTemplateKernel
 from torch._inductor.ir import IRNode
 from PyTorchSimFrontend.mlir import mlir_common
-from PyTorchSimFrontend import extension_config
 
 CONV_TEMPLATE = r"""
 // Multi Channel Tile Conv2D kernel
@@ -121,7 +120,7 @@ def {{ FUNC_NAME }}{{kernel.def_wrapper()}}:
 
     # Launch kernel
     {{ KERNEL_NAME }}<DEF_CONV_WRAPPER>
-    {%- if BACKENDSIM_EAGER_MODE %}
+    {%- if TOGSIM_EAGER_MODE %}
     yield ({{KERNEL_NAME}}, <DEF_CONV_WRAPPER>)
     {%- endif %}
 """

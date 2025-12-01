@@ -6,7 +6,7 @@ cd $home
 apt -y update && apt -y upgrade && apt -y install scons
 git clone https://github.com/PSAL-POSTECH/gem5.git
 cd gem5 && scons build/RISCV/gem5.opt -j $(nproc)
-export GEM5_PATH=$home/gem5/release/gem5.opt
+export GEM5_PATH=$home/gem5/build/RISCV/gem5.opt
 cd $home
 
 # LLVM

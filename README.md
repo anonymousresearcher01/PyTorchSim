@@ -98,7 +98,7 @@ The `tests` directory contains several AI workloads examples.
 ```bash
 python tests/test_matmul.py 
 ```
-The result is stored to `TORCHSIM_DUMP_PATH/hash/backendsim_result/`. The log file contains detailed core, memory, and interconnect stats.
+The result is stored to `TORCHSIM_DUMP_PATH/hash/togsim_result/`. The log file contains detailed core, memory, and interconnect stats.
 
 ### Run Your Own Model on PyTorchSim
 You can run your own PyTorch model on PyTorchSim by setting up a custom NPU device.  
@@ -131,9 +131,9 @@ Wrapper Codegen Path = /tmp/torchinductor_root/yd/cyda7nhzv5mtakfhfcxtmmhtsv6kg7
 [Gem5Simulator] cmd>  /workspace/gem5/build/RISCV/gem5.opt -r --stdout-file=sto.log -d /tmp/torchinductor/tmp/fy6nnyudtno/m5out /root/workspace/PyTorchSim/gem5_script/script_systolic.py -c /tmp/torchinductor/tmp/fy6nnyudtno/cycle_bin --vlane 128
 [Gem5Simulator] Simulation is still running... 
 [SpikeSimulator] cmd>  spike --isa rv64gcv --varch=vlen:256,elen:64 --vectorlane-size=128 -m0x80000000:0x1900000000,0x2000000000:0x1000000 --scratchpad-base-paddr=137438953472 --scratchpad-base-vaddr=3489660928 --scratchpad-size=131072  --kernel-addr=0000000000010400:10846 --base-path=/tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001 /workspace/riscv-pk/build/pk /tmp/torchinductor/tmp/fy6nnyudtno/validation_binary /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/arg0_1/0.raw /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/arg1_1/0.raw /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/buf0/0.raw
-[BackendSimulator] cmd>  /root/workspace/PyTorchSim/PyTorchSimBackend/build/bin/Simulator --config /root/workspace/PyTorchSim/PyTorchSimBackend/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json --models_list /tmp/torchinductor/tmp/fy6nnyudtno/tile_graph.onnx --attributes_list /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/attribute/0
-[BackendSimulator] Simulation is still running..  
-[BackendSimulator] Simulation of "/tmp/torchinductor/tmp/fy6nnyudtno/tile_graph.onnx" is stored to "/tmp/torchinductor/tmp/fy6nnyudtno/backendsim_result/0"
+[TOGSimulator] cmd>  /root/workspace/PyTorchSim/TOGSim/build/bin/Simulator --config /root/workspace/PyTorchSim/TOGSim/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json --models_list /tmp/torchinductor/tmp/fy6nnyudtno/tile_graph.onnx --attributes_list /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/attribute/0
+[TOGSimulator] Simulation is still running..  
+[TOGSimulator] Simulation of "/tmp/torchinductor/tmp/fy6nnyudtno/tile_graph.onnx" is stored to "/tmp/torchinductor/tmp/fy6nnyudtno/togsim_result/0"
 ----------------------------
 |Matmul Forward Test Passed|
 ----------------------------
@@ -143,25 +143,25 @@ Simulation consists of three steps
 
 1. `Gem5Simulator` obatins compute latency for TOG.
 2. `SpikeSimulator` verifies the output code.
-3. `BackendSimulator` simulates a NPU architecture.
+3. `TOGSimulator` simulates a NPU architecture.
 
 If you want to turn off the `SpikeSimulator` for fast simulation, you can set as below.
 ```bash
-export TORCHSIM_VALIDATION_MODE=False
+export TORCHSIM_FUNCTIONAL_MODE=False
 ```
 Log contains memory & core stats.
 ```bash
 [info] HBM2-CH_0: avg BW utilization 37% (255 reads, 128 writes)
 [info] Row hits: 359, Row misses: 26, Row conflicts: 0
 [info] ========= Core stat =========
-[info] Core [0] : Systolic array [0] Utilization(%) 0.00, active cycle 0, idle cycle 1014
-[info] Core [0] : Systolic array [1] Utilization(%) 12.62, active cycle 128, idle cycle 886
-[info] Core [0] : TMA active cycle 3 TMA idle cycle 1011 DRAM BW 182.000 GB/s (6144)
-[info] Core [0] : Vector Unit Utilization(%) 4.34, active cycle 44, idle_cycle 0
-[info] Core [0] : Numa hit count : 0, Numa miss count : 0
-[info] Core [0] : Total cycle 1014
-[info] Total execution cycle: 1014
-[info] Simulation time: 0.039296 seconds
+[info] Core [0] : Systolic array [0] Utilization(%) 0.00, active_cycles 0, idle_cycles 1014
+[info] Core [0] : Systolic array [1] Utilization(%) 12.62, active_cycles 128, idle_cycles 886
+[info] Core [0] : DMA active_cycles 3 DMA idle_cycles 1011 DRAM BW 182.000 GB/s (6144)
+[info] Core [0] : Vector Unit Utilization(%) 4.34, active_cycles 44, idle_cycle 0
+[info] Core [0] : NUMA local memory: 34 requests, remote memory: 0 requests
+[info] Core [0] : Total_cycles 1014
+[info] Total execution cycles: 1014
+[info] Wall-clock time for simulation: 0.039296 seconds
 ```
 The log is dumped in `TORCHSIM_DUMP_PATH` and you can set the path as below.
 ```bash
@@ -186,7 +186,7 @@ Our load generator supports multi-tenancy experiments. You can run a simple exam
 python tests/test_scheduler.py
 ```
 Below is an example code of multi-tenancy `resnet18` and `EncoderBlock`.
-In this example, the `Scheduler` is initialized with a number of request queues, a scheduling policy, and a TOGSim config file(`.json`). The compiled PyTorch models are then registered with a unique model id.
+In this example, the `Scheduler` is initialized with a number of request queues, a scheduling policy, and a TOGSimulator config file(`.json`). The compiled PyTorch models are then registered with a unique model id.
 
 ```python3
 import os
@@ -195,11 +195,11 @@ import torch
 from torchvision.models import resnet18
 from test_transformer import EncoderBlock
 base_path = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
-config = f'{base_path}/PyTorchSimBackend/configs/systolic_ws_128x128_c2_simple_noc_tpuv3_partition.json'
+config = f'{base_path}/TOGSim/configs/systolic_ws_128x128_c2_simple_noc_tpuv3_partition.json'
 
 sys.path.append(base_path)
 from Scheduler.scheduler import Scheduler, SchedulerDNNModel, Request
-scheduler = Scheduler(num_request_queue=2, engine_select=Scheduler.FIFO_ENGINE, backend_config=config)
+scheduler = Scheduler(num_request_queue=2, engine_select=Scheduler.FIFO_ENGINE, togsim_config=config)
 
 # Register compiled model
 target_model0 = resnet18().eval()
@@ -344,14 +344,14 @@ export TORCHSIM_USE_TIMING_POOLING=0 # use lightweight pooling for timing
 ## TOGSim Configuration
 ![NPU_Core](./docs/npu_core.jpg)
 
-`PyTorchSimBackend/configs` directory contains example NPU configuration files in the JSON format.
+`TOGSim/configs` directory contains example NPU configuration files in the JSON format.
 ```
   "num_cores" : 2,                   // Number of NPU cores
-  "core_freq" : 940,                 // Core's frequency (MHz)
+  "core_freq_mhz" : 940,             // Core's frequency (MHz)
   "num_systolic_array_per_core" : 2, // Number of systolic array per core
 
   "dram_type" : "ramulator2",        // DRAM type (ex. ramulator2, simple)
-  "dram_freq" : 940,                 // DRAM frequency (MHz)
+  "dram_freq_mhz" : 940,             // DRAM frequency (MHz)
   "dram_channels": 32,               // Number of DRAM channels
   "dram_req_size": 32,               // DRAM request size (B)
   "dram_latency" : 10,               // DRAM latency (cycle)
@@ -361,9 +361,10 @@ export TORCHSIM_USE_TIMING_POOLING=0 # use lightweight pooling for timing
   "l2d_type" : "datacache",
   "l2d_config" : "S:64:128:512,32,L:B:m:W:L,A:192:4,32:0,32",
 
-  "icnt_type" : "simple",            // Interconnect type (ex. booksim, simple)
-  "icnt_latency" : 7,                // Interconnect latency (cycle)
-  "icnt_freq" : 28000,               // Interconnect frequency (MHz)
+  "icnt_type" : "simple",              // Interconnect type (ex. booksim, simple)
+  "icnt_latency" : 7,                  // Interconnect latency (cycle)
+  "icnt_freq_mhz" : 940,               // Interconnect frequency (MHz)
+  "icnt_injection_ports_per_core" : 16 // Interconnect injection ports per core
   "icnt_config_path" : "../configs/booksim2_configs/fly_c4_m32.icnt", // Booksim2 config file path
 
   "precision" : 4,                   // Element's precision in tensor (Byte)
@@ -376,7 +377,7 @@ export TORCHSIM_USE_TIMING_POOLING=0 # use lightweight pooling for timing
 ```
 You can set TOGSim config path as below.
 ```bash
-export TORCHSIM_CONFIG=/workspace/PyTorchSim/PyTorchSimBackend/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json
+export TORCHSIM_CONFIG=/workspace/PyTorchSim/TOGSim/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json
 ```
 ## Future Works
 Currently, PyTorchSim supports PyTorch 2.2. Support for newer versions will be added soon.

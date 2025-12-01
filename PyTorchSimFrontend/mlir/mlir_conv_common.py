@@ -82,7 +82,7 @@ class MLIRConvCommonTemplate(MLIRTemplate):
         Y = self.output_node
         Bias = None if len(self.input_nodes) == 2 else self.input_nodes[2]
 
-        eager_mode = int(os.environ.get('BACKENDSIM_EAGER_MODE', default=False))
+        eager_mode = int(os.environ.get('TOGSIM_EAGER_MODE', default=False))
         options = dict(
             kernel=self.kernel,
             KERNEL_NAME=kernel_name,
@@ -93,8 +93,8 @@ class MLIRConvCommonTemplate(MLIRTemplate):
             OUTPUT=Y,
             PADDING_H=self.padding[0],
             PADDING_W=self.padding[1],
-            VALIDATION_MODE=extension_config.CONFIG_TORCHSIM_VALIDATION_MODE,
-            BACKENDSIM_EAGER_MODE=eager_mode,
+            VALIDATION_MODE=extension_config.CONFIG_TORCHSIM_FUNCTIONAL_MODE,
+            TOGSIM_EAGER_MODE=eager_mode,
             input_reorder=self.input_reorder
         )
         code = self._template_from_string(self.WRAPPER_TEMPLATE).render(**options)

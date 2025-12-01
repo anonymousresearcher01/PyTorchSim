@@ -2,15 +2,18 @@ import contextlib
 import sympy
 import re
 import os
+import math
 from functools import reduce
 from operator import mul
 import torch
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from torch._dynamo.testing import rand_strided
+from torch._inductor.autotune_process import TensorMeta
 from torch._dynamo.utils import dynamo_timed
 from torch._inductor.codegen import cpp, wrapper, common, memory_planning
 from torch._inductor.virtualized import V, _ops as ops
-from torch._inductor.codecache import write_atomic, write
+from torch._inductor.codecache import write_atomic
 from torch._inductor.utils import (
     IndentedBuffer,
     is_welford_reduction,
@@ -21,6 +24,7 @@ from PyTorchSimFrontend import extension_codecache
 from PyTorchSimFrontend import extension_config
 from . import mlir_common
 from .mlir_common import LoopLevel, LoopNest
+from PyTorchSimFrontend.mlir.mlir_autotune import MLIRBenchmarkRequest
 
 def reduction_init(reduction_type, dtype):
     if dtype in cpp.DTYPE_LOWP_FP:
@@ -95,8 +99,8 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
 
                 from torch import device, empty, empty_strided
                 from {extension_codecache.__name__} import CustomAsyncCompile
-                from PyTorchSimFrontend.extension_config import CONFIG_SRAM_BUFFER_PLAN, CONFIG_BACKENDSIM_EAGER_MODE
-                from Simulator.simulator import BackendSimulator
+                from PyTorchSimFrontend.extension_config import CONFIG_SRAM_BUFFER_PLAN, CONFIG_TOGSIM_EAGER_MODE
+                from Simulator.simulator import TOGSimulator
                 from PyTorchSimFrontend.extension_op import sparse_mm_dummy_stonne_outer
                 from torch._inductor.select_algorithm import extern_kernels
 
@@ -118,7 +122,7 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
                 start = buffer.data_ptr()
                 end = start + buffer_size
                 # print(f'Alloc {{buffer_name}}(0x{{start:x}} ~ 0x{{end:x}})')
-                BackendSimulator.sram_alloc(buffer_name, [start, end])
+                TOGSimulator.sram_alloc(buffer_name, [start, end])
 
             def sram_plan_postfix(buffer_name, buffer):
                 if CONFIG_SRAM_BUFFER_PLAN and (buffer_name not in CONFIG_SRAM_BUFFER_PLAN):
@@ -127,7 +131,7 @@ class ExtensionWrapperCodegen(wrapper.WrapperCodeGen):
                 start = buffer.data_ptr()
                 end = start + buffer_size
                 # print(f'Dealloc {{buffer_name}}(0x{{start:x}} ~ 0x{{end:x}})')
-                BackendSimulator.sram_dealloc(buffer_name, [start, end])
+                TOGSimulator.sram_dealloc(buffer_name, [start, end])
 
             def host2device_memcopy(buffer):
                 pass
@@ -419,6 +423,10 @@ class ExtensionOverrides(common.OpOverrides):
         dtype = op_type[1]
         shape = f"vector<{tile_size}x{dtype}>" if tile_size > 1 else dtype
         return f'math.exp %{operand} : {shape}', [tile_size, dtype]
+
+    @staticmethod
+    def exp2(operand, *args, var_info=None, **kwargs):
+        raise NotImplementedError()
 
     @staticmethod
     def erf(operand, *args, var_info=None, **kwargs):
@@ -1287,7 +1295,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             # mean
             reduction_numel = reduce(mul, self.ranges[self.reduction_depth:], 1)
             divider = self.cse.generate(self.reductions_suffix, f"arith.constant {float(reduction_numel)} : f32")
-            if self.buffer_types[name][1] > 1:
+            if compute_vec_size > 1:
                 divider_vec = self.cse.generate(self.reductions_suffix, f"vector.broadcast %{divider} : f32 to vector<{self.var_info[sum][0]}x{mlir_dtype}>")
             else:
                 divider_vec = divider
@@ -1627,15 +1635,40 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         choices = self.make_choices(*args)
 
         if len(choices) == 0: # can't autotune
-            return None
+            return [None, None]
         with ThreadPoolExecutor(max_workers=8) as executor:
             results = list(executor.map(get_cycle, choices))
         max_idx = results.index(min(results))
         if min(results) == float("inf"):
             raise RuntimeError("Failed to find optimal tile size...")
         self._log_autotune_result(choices[max_idx], results[max_idx])
-        optimal_src_code = choices[max_idx][1]
-        return optimal_src_code
+        optimal_src_code, loop_size = choices[max_idx][1], choices[max_idx][-1]
+        return optimal_src_code, loop_size
+
+    def run_bench(self, nodes, kernel_name, src_code):
+        _, _, arg_attributes, _ = self.kernel_group.args.mlir_argdefs()
+        input_call_args = tuple(self.args.input_buffers.keys())
+        output_call_args = tuple(self.args.output_buffers.keys())
+        full_input_nodes = tuple([V.graph.get_buffer(k) for k in input_call_args])
+        full_output_nodes = tuple([V.graph.get_buffer(k) for k in output_call_args])
+
+        bmreq = MLIRBenchmarkRequest(
+            kernel_name=kernel_name,
+            input_tensor_meta=TensorMeta.from_irnodes(full_input_nodes),
+            output_tensor_meta=TensorMeta.from_irnodes(full_output_nodes),
+            extra_args={
+                "vector_lane" : self.vector_lane,
+                "spad_info": self.spad_info,
+                "vlen" : self.vlen,
+                "arg_attributes" : arg_attributes,
+                "validate" : extension_config.CONFIG_TORCHSIM_FUNCTIONAL_MODE,
+                "autotune" : True,
+            },
+            source_code=src_code,
+        )
+        dummy_inputs = [rand_strided(meta.sizes,meta.strides,dtype=meta.dtype, extra_size=meta.offset).to(device=nodes[0].get_device()) for meta in bmreq.input_tensor_meta]
+        dummy_outputs = [rand_strided(meta.sizes,meta.strides,dtype=meta.dtype, extra_size=meta.offset).to(device=nodes[0].get_device()) for meta in bmreq.output_tensor_meta]
+        return bmreq.make_run_fn(dummy_inputs, dummy_outputs)
 
     def _log_autotune_result(self, best_choice, best_cycle):
         print(
@@ -1647,8 +1680,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
     def codegen_nodes(self, nodes, kernel_name):
         src_code = super().codegen_nodes(nodes, kernel_name)
         self._prepare_simulator_headers(src_code)
-        if extension_config.CONFIG_AUTOTUNE and not extension_config.CONFIG_BACKENDSIM_SPIKE_ONLY:
-            optimal_src_code = self.autotune(nodes, kernel_name)
+        if extension_config.CONFIG_AUTOTUNE and extension_config.CONFIG_TORCHSIM_TIMING_MODE:
+            optimal_src_code = self.autotune(nodes, kernel_name)[0]
             if optimal_src_code is not None:
                 return optimal_src_code
         return src_code

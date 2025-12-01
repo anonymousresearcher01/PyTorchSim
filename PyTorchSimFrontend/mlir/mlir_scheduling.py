@@ -3,12 +3,9 @@ import math
 import sympy
 from functools import reduce
 import operator
-from sympy import symbols, sympify, Symbol
-from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from sympy import symbols, sympify
 from PyTorchSimFrontend import extension_config
 from PyTorchSimFrontend.mlir.mlir_codegen_backend import MLIRKernel
-from PyTorchSimFrontend.mlir.mlir_autotune import MLIRBenchmarkRequest
 
 from torch._inductor import config
 from torch._inductor.scheduler import BaseScheduling, FusedSchedulerNode, SchedulerNode, BaseSchedulerNode
@@ -97,6 +94,8 @@ class MLIRScheduling(BaseScheduling):
         return self.can_fuse_horizontal(node1, node2)
 
     def can_fuse_horizontal(self, node1, node2):
+        if not extension_config.CONFIG_FUSION:
+            return False
         if (len(node1.get_nodes())+ len(node2.get_nodes())) > self.max_fusion_size:
             return False
         _, (vars1, reduce1) = node1.group
@@ -217,7 +216,7 @@ class MLIRScheduling(BaseScheduling):
         ex_kernel.call_kernel(kernel_name)
         _, args, _, _ = ex_kernel.args.mlir_argdefs()
         args = ", ".join(args)
-        eager_mode = int(os.environ.get('BACKENDSIM_EAGER_MODE', default=False))
+        eager_mode = int(os.environ.get('TOGSIM_EAGER_MODE', default=False))
         if (eager_mode):
             V.graph.wrapper_code.writeline(
                 f"yield ({kernel_name}, ({args}))"
@@ -288,7 +287,7 @@ class MLIRScheduling(BaseScheduling):
         kernel.call_kernel(kernel_name)
         V.graph.removed_buffers |= kernel.removed_buffers
         _, args, _, _ = self.kernel_group.args.mlir_argdefs()
-        eager_mode = int(os.environ.get('BACKENDSIM_EAGER_MODE', default=False))
+        eager_mode = int(os.environ.get('TOGSIM_EAGER_MODE', default=False))
         if (eager_mode):
             target_kernel_name = kernel_name if kernel.outer_func_name is None else kernel.outer_func_name + f"_{len(args)}"
             args = ", ".join(args)

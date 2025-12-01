@@ -674,6 +674,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare volume directory
+        run: mkdir -p /tmp/torchsim-ci/${GITHUB_SHA}
+
       - name: Run run_cycle.sh
         run: |
           echo "Running run_cycle.sh"
@@ -682,4 +685,14 @@ jobs:
             -e TORCHSIM_DUMP_PATH=/dump \
             -e TORCHSIM_VECTOR_LANE="${{ inputs.vector_lane }}" \
             -e TORCHSIM_SPAD_SIZE="${{ inputs.spad_size }}" \
-            ${{ inputs.image_name }} PyTorchSim/experiments/artifact/cycle_validation/run_cycle.sh
+            ${{ inputs.image_name }} bash -c \
+            "cd /workspace && PyTorchSim/experiments/artifact/cycle_validation/run_cycle.sh && \
+            cp PyTorchSim/experiments/artifact/cycle_validation/summary_cycle.out /dump/summary_cycle.out"
+          ls /tmp/torchsim-ci/${GITHUB_SHA}
+
+      - name: Upload Accuracy Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: accuracy-report
+          path: /tmp/torchsim-ci/${{ github.sha }}/summary_cycle.out
+          if-no-files-found: error
