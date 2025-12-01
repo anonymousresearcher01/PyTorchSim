@@ -111,8 +111,8 @@ SimulationConfig initialize_config(json config) {
     throw std::runtime_error(fmt::format("Not implemented icnt type {} ",
                                          (std::string)config["icnt_type"]));
   parsed_config.icnt_freq_mhz = config["icnt_freq_mhz"];
-  if (config.contains("icnt_latency"))
-    parsed_config.icnt_latency = config["icnt_latency"];
+  if (config.contains("icnt_latency_cycles"))
+    parsed_config.icnt_latency = config["icnt_latency_cycles"];
   if (config.contains("booksim_config_path"))
     parsed_config.icnt_config_path = config["booksim_config_path"];
   if (config.contains("icnt_stats_print_period_cycles"))

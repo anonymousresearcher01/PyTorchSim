@@ -12,6 +12,6 @@
   "ramulator_config_path" : "../configs/ramulator2_configs/DDR4.yaml",
 
   "icnt_type" : "booksim2",
-  "icnt_latency" : 1,
+  "icnt_latency_cycles" : 10,
   "icnt_freq_mhz" : 1000
 }

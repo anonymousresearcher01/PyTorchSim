@@ -16,7 +16,7 @@
   "ramulator_config_path" : "../configs/ramulator2_configs/HBM2_TPUv3.yaml",
 
   "icnt_type" : "simple",
-  "icnt_latency" : 7,
+  "icnt_latency_cycles" : 10,
   "icnt_freq_mhz" : 940,
   "icnt_injection_ports_per_core" : 16
 }
