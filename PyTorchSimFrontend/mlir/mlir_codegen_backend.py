@@ -1572,7 +1572,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             current_tile_sz = tuple(self.kernel_group.tile_desc.get_tile_size())
             search_space.add(current_tile_sz)
 
-            print(f"[Auto-tune] Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
+            if extension_config.CONFIG_DEBUG_MODE:
+                print(f"[Auto-tune] Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
             self._prepare_simulator_headers(src_code)
             bench_runner = self.run_bench(nodes, kernel_name, src_code)
             choices.append((bench_runner, src_code, current_tile_sz, self.kernel_group.tile_desc.vmap.vlane_stride))
@@ -1614,7 +1615,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
                     # Add this choice
                     search_space.add(current_tile_sz)
-                    print(f"[Auto-tune] Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
+                    if extension_config.CONFIG_DEBUG_MODE:
+                        print(f"[Auto-tune] Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
                     self._prepare_simulator_headers(src_code)
                     bench_runner = self.run_bench(nodes, kernel_name, src_code)
                     choices.append((bench_runner, src_code, self.kernel_group.tile_desc.get_tile_size(), self.kernel_group.tile_desc.vmap.vlane_stride))
@@ -1641,7 +1643,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         max_idx = results.index(min(results))
         if min(results) == float("inf"):
             raise RuntimeError("Failed to find optimal tile size...")
-        self._log_autotune_result(choices[max_idx], results[max_idx])
+        if extension_config.CONFIG_DEBUG_MODE:
+            self._log_autotune_result(choices[max_idx], results[max_idx])
         optimal_src_code, loop_size = choices[max_idx][1], choices[max_idx][-1]
         return optimal_src_code, loop_size
 

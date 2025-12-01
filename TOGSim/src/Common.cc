@@ -16,6 +16,8 @@ T get_config_value(json config, std::string key) {
 
 SimulationConfig initialize_config(json config) {
   SimulationConfig parsed_config;
+  // print json
+  spdlog::info("TOGSim Config: {}", config.dump(2));
 
   /* Core configs */
   parsed_config.num_cores = config["num_cores"];

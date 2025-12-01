@@ -248,7 +248,8 @@ class TOGSimulator():
         result_path = os.path.join(result_path, file_name)
         with open(result_path, "w") as f:
             f.write(result.decode())
-        print(f'[TOGSim] Simulation of "{model_path}" is stored to "{result_path}"')
+        if not silent_mode or extension_config.CONFIG_DEBUG_MODE:
+            print(f'[TOGSim] Simulation of "{model_path}" is stored to "{result_path}"')
         return result_path
 
     def interactive_simulation(self):

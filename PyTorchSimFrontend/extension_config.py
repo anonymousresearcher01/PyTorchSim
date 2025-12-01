@@ -17,26 +17,26 @@ def __getattr__(name):
           "spad_size" : int(os.environ.get("TORCHSIM_SPAD_SIZE", default=128)) << 10 # Note: spad size per lane
         }
     if name == "CONFIG_PRECISION":
-          return 4 # 32bit
+        return 4 # 32bit
     if name == "CONFIG_NUM_CORES":
-          return 1
+        return 1
     if name == "CONFIG_VLEN":
-          return 256 # 256bits / 32bits = 8 [elements]
+        return 256 # 256bits / 32bits = 8 [elements]
 
     # Tile size config
     if name == "CONFIG_TORCHSIM_DIR":
           return os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
 
     if name == "CONFIG_TORCHSIM_DUMP_PATH":
-          return os.environ.get('TORCHSIM_DUMP_PATH', default = f"{tempfile.gettempdir()}/torchinductor")
+        return os.environ.get('TORCHSIM_DUMP_PATH', default = __getattr__("CONFIG_TORCHSIM_DIR"))
     if name == "CONFIG_TORCHSIM_DUMP_FILE":
-          return int(os.environ.get('TORCHSIM_DUMP_FILE', default=True))
+        return int(os.environ.get('TORCHSIM_DUMP_FILE', default=True))
     if name == "CONFIG_TORCHSIM_FUNCTIONAL_MODE":
-          return int(os.environ.get('TORCHSIM_FUNCTIONAL_MODE', default=True))
+        return int(os.environ.get('TORCHSIM_FUNCTIONAL_MODE', default=True))
     if name == "CONFIG_TORCHSIM_TIMING_MODE":
-          return int(os.environ.get("TORCHSIM_TIMING_MODE", True))
+        return int(os.environ.get("TORCHSIM_TIMING_MODE", True))
     if name == "CONFIG_CLEANUP_DUMP_ARGS":
-          return int(os.environ.get('CLEANUP_DUMP_ARGS', default=False))
+        return int(os.environ.get('CLEANUP_DUMP_ARGS', default=False))
 
     # LLVM PATH
     if name == "CONFIG_TORCHSIM_LLVM_PATH":
@@ -91,8 +91,6 @@ def __getattr__(name):
     if name == "CONFIG_TILE_K":
         return int(os.getenv("TORCHSIM_TILE_K", __getattr__("CONFIG_VECTOR_LANE")))
 
-    if name == "CONFIG_SUBTILE":
-        return int(os.environ.get('TORCHSIM_SUBTILE', default=True))
     if name == "CONFIG_MANUAL_SUBTILE_SIZE":
         return int(os.environ.get('TORCHSIM_MANUAL_SUBTILE_SIZE', default=False))
     if name == "CONFIG_SUBTILE_M":
@@ -107,20 +105,22 @@ def __getattr__(name):
                           default=f"{__getattr__('CONFIG_TORCHSIM_DIR')}/validation/gemm_tpuv3_cheatsheet.json")
     # Compiler Optimization
     if name == "CONFIG_COMPILER_OPTIMIZATION":
-          return os.environ.get('TORCHSIM_COMPILER_OPTIMIZATION', default="all")  # options: all, none, custom
+        return os.environ.get('TORCHSIM_COMPILER_OPTIMIZATION', default="all")  # options: all, none, custom
     # Advanced fusion options
     if name == "CONFIG_FUSION":
-          return True if (__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all" or "fusion" in __getattr__("CONFIG_COMPILER_OPTIMIZATION")) else False
+        return True if (__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all" or "fusion" in __getattr__("CONFIG_COMPILER_OPTIMIZATION")) else False
     if name == "CONFIG_FUSION_REDUCTION_EPILOGUE":
-          return True if (__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all" or "reduction_epliogue" in __getattr__("CONFIG_COMPILER_OPTIMIZATION")) else False
+        return True if (__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all" or "reduction_epliogue" in __getattr__("CONFIG_COMPILER_OPTIMIZATION")) else False
     if name == "CONFIG_FUSION_REDUCTION_REDUCTION":
-          return True if (__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all" or "reduction_reduction" in __getattr__("CONFIG_COMPILER_OPTIMIZATION")) else False
+        return True if (__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all" or "reduction_reduction" in __getattr__("CONFIG_COMPILER_OPTIMIZATION")) else False
     if name == "CONFIG_FUSION_PROLOGUE":
-          return True if ((__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all") or ("prologue" in __getattr__("CONFIG_COMPILER_OPTIMIZATION"))) else False
+        return True if ((__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all") or ("prologue" in __getattr__("CONFIG_COMPILER_OPTIMIZATION"))) else False
     if name == "CONFIG_SINGLE_BATCH_CONV":
-          return True if (__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all" or "single_batch_conv" in __getattr__("CONFIG_COMPILER_OPTIMIZATION")) else False
+        return True if (__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all" or "single_batch_conv" in __getattr__("CONFIG_COMPILER_OPTIMIZATION")) else False
     if name == "CONFIG_MULTI_TILE_CONV":
-          return True if (__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all" or "multi_tile_conv" in __getattr__("CONFIG_COMPILER_OPTIMIZATION")) else False
+        return True if (__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all" or "multi_tile_conv" in __getattr__("CONFIG_COMPILER_OPTIMIZATION")) else False
+    if name == "CONFIG_SUBTILE":
+        return True if (__getattr__("CONFIG_COMPILER_OPTIMIZATION") == "all" or "subtile" in __getattr__("CONFIG_COMPILER_OPTIMIZATION")) else False
 
 # SRAM Buffer allocation plan
 def load_plan_from_module(module_path):

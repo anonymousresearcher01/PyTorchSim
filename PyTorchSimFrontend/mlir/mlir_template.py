@@ -491,7 +491,9 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
     def make_choices(self, tile_candidates, render, template_node, prologue_nodes, epilogue_nodes):
         choices = []
         for tile_info in tile_candidates:
-            print(f"[Auto-tune] Trying tile size: {list(tile_info)}")
+            if extension_config.CONFIG_DEBUG_MODE:
+                # Compute Tile M, N, K DMA Tile M, N, K
+                print(f"[Auto-tune] Trying tile size: {list(tile_info)}")
             src_code = self.codegen_template_code(render, template_node, prologue_nodes, epilogue_nodes, tile_info)
             bench_runner = self.run_bench([template_node], self.kernel_name, src_code)
             choices.append((bench_runner, src_code, tile_info, self.loop_size))
