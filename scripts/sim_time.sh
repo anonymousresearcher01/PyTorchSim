@@ -14,7 +14,7 @@ for togsim_folder in "${togsim_folders[@]}"; do
   mapfile -t files < <(find "$togsim_folder" -type f)
 
   for file in "${files[@]}"; do
-    sim_time=$(grep "Simulation wall clock time:" "$file" | tail -n 1 | sed -E 's/.*Simulation wall clock time: ([0-9]+(\.[0-9]+)?).*/\1/')
+    sim_time=$(grep "Wall-clock time for simulation:" "$file" | tail -n 1 | sed -E 's/.*Wall-clock time for simulation: ([0-9]+(\.[0-9]+)?).*/\1/')
     echo "file: $file total_cycle: $sim_time"
 
     if [[ -n "$sim_time" ]]; then

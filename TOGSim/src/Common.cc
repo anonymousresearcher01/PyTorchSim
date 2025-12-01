@@ -74,8 +74,15 @@ SimulationConfig initialize_config(json config) {
     parsed_config.dram_print_interval = config["dram_stats_print_period_cycles"];
   if(config.contains("dram_num_burst_length"))
     parsed_config.dram_nbl = config["dram_num_burst_length"];
-  if (config.contains("dram_num_partitions"))
+  if (config.contains("dram_num_partitions")) {
     parsed_config.dram_num_partitions = config["dram_num_partitions"];
+    if (parsed_config.dram_channels % parsed_config.dram_num_partitions != 0) {
+      throw std::runtime_error("[Config] DRAM channels must be divisible by dram_num_partitions");
+    }
+  }
+  parsed_config.dram_channels_per_partitions =
+    parsed_config.dram_channels / parsed_config.dram_num_partitions;
+
 
    /* L2D config */
   if (config.contains("l2d_type")) {

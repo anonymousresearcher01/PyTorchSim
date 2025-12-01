@@ -154,14 +154,14 @@ Log contains memory & core stats.
 [info] HBM2-CH_0: avg BW utilization 37% (255 reads, 128 writes)
 [info] Row hits: 359, Row misses: 26, Row conflicts: 0
 [info] ========= Core stat =========
-[info] Core [0] : Systolic array [0] Utilization(%) 0.00, active cycle 0, idle cycle 1014
-[info] Core [0] : Systolic array [1] Utilization(%) 12.62, active cycle 128, idle cycle 886
-[info] Core [0] : DMA active cycle 3 DMA idle cycle 1011 DRAM BW 182.000 GB/s (6144)
-[info] Core [0] : Vector Unit Utilization(%) 4.34, active cycle 44, idle_cycle 0
-[info] Core [0] : NUMA local access count : 0, NUMA remote access count : 0
-[info] Core [0] : Total cycle 1014
-[info] Total execution cycle: 1014
-[info] Simulation wall clock time: 0.039296 seconds
+[info] Core [0] : Systolic array [0] Utilization(%) 0.00, active_cycles 0, idle_cycles 1014
+[info] Core [0] : Systolic array [1] Utilization(%) 12.62, active_cycles 128, idle_cycles 886
+[info] Core [0] : DMA active_cycles 3 DMA idle_cycles 1011 DRAM BW 182.000 GB/s (6144)
+[info] Core [0] : Vector Unit Utilization(%) 4.34, active_cycles 44, idle_cycle 0
+[info] Core [0] : NUMA local memory: 34 requests, remote memory: 0 requests
+[info] Core [0] : Total_cycles 1014
+[info] Total execution cycles: 1014
+[info] Wall-clock time for simulation: 0.039296 seconds
 ```
 The log is dumped in `TORCHSIM_DUMP_PATH` and you can set the path as below.
 ```bash

@@ -18,27 +18,62 @@ void DMA::issue_tile(std::shared_ptr<Instruction> inst) {
   _finished = false;
 }
 
-std::shared_ptr<std::vector<mem_fetch*>> DMA::get_memory_access(cycle_type core_cycle) {
-  auto addr_set = _current_inst->get_dram_address(_dram_req_size);
-  auto access_vec = std::make_shared<std::vector<mem_fetch *>>();
-  Tile* owner = (Tile*)_current_inst->get_owner();
-  std::shared_ptr<TileSubGraph> owner_subgraph = owner->get_owner();
-  unsigned long long base_daddr = _current_inst->get_base_dram_address();
-  // Todo. We use a ternsor level buffer allocation, so we don't need to check all memfetch
-  bool is_cacheable = owner_subgraph->is_cacheable(base_daddr, base_daddr + _dram_req_size);
-  spdlog::trace("[{}][Core {}][SRAM] Address: 0x{:016x}, Is_cacheable: {}", core_cycle, _id, base_daddr, is_cacheable);
-  spdlog::trace("[{}][Core {}][NUMA] Subgraph id: {} , Numa id: {}, Arg: {} is_write: {}",
-    core_cycle, _id, owner_subgraph->get_core_id(), _current_inst->get_numa_id(), _current_inst->get_addr_name(), _current_inst->is_dma_write());
+std::shared_ptr<std::vector<mem_fetch*>> DMA::get_memory_access(cycle_type core_cycle, int nr_req) {
 
-  for (auto addr: *addr_set) {
-    mem_access_type acc_type = _current_inst->is_dma_write() ? mem_access_type::GLOBAL_ACC_W : mem_access_type::GLOBAL_ACC_R;
-    mf_type type = _current_inst->is_dma_write() ? mf_type::WRITE_REQUEST : mf_type::READ_REQUEST;
-    mem_fetch* access = new mem_fetch(addr, acc_type, type, _dram_req_size, _current_inst->get_numa_id(), static_cast<void*>(_current_inst.get()));
-    access->set_cacheable(is_cacheable);
-    _current_inst->inc_waiting_request();
-    access_vec->push_back(access);
+  if (!_generated_once) {
+    std::shared_ptr<std::set<addr_type>> addr_set =
+      _current_inst->get_dram_address(_dram_req_size);
+
+    Tile* owner = (Tile*)_current_inst->get_owner();
+    std::shared_ptr<TileSubGraph> owner_subgraph = owner->get_owner();
+    unsigned long long base_daddr = _current_inst->get_base_dram_address();
+
+    bool is_cacheable =
+      owner_subgraph->is_cacheable(base_daddr, base_daddr + _dram_req_size);
+
+    spdlog::trace("[{}][Core {}][SRAM] Address: 0x{:016x}, Is_cacheable: {}",
+                    core_cycle, _id, base_daddr, is_cacheable);
+    spdlog::trace("[{}][Core {}][NUMA] Subgraph id: {} , Numa id: {}, Arg: {} is_write: {}",
+                    core_cycle, _id, owner_subgraph->get_core_id(),
+                    _current_inst->get_numa_id(), _current_inst->get_addr_name(),
+                    _current_inst->is_dma_write());
+    for (const auto& addr : *addr_set) {
+      mem_access_type acc_type =
+        _current_inst->is_dma_write() ? mem_access_type::GLOBAL_ACC_W
+                                          : mem_access_type::GLOBAL_ACC_R;
+      mf_type type =
+        _current_inst->is_dma_write() ? mf_type::WRITE_REQUEST
+                                          : mf_type::READ_REQUEST;
+
+      mem_fetch* access = new mem_fetch(
+          addr, acc_type, type, _dram_req_size,
+          _current_inst->get_numa_id(),
+          static_cast<void*>(_current_inst.get()));
+
+      access->set_cacheable(is_cacheable);
+      _current_inst->inc_waiting_request();
+      _pending_accesses.push(access);
+    }
+    _generated_once = true;
   }
-  _finished = true;
+
+  if (nr_req == -1)
+    nr_req = _pending_accesses.size();
+
+  // Return pending accesses up to nr_req
+  auto access_vec = std::make_shared<std::vector<mem_fetch *>>();
+  for (int i = 0; i < nr_req; i++) {
+      if (_pending_accesses.empty())
+        break;
+      access_vec->push_back(_pending_accesses.front());
+      _pending_accesses.pop();
+  }
+
+  if (_pending_accesses.empty()) {
+    _finished = true;
+    _generated_once = false;
+  }
+
   return access_vec;
 }
 

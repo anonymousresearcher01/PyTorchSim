@@ -20,21 +20,21 @@ for togsim_folder in "${togsim_folders[@]}"; do
   for file in "${files[@]}"; do
     # echo "Processing $file"
 
-    # Extract the last line containing "Total cycle"
-    total_cycle=$(grep "Total cycle" "$file" | tail -n 1 | sed -E 's/.*Total cycle ([0-9]+).*/\1/')
+    # Extract the last line containing "Total_cycles"
+    total_cycle=$(grep "Total_cycles" "$file" | tail -n 1 | sed -E 's/.*Total_cycles ([0-9]+).*/\1/')
     # echo "total_cycle: $total_cycle"
-    active_cycles=($(grep -o 'active cycle [0-9]*' "$file" | awk '{print $3}'))
+    active_cycles=($(grep -o 'active_cycles [0-9]*' "$file" | awk '{print $3}'))
     num_cycles=${#active_cycles[@]}
     if [ "$num_cycles" -ge 3 ]; then
         core_cycle=${active_cycles[$((num_cycles-3))]}
     else
-        echo "Error: cannot find core active cycle"
+        echo "Error: cannot find core active_cycles"
     fi
     if [[ "$num_cycles" -ge 1 ]]; then
-        # Extract the last two active cycles
+        # Extract the last two active_cycless
         vector_core_cycle=${active_cycles[$((num_cycles-1))]}
     else
-        echo "Error: cannot find vector core active cycle"
+        echo "Error: cannot find vector core active_cycles"
     fi
     echo "file: $file total_cycle: $total_cycle SA core_cycle: $core_cycle vector_core_cycle: $vector_core_cycle"
 

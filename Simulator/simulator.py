@@ -443,12 +443,12 @@ class TOGSimulator():
             if 'DRAM: AVG BW Util' in line:
                 avg_dram_bw = float(re.search(r'AVG BW Util (\d+\.?\d*)%', line).group(1))
 
-            if 'Total execution cycle' in line:
-                total_cycle = int(re.search(r'Total execution cycle: (\d+)', line).group(1))
+            if 'Total execution cycles' in line:
+                total_cycle = int(re.search(r'Total execution cycles: (\d+)', line).group(1))
 
             # Parse total simulation time
-            if 'Simulation wall clock time' in line:
-                simulation_time = float(re.search(r'Simulation wall clock time: (\d+\.?\d*) seconds', line).group(1))
+            if 'Wall-clock time for simulation' in line:
+                simulation_time = float(re.search(r'Wall-clock time for simulation: (\d+\.?\d*) seconds', line).group(1))
         return core_metrics, dram_channel_bw, avg_dram_bw, simulation_time, total_cycle
 
 if __name__ == "__main__":

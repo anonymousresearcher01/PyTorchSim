@@ -175,7 +175,7 @@ void Core::dma_cycle() {
     }
   }
   /* Generate memfetch */
-  auto access_vec = _dma.get_memory_access(_core_cycle);
+  auto access_vec = _dma.get_memory_access(_core_cycle, _config.icnt_injection_ports_per_core);
   for (auto access : *access_vec) {
     access->set_start_cycle(_core_cycle);
     _request_queue.push(access);
@@ -411,24 +411,43 @@ void Core::print_stats() {
   std::vector<float> sa_utilization;
   update_stats();
   spdlog::info("===== Instructions count =====");
-  for (int i=0; i < static_cast<size_t>(Opcode::COUNT); i++) {
-    if (i == static_cast<size_t>(Opcode::COMP))
-      spdlog::info("Core [{}] : {} inst count {} (GEMM: {}, Vector: {}), skipped inst count {}", _id, opcode_to_string(static_cast<Opcode>(i)), _stat_inst_count.at(i), _stat_gemm_inst, _stat_inst_count.at(i) - _stat_gemm_inst, _stat_tot_skipped_inst.at(i));
-    else
-      spdlog::info("Core [{}] : {} inst count {}, skipped inst count {}", _id, opcode_to_string(static_cast<Opcode>(i)), _stat_inst_count.at(i), _stat_tot_skipped_inst.at(i));
+  for (int i = 0; i < static_cast<size_t>(Opcode::COUNT); i++) {
+    auto opcode  = static_cast<Opcode>(i);
+    auto inst = _stat_inst_count.at(i);
+    auto skipped = _stat_tot_skipped_inst.at(i);
+    auto name = opcode_to_string(opcode);
+
+    if (opcode == Opcode::COMP) {
+      auto gemm   = _stat_gemm_inst;
+      auto vector = inst - gemm;
+      if (skipped)
+        spdlog::info("Core [{}] : {:8} inst_count {} (GEMM: {}, Vector: {}), skipped inst_count {}",
+            _id, name, inst, gemm, vector, skipped);
+      else
+        spdlog::info("Core [{}] : {:8} inst_count {} (GEMM: {}, Vector: {})",
+            _id, name, inst, gemm, vector);
+    }
+    else {
+      if (skipped)
+        spdlog::info("Core [{}] : {:8} inst_count {}, skipped inst_count {}",
+            _id, name, inst, skipped);
+      else
+        spdlog::info("Core [{}] : {:8} inst_count {}",
+            _id, name, inst);
+    }
   }
   spdlog::info("========= Core stat =========");
   for (int i=0; i<_num_systolic_array_per_core; i++)
     sa_utilization.push_back(static_cast<float>(_stat_tot_sa_compute_cycle.at(i) * 100) / _core_cycle);
   for (int i=0; i<_num_systolic_array_per_core; i++)
-    spdlog::info("Core [{}] : Systolic array [{}] Utilization(%) {:.2f}, active cycle {}, idle cycle {}", _id, i, sa_utilization.at(i),
+    spdlog::info("Core [{}] : Systolic array [{}] utilization(%) {:.2f}, active_cycles {}, idle_cycles {}", _id, i, sa_utilization.at(i),
       _stat_tot_sa_compute_cycle.at(i), _stat_tot_sa_compute_idle_cycle.at(i));
   float dram_bw = _config.dram_req_size * _stat_tot_mem_response * _config.core_freq_mhz / (_core_cycle * 1000); // B/cycle
-  spdlog::info("Core [{}] : DMA active cycle {} DMA idle cycle {} DRAM BW {:.3f} GB/s ({})", _id, _stat_tot_dma_cycle, _stat_tot_dma_idle_cycle, dram_bw, _stat_tot_mem_response);
-  spdlog::info("Core [{}] : Vector Unit utilization(%) {:.2f}, active cycle {}, idle_cycle {}", _id,
+  spdlog::info("Core [{}] : DMA active_cycles, {} DMA idle_cycles {}, DRAM BW {:.3f} GB/s ({} responses)", _id, _stat_tot_dma_cycle, _stat_tot_dma_idle_cycle, dram_bw, _stat_tot_mem_response);
+  spdlog::info("Core [{}] : Vector unit utilization(%) {:.2f}, active cycle {}, idle_cycle {}", _id,
     static_cast<float>(_stat_tot_vu_compute_cycle * 100) / _core_cycle, _stat_tot_vu_compute_cycle, _stat_tot_vu_compute_idle_cycle);
-  spdlog::info("Core [{}] : NUMA local access count : {}, NUMA remote access count : {}", _id, _stat_numa_hit, _stat_numa_miss);
-  spdlog::info("Core [{}] : Total cycle {}", _id, _core_cycle);
+  spdlog::info("Core [{}] : NUMA local memory: {} requests, remote memory: {} requests", _id, _stat_numa_local_access, _stat_numa_remote_access);
+  spdlog::info("Core [{}] : Total_cycles {}", _id, _core_cycle);
 }
 
 void Core::print_current_stats() {
@@ -442,12 +461,12 @@ void Core::print_current_stats() {
 
   spdlog::info("========= Core stat =========");
   for (int i=0; i<_num_systolic_array_per_core; i++)
-    spdlog::info("Core [{}] : Systolic array [{}] Utilization(%) {:.2f}, active cycle {}, idle cycle {}", _id, i, sa_utilization.at(i),
+    spdlog::info("Core [{}] : Systolic array [{}] utilization(%) {:.2f}, active_cycles {}, idle_cycles {}", _id, i, sa_utilization.at(i),
       _stat_sa_compute_cycle.at(i), _stat_sa_compute_idle_cycle.at(i));
-  spdlog::info("Core [{}] : DMA active cycle {} DMA idle cycle {} DRAM BW {:.3f} GB/s ({})", _id, _stat_dma_cycle, _stat_dma_idle_cycle, dram_bw, _stat_mem_response);
-  spdlog::info("Core [{}] : Vector Unit Utilization(%) {:.2f}, active cycle {}, idle_cycle {}", _id,
+  spdlog::info("Core [{}] : DMA active_cycles {}, DMA idle_cycles {}, DRAM BW {:.3f} GB/s ({} responses)", _id, _stat_dma_cycle, _stat_dma_idle_cycle, dram_bw, _stat_mem_response);
+  spdlog::info("Core [{}] : Vector unit Utilization(%) {:.2f}, active_cycles {}, idle_cycles {}", _id,
     static_cast<float>(_stat_vu_compute_cycle * 100) / _config.core_print_interval, _stat_vu_compute_cycle, _stat_vu_compute_idle_cycle);
-  spdlog::info("Core [{}] : Total cycle {}", _id, _core_cycle);
+  spdlog::info("Core [{}] : Total_cycles {}", _id, _core_cycle);
   update_stats();
 }
 

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <queue>
 #include <map>
 #include <vector>
 #include "Instruction.h"
@@ -114,7 +115,7 @@ class DMA {
   }
 
   std::shared_ptr<Instruction>& get_current_inst() { return _current_inst; }
-  std::shared_ptr<std::vector<mem_fetch*>> get_memory_access(cycle_type core_cycle);
+  std::shared_ptr<std::vector<mem_fetch*>> get_memory_access(cycle_type core_cycle, int nr_req);
   uint32_t generate_mem_access_id();
   const uint32_t get_max_dim() { return _max_dim; }
 
@@ -130,5 +131,7 @@ class DMA {
   bool _finished=true;
   std::map<int, std::map<std::vector<int>, uint32_t>> tag_table;
   std::map<int, std::map<std::vector<int>, std::vector<std::shared_ptr<Instruction>>>> waiters;
+  std::queue<mem_fetch*> _pending_accesses;
+  bool _generated_once = false;
 };
 #endif

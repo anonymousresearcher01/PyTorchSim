@@ -17,7 +17,7 @@ Dram::Dram(SimulationConfig config, cycle_type* core_cycle) {
   _n_bl = config.dram_nbl;
   _req_size = config.dram_req_size;
   _n_partitions = config.dram_num_partitions;
-  _n_ch_per_partition = _n_ch / _n_partitions;
+  _n_ch_per_partition = config.dram_channels_per_partitions;
   _config = config;
 
   spdlog::info("[Config/DRAM] DRAM Bandwidth {} GB/s, Freq: {} MHz, Channels: {}, Request_size: {}B", config.max_dram_bandwidth(), config.dram_freq_mhz, _n_ch, _req_size);

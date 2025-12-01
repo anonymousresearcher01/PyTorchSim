@@ -117,11 +117,11 @@ void Simulator::icnt_cycle() {
         mem_fetch *front = _cores[core_id]->top_memory_request();
         front->set_core_id(core_id);
         if (!_icnt->is_full(port_id, front)) {
-          //int node_id = _dram->get_channel_id(front) / 16;
-          //if (core_id == node_id)
-          //  _cores[core_id]->inc_numa_hit();
-          //else
-          //  _cores[core_id]->inc_numa_miss();
+          int node_id = _dram->get_channel_id(front) / _config.dram_channels_per_partitions;
+          if (core_id == node_id)
+            _cores[core_id]->inc_numa_local_access();
+          else
+            _cores[core_id]->inc_numa_remote_access();
           _icnt->push(port_id , get_dest_node(front), front);
           _cores[core_id]->pop_memory_request();
           _nr_from_core++;
@@ -291,5 +291,5 @@ void Simulator::print_core_stat()
   for (int core_id = 0; core_id < _n_cores; core_id++) {
     _cores[core_id]->print_stats();
   }
-  spdlog::info("Total execution cycle: {}", _core_cycles);
+  spdlog::info("Total execution cycles: {}", _core_cycles);
 }
