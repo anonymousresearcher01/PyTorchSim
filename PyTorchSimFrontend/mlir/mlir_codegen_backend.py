@@ -426,7 +426,14 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def exp2(operand, *args, var_info=None, **kwargs):
-        raise NotImplementedError()
+        # Hands-on part: implement exp2 using math.exp2
+        # var_info = {operand: [tile_size, dtype]}
+        # Ex) var_info[operand] = [8, "f32"]
+
+        ln2 = math.log(2)
+        coeff = ops.constant(ln2, "f32")
+        operand = ops.mul(operand, coeff)
+        return ops.exp(operand), var_info[operand]
 
     @staticmethod
     def erf(operand, *args, var_info=None, **kwargs):
