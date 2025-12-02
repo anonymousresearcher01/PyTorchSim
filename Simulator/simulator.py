@@ -165,7 +165,7 @@ class CycleSimulator():
         gem5_cmd = [extension_config.CONFIG_GEM5_PATH, "-r", "--stdout-file=sto.log", "-d", dir_path, gem5_script_path, "-c", target_binary, "--vlane", str(vectorlane_size)]
         try:
             # Create progress thread
-            is_dryrun = int(os.environ.get('TOGSIM_DRYRUN', default=False)) or silent_mode
+            is_dryrun = int(os.environ.get('TOGSIM_EAGER_MODE', default=False)) or silent_mode
             if not is_dryrun:
                 if extension_config.CONFIG_DEBUG_MODE:
                     print("[Gem5] cmd> ", " ".join(gem5_cmd))
@@ -289,7 +289,7 @@ class TOGSimulator():
     def send_command(self, command):
         if self.process:
             try:
-                if not extension_config.CONFIG_TOGSIM_DRYRUN:
+                if extension_config.CONFIG_TORCHSIM_DEBUG_MODE:
                     print(command, flush=True)
                 self.process.stdin.write(command + '\n')
                 self.process.stdin.flush()

@@ -46,7 +46,7 @@ graph_template = {
 
 class MLIRExternKernelChoice(ExternKernelChoice):
     def call_name(self):
-        is_dryrun = int(os.environ.get('TOGSIM_DRYRUN', default=False))
+        is_dryrun = int(os.environ.get('TOGSIM_EAGER_MODE', default=False))
         if is_dryrun:
             return f"yield from sparse_mm_dummy_stonne_outer"
         return f"torch.ops.extension_op.{self.name}"

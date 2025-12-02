@@ -301,8 +301,6 @@ class CustomAsyncCompile(AsyncCompile):
                 # Dump arguments and meta data
                 dump_metadata(args, arg_attributes, result_path)
                 runtime_path = FunctionalSimulator.get_runtime_dump_path(result_path)
-                if not extension_config.CONFIG_TORCHSIM_TIMING_MODE:
-                    return
 
                 # Todo. Support valude dependent mode for graph mode
                 if False: # extension_config.CONFIG_TORCHSIM_FUNCTIONAL_MODE:
@@ -313,7 +311,7 @@ class CustomAsyncCompile(AsyncCompile):
                                     cleanup=extension_config.CONFIG_CLEANUP_DUMP_ARGS)
             return result_path, runtime_path, None
 
-        is_dryrun = int(os.environ.get('TOGSIM_DRYRUN', default=False)) and not autotune
+        is_dryrun = int(os.environ.get('TOGSIM_EAGER_MODE', default=False)) and not autotune
         target_simulator = dryrun_simulator if is_dryrun else dummy_simulator
         target_simulator.arg_attributes = arg_attributes
         target_simulator.future = future

@@ -159,7 +159,6 @@ class PyTorchSimRunner:
         self.tog_simulator = tog_simulator
 
         # Dry run for compile and create generator
-        os.environ["TOGSIM_DRYRUN"] = "1"
         os.environ["TOGSIM_EAGER_MODE"] = "1"
 
     @staticmethod

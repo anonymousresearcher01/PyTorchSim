@@ -53,8 +53,6 @@ def __getattr__(name):
                 default=f"{__getattr__('CONFIG_TORCHSIM_DIR')}/TOGSim/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json")
     if name == "CONFIG_TOGSIM_EAGER_MODE":
         return int(os.environ.get("TOGSIM_EAGER_MODE", default=False))
-    if name == "CONFIG_TOGSIM_DRYRUN":
-        return int(os.environ.get('TOGSIM_DRYRUN', default=False))
     if name == "CONFIG_TOGSIM_DEBUG_LEVEL":
         return os.environ.get("TOGSIM_DEBUG_LEVEL", "")
 
