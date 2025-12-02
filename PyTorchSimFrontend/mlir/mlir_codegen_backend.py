@@ -1690,7 +1690,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
     def codegen_nodes(self, nodes, kernel_name):
         src_code = super().codegen_nodes(nodes, kernel_name)
         self._prepare_simulator_headers(src_code)
-        if extension_config.CONFIG_MAPPING_POLICY == "autotune" and extension_config.pytorchsim_timing_mode:
+        if "autotune" in extension_config.codegen_mapping_strategy and extension_config.pytorchsim_timing_mode:
             optimal_src_code = self.autotune(nodes, kernel_name)[0]
             if optimal_src_code is not None:
                 return optimal_src_code
@@ -1725,7 +1725,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         """
         # Use loads as default
         if buffer is None:
-            buffer = self.applys if "tmp" not in str(index) else self.dma_loads
+            buffer = self.applys if "outputs" not in str(index) else self.dma_loads
 
         # TODO.
         kg_tile_desc = self.kernel_group.tile_desc
@@ -1736,7 +1736,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         total_dims =  [int(str(i)[5:]) for i in self.itervars]
         local_tile_desc = mlir_common.MLIRMultiDimTile([1], self.vector_lane)
         local_dims.sort() # Assume that smaller index is placed in the outer loop
-        indirect_dims = [f"{i}" for i in index.free_symbols if "tmp" in str(i)]
+        indirect_dims = [f"{i}" for i in index.free_symbols if "outputs" in str(i)]
         for indirect_dim in indirect_dims:
             index = index.replace(sympy.Symbol(indirect_dim), 0)
 
@@ -1992,7 +1992,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         return mask_shape, mask_var
 
     def convert_indirect_indexing(self, index :sympy.Expr):
-        if "tmp" not in str(index):
+        if "outputs" not in str(index):
             return index, None
 
         # Note: In case of indirect indexing, dimensions should be divisible by tile size
@@ -2003,7 +2003,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             raise mlir_common.RecompileSignal(f"Indirect access (tile size {self.kernel_group.tile_desc.get_tile_size()} is not divisible by {self.ranges})")
 
         # Process start
-        indirect_dims = [str(dim) for dim in index.free_symbols if "tmp" in str(dim)]
+        indirect_dims = [str(dim) for dim in index.free_symbols if "outputs" in str(dim)]
         indirect_dims.sort()
         first_dim = indirect_dims[0]
         spad_vars = dict()
@@ -2051,7 +2051,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
         # Apply stride
         for arg in index.args:
-            if "tmp" not in str(arg):
+            if "outputs" not in str(arg):
                 continue
             if arg.is_Mul and arg.args[0].is_number:
                 coeff_dtype = self.var_info[spad_vars[str(arg.args[1])]][1]
