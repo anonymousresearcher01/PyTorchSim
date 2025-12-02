@@ -26,7 +26,7 @@ if __name__ == "__main__":
     K = args.K
     sparsity = args.sparsity
     mode = args.mode
-    config_path = f"{CONFIG_TORCHSIM_DIR}/TOGSim/configs/{args.config}"
+    config_path = f"{CONFIG_TORCHSIM_DIR}/configs/{args.config}"
 
     print("M: ", M)
     print("N: ", N)

@@ -25,7 +25,7 @@ if __name__ == "__main__":
     output_size = args.output_size
     w1_sparsity = args.w1_sparsity
     w2_sparsity = args.w2_sparsity
-    config_path = f"{CONFIG_TORCHSIM_DIR}/TOGSim/configs/{args.config}"
+    config_path = f"{CONFIG_TORCHSIM_DIR}/configs/{args.config}"
 
     print("batch_size: ", batch_size)
     print("input_size: ", input_size)

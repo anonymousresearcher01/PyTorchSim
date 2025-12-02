@@ -19,11 +19,11 @@ GEMM_DIR_NAME=$(basename "$GEMM_PATH")
 echo "GEMM Directory Name: $GEMM_DIR_NAME"
 
 CONFIG_LIST=(
-    "$TORCHSIM_DIR/TOGSim/configs/systolic_ws_128x128_c2_chiplet_tpuv3.json"
+    "$TORCHSIM_DIR/configs/systolic_ws_128x128_c2_chiplet_tpuv3.json"
 )
 CONFIG_LIST2=(
-    "$TORCHSIM_DIR/TOGSim/configs/systolic_ws_128x128_c2_booksim_tpuv3.json"
-    "$TORCHSIM_DIR/TOGSim/configs/systolic_ws_128x128_c2_chiplet_tpuv3_xnuma.json"
+    "$TORCHSIM_DIR/configs/systolic_ws_128x128_c2_booksim_tpuv3.json"
+    "$TORCHSIM_DIR/configs/systolic_ws_128x128_c2_chiplet_tpuv3_xnuma.json"
 )
 shift
 shift

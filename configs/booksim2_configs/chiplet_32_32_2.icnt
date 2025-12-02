@@ -2,7 +2,7 @@
 use_map = 0
 flit_size = 32
 topology = anynet
-network_file = /workspace/PyTorchSim/TOGSim/configs/booksim2_configs/chiplet_32_32_2.net
+network_file = /workspace/PyTorchSim/configs/booksim2_configs/chiplet_32_32_2.net
 routing_function = min
 subnets = 1
 routing_delay = 4
