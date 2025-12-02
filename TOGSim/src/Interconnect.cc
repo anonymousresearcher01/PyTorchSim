@@ -83,9 +83,20 @@ Booksim2Interconnect::Booksim2Interconnect(SimulationConfig config) {
     std::string(onnxim_path_env) + "/TOGSim" : std::string("./");
 
   _config_path = fs::path(onnxim_path).append("configs").append((std::string)config.icnt_config_path).string();
-  spdlog::info("Config path : {}", _config_path);
+  spdlog::info("Booksim 2 config path : {}", _config_path);
+  print_config(_config_path);
   _booksim = std::make_unique<booksim2::Interconnect>(_config_path, _n_nodes);
   _ctrl_size = 8;
+}
+
+void Booksim2Interconnect::print_config(std::string config_path) {
+  std::ifstream config_file(config_path);
+  std::string line;
+  spdlog::info("Booksim2 Configuration: ");
+  while (std::getline(config_file, line)) {
+    std::cout << line << std::endl;
+  }
+  config_file.close();
 }
 
 bool Booksim2Interconnect::running() {

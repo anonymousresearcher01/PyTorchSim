@@ -3,6 +3,7 @@
 #include <queue>
 #include <filesystem>
 #include <string>
+#include <yaml-cpp/yaml.h>
 #include "Common.h"
 #include "Core.h"
 #include "SparseCore.h"

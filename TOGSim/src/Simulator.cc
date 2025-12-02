@@ -42,7 +42,10 @@ Simulator::Simulator(SimulationConfig config)
                                        .append("configs")
                                        .append(config.dram_config_path)
                                        .string();
-    spdlog::info("[Config/DRAM] Ramulator2 config: {}", ramulator_config);
+    spdlog::info("[Config/DRAM] Ramulator2 config path: {}", ramulator_config);
+    YAML::Node dram_config = YAML::LoadFile(ramulator_config);
+    spdlog::info("Ramulator2 config: ");
+    std::cout << dram_config << std::endl;
     config.dram_config_path = ramulator_config;
     _dram = std::make_unique<DramRamulator2>(config, &_core_cycles);
   } else {
