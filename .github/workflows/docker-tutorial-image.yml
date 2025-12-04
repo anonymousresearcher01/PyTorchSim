@@ -1,0 +1,35 @@
+name: Docker image for tutorial
+
+on:
+  push:
+    branches: [ "tutorial" ]
+
+jobs:
+  build:
+    runs-on: self-hosted
+    
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Step 2: Log in to GitHub Container Registry
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 3: Build and Push Docker Image
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile.ksc2025
+          push: true
+          tags: ghcr.io/psal-postech/torchsim_ksc2025:latest
