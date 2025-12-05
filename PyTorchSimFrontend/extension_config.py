@@ -57,23 +57,44 @@ def __getattr__(name):
 
     # Compiler Optimization
     if name == "codegen_compiler_optimization":
-        return config_json["codegen_compiler_optimization"]
+        opt_level = config_json["codegen_compiler_optimization"]
+        valid_opts = {
+            "fusion",
+            "reduction_epilogue",
+            "reduction_reduction",
+            "prologue",
+            "single_batch_conv",
+            "multi_tile_conv",
+            "subtile"
+        }
+        if opt_level == "all" or opt_level is "none":
+            pass
+        elif isinstance(opt_level, list):
+            # Check if provided list contains only valid options
+            invalids = set(opt_level) - valid_opts
+            assert not invalids, f"Invalid optimization options found: {invalids}"
+        else:
+            assert False, "Invalid format: Must be 'all', none, or a list of options."
+        return opt_level
 
     # Advanced fusion options
+    is_opt_enabled = lambda key: (__getattr__("codegen_compiler_optimization") == "all") or \
+                                 (isinstance(__getattr__("codegen_compiler_optimization"), list) and \
+                                  key in __getattr__("codegen_compiler_optimization"))
     if name == "CONFIG_FUSION":
-        return True if (__getattr__("codegen_compiler_optimization") == "all" or "fusion" in __getattr__("codegen_compiler_optimization")) else False
+        return is_opt_enabled("fusion")
     if name == "CONFIG_FUSION_REDUCTION_EPILOGUE":
-        return True if (__getattr__("codegen_compiler_optimization") == "all" or "reduction_epliogue" in __getattr__("codegen_compiler_optimization")) else False
+        return is_opt_enabled("reduction_epilogue") # Fixed typo here as well
     if name == "CONFIG_FUSION_REDUCTION_REDUCTION":
-        return True if (__getattr__("codegen_compiler_optimization") == "all" or "reduction_reduction" in __getattr__("codegen_compiler_optimization")) else False
+        return is_opt_enabled("reduction_reduction")
     if name == "CONFIG_FUSION_PROLOGUE":
-        return True if ((__getattr__("codegen_compiler_optimization") == "all") or ("prologue" in __getattr__("codegen_compiler_optimization"))) else False
+        return is_opt_enabled("prologue")
     if name == "CONFIG_SINGLE_BATCH_CONV":
-        return True if (__getattr__("codegen_compiler_optimization") == "all" or "single_batch_conv" in __getattr__("codegen_compiler_optimization")) else False
+        return is_opt_enabled("single_batch_conv")
     if name == "CONFIG_MULTI_TILE_CONV":
-        return True if (__getattr__("codegen_compiler_optimization") == "all" or "multi_tile_conv" in __getattr__("codegen_compiler_optimization")) else False
+        return is_opt_enabled("multi_tile_conv")
     if name == "CONFIG_SUBTILE":
-        return True if (__getattr__("codegen_compiler_optimization") == "all" or "subtile" in __getattr__("codegen_compiler_optimization")) else False
+        return is_opt_enabled("subtile")
 
     if name == "CONFIG_TOGSIM_DEBUG_LEVEL":
         return os.environ.get("TOGSIM_DEBUG_LEVEL", "")

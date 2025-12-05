@@ -78,6 +78,7 @@ Any x86 hardware capable of running Docker with more than 20 GB of memory -->
 - View
 - Activation
 - Pooling
+- Etc (WIP)
 
 ## Getting Started
 ### Quick start with pre-built Docker image
@@ -86,7 +87,7 @@ To download the latest Docker image and set up the environment, use the followin
 
 ```bash
 # Run the Docker container
-docker run -it --ipc=host --name torchsim -w /workspace/PyTorchSim ghcr.io/psal-postech/torchsim-ci:v1.0.0 bash
+docker run -it --ipc=host --name torchsim -w /workspace/PyTorchSim ghcr.io/psal-postech/torchsim-ci:v1.0.1 bash
 ```
 ### Manual Setting (Optional)
 This script provides building [Gem5](https://github.com/PSAL-POSTECH/gem5.git), [LLVM](https://github.com/PSAL-POSTECH/llvm-project.git), and [Spike](https://github.com/PSAL-POSTECH/riscv-isa-sim.git) simulator from source code for specific experts.
@@ -105,17 +106,18 @@ You can run your own PyTorch model on PyTorchSim by setting up a custom NPU devi
 This method also applies when you want to simulate models beyond the provided examples.
 ```python
 import torch
-from Scheduler.scheduler import ExecutionEngine
+from Scheduler.scheduler import PyTorchSimRunner
 # Declare a custom NPU device
-device = ExecutionEngine.setup_device().custom_device()
+device = PyTorchSimRunner.setup_device().custom_device()
 
 # Declare you own model (e.g. resnet18 from torchvision)
 from torchvision.models import resnet18
-model = resnet50().eval()
+model = resnet18().eval()
+x = torch.randn(1, 3, 224, 224, dtype=torch.float32)
 
 # Move model and input tensors to the custom device
 model.to(device)
-x.to(device)
+x = x.to(device)
 
 # Compile and run the model with PyTorchSim
 compiled_model = torch.compile(dynamic=False)(model)
@@ -127,13 +129,11 @@ PyTorchSim automatically generates a Tile-Operation Graph (TOG), and runs it thr
 ### Result
 Running log in CLI
 ```bash
-Wrapper Codegen Path = /tmp/torchinductor_root/yd/cyda7nhzv5mtakfhfcxtmmhtsv6kg7sza4k6wpkdgk7oxbpvqnlz.py
-[Gem5Simulator] cmd>  /workspace/gem5/build/RISCV/gem5.opt -r --stdout-file=sto.log -d /tmp/torchinductor/tmp/fy6nnyudtno/m5out /root/workspace/PyTorchSim/gem5_script/script_systolic.py -c /tmp/torchinductor/tmp/fy6nnyudtno/cycle_bin --vlane 128
-[Gem5Simulator] Simulation is still running... 
-[SpikeSimulator] cmd>  spike --isa rv64gcv --varch=vlen:256,elen:64 --vectorlane-size=128 -m0x80000000:0x1900000000,0x2000000000:0x1000000 --scratchpad-base-paddr=137438953472 --scratchpad-base-vaddr=3489660928 --scratchpad-size=131072  --kernel-addr=0000000000010400:10846 --base-path=/tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001 /workspace/riscv-pk/build/pk /tmp/torchinductor/tmp/fy6nnyudtno/validation_binary /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/arg0_1/0.raw /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/arg1_1/0.raw /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/buf0/0.raw
-[TOGSimulator] cmd>  /root/workspace/PyTorchSim/TOGSim/build/bin/Simulator --config /root/workspace/PyTorchSim/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json --models_list /tmp/torchinductor/tmp/fy6nnyudtno/tile_graph.onnx --attributes_list /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/attribute/0
-[TOGSimulator] Simulation is still running..  
-[TOGSimulator] Simulation of "/tmp/torchinductor/tmp/fy6nnyudtno/tile_graph.onnx" is stored to "/tmp/torchinductor/tmp/fy6nnyudtno/togsim_result/0"
+Wrapper Codegen Path = /tmp/torchinductor_root/fo/cfofsp5nwmpqxctouan2v2t5y7qp5vwrgvw4swssx4ca4us3c5tx.py
+[Gem5] Gem5 is running.
+[Spike] Running Spike simulator
+[TOGSim] TOGSim is running..
+[TOGSim] Simulation log is stored to "/workspace/PyTorchSim/togsim_results/20251205_080553.log"
 ----------------------------
 |Matmul Forward Test Passed|
 ----------------------------
@@ -141,9 +141,9 @@ Wrapper Codegen Path = /tmp/torchinductor_root/yd/cyda7nhzv5mtakfhfcxtmmhtsv6kg7
 
 Simulation consists of three steps
 
-1. `Gem5Simulator` obatins compute latency for TOG.
-2. `SpikeSimulator` verifies the output code.
-3. `TOGSimulator` simulates a NPU architecture.
+1. `Gem5` obatins compute latency for TOG.
+2. `Spike` verifies the output code.
+3. `TOGSim` simulates a NPU architecture.
 
 If you want to turn off the `SpikeSimulator` for fast simulation, you can set as below.
 ```bash
@@ -151,17 +151,51 @@ export pytorchsim_functional_mode=False
 ```
 Log contains memory & core stats.
 ```bash
-[info] HBM2-CH_0: avg BW utilization 37% (255 reads, 128 writes)
-[info] Row hits: 359, Row misses: 26, Row conflicts: 0
-[info] ========= Core stat =========
-[info] Core [0] : Systolic array [0] Utilization(%) 0.00, active_cycles 0, idle_cycles 1014
-[info] Core [0] : Systolic array [1] Utilization(%) 12.62, active_cycles 128, idle_cycles 886
-[info] Core [0] : DMA active_cycles 3 DMA idle_cycles 1011 DRAM BW 182.000 GB/s (6144)
-[info] Core [0] : Vector Unit Utilization(%) 4.34, active_cycles 44, idle_cycle 0
-[info] Core [0] : NUMA local memory: 34 requests, remote memory: 0 requests
-[info] Core [0] : Total_cycles 1014
-[info] Total execution cycles: 1014
-[info] Wall-clock time for simulation: 0.039296 seconds
+[2025-12-05 08:05:52.538] [info] HBM2-CH_0: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 956, Row misses: 32, Row conflicts: 36
+[2025-12-05 08:05:52.538] [info] HBM2-CH_1: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 956, Row misses: 32, Row conflicts: 36
+[2025-12-05 08:05:52.538] [info] HBM2-CH_2: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 959, Row misses: 32, Row conflicts: 33
+[2025-12-05 08:05:52.538] [info] HBM2-CH_3: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 956, Row misses: 32, Row conflicts: 36
+[2025-12-05 08:05:52.538] [info] HBM2-CH_4: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 959, Row misses: 32, Row conflicts: 33
+[2025-12-05 08:05:52.538] [info] HBM2-CH_5: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 959, Row misses: 32, Row conflicts: 33
+[2025-12-05 08:05:52.538] [info] HBM2-CH_6: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 956, Row misses: 32, Row conflicts: 36
+[2025-12-05 08:05:52.538] [info] HBM2-CH_7: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 958, Row misses: 32, Row conflicts: 34
+[2025-12-05 08:05:52.538] [info] HBM2-CH_8: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 959, Row misses: 32, Row conflicts: 33
+[2025-12-05 08:05:52.538] [info] HBM2-CH_9: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 959, Row misses: 32, Row conflicts: 33
+[2025-12-05 08:05:52.538] [info] HBM2-CH_10: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 958, Row misses: 32, Row conflicts: 34
+[2025-12-05 08:05:52.538] [info] HBM2-CH_11: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 959, Row misses: 32, Row conflicts: 33
+[2025-12-05 08:05:52.538] [info] HBM2-CH_12: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 958, Row misses: 32, Row conflicts: 34
+[2025-12-05 08:05:52.538] [info] HBM2-CH_13: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 958, Row misses: 32, Row conflicts: 34
+[2025-12-05 08:05:52.538] [info] HBM2-CH_14: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] Row hits: 959, Row misses: 32, Row conflicts: 33
+[2025-12-05 08:05:52.538] [info] HBM2-CH_15: avg BW utilization 49% (768 reads, 256 writes)
+[2025-12-05 08:05:52.538] [info] ===== Instructions count =====
+[2025-12-05 08:05:52.538] [info] Core [0] : MOVIN    inst_count 3
+[2025-12-05 08:05:52.538] [info] Core [0] : MOVOUT   inst_count 1
+[2025-12-05 08:05:52.538] [info] Core [0] : COMP     inst_count 10 (GEMM: 8, Vector: 2)
+[2025-12-05 08:05:52.538] [info] Core [0] : BAR      inst_count 8
+[2025-12-05 08:05:52.538] [info] ========= Core stat =========
+[2025-12-05 08:05:52.538] [info] Core [0] : Systolic array [0] utilization(%) 12.40, active_cycles 256, idle_cycles 1809
+[2025-12-05 08:05:52.538] [info] Core [0] : Systolic array [1] utilization(%) 12.40, active_cycles 256, idle_cycles 1809
+[2025-12-05 08:05:52.538] [info] Core [0] : DMA active_cycles, 1024 DMA idle_cycles 1041, DRAM BW 238.000 GB/s (16384 responses)
+[2025-12-05 08:05:52.538] [info] Core [0] : Vector unit utilization(%) 2.42, active cycle 50, idle_cycle 0
+[2025-12-05 08:05:52.538] [info] Core [0] : NUMA local memory: 16384 requests, remote memory: 0 requests
+[2025-12-05 08:05:52.538] [info] Core [0] : Total_cycles 2065
+[2025-12-05 08:05:52.538] [info] Total execution cycles: 2065
+[2025-12-05 08:05:52.538] [info] Wall-clock time for simulation: 0.147463 seconds
 ```
 The log is dumped in `TORCHSIM_DUMP_PATH` and you can set the path as below.
 ```bash
@@ -193,12 +227,12 @@ import os
 import sys
 import torch
 from torchvision.models import resnet18
-from test_transformer import EncoderBlock
 base_path = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
 config = f'{base_path}/configs/systolic_ws_128x128_c2_simple_noc_tpuv3_partition.json'
 
 sys.path.append(base_path)
-from Scheduler.scheduler import Scheduler, SchedulerDNNModel, Request
+from tests.test_transformer import EncoderBlock
+from Scheduler.scheduler import Scheduler, SchedulerDNNModel, Request, poisson_request_generator
 scheduler = Scheduler(num_request_queue=2, engine_select=Scheduler.FIFO_ENGINE, togsim_config=config)
 
 # Register compiled model
@@ -232,13 +266,13 @@ model1_lambda = 3.0
 max_time = 1000.0 # [s]
 
 # Generate Possion distribution requests for model0
-for model0_request_time in poisson_request_generator(model0_lambda, total_time=max_time):
+for model0_request_time in poisson_request_generator(model0_lambda, max_msec_time=max_time):
     x = torch.randn(1, 3, 224, 224)
     new_request = Request("model0", [x], [], request_queue_idx=0)
     scheduler.add_request(new_request, request_time=model0_request_time)
 
 # Generate Possion distribution requests for model1
-for model1_request_time in poisson_request_generator(model1_lambda, total_time=max_time):
+for model1_request_time in poisson_request_generator(model1_lambda, max_msec_time=max_time):
     x = torch.randn(128, 768)
     new_request = Request("model1", [x], [], request_queue_idx=1)
     scheduler.add_request(new_request, request_time=model1_request_time)
@@ -267,18 +301,19 @@ PyTorchSim provides three mapping strategies.
 ### Heuristic-based mapping
 We adopt and modified heuristic-based mapping of [GEMMINI](https://github.com/ucb-bar/gemmini) by default, which maximizes the utilization of scratchpad memory.
 ### Auto-tuning
-Heuristic method is not optimal for some cases. PyTorchSim provides auto-tuning to find best mapping for GEMM, CONV, and vector operations. It reduces searching space by sorting of scratchpad memory utilization and pick top-k candiates. Searching parameters are tile shape and vector lane stride.
+Heuristic method may not be optimal for all cases. PyTorchSim provides auto-tuning to find the best mapping for GEMM, CONV, and vector operations. It reduces the search space by sorting candidates based on scratchpad memory utilization and picking the top-k candidates. Search parameters include tile shape and vector lane stride.
+
+To enable this, update your configuration file as follows:
 ```bash
-export AUTOTUNE=True
-export AUTOTUNE_TEMPLATE=True
+"codegen_mapping_strategy" : "autotune"
 ```
 ### Manunal setting
-User can exploit third-party(e.g. Timeloop) mapping. Set the cheatsheet path and write down their own mapping.
-
+Users can utilizing third-party mapping tools (e.g., Timeloop). You can explicitly set the mapping file path in the configuration file to apply your own mapping strategies.
 ```bash
-export CONFIG_GEMM_CHEATSHEET_PATH=validation/gemm_tpuv3_cheatsheet.json
+"codegen_mapping_strategy" : "external",
+"codegen_external_mapping_file" : "path/to/mapping_file.json",
 ```
-Key: "M_K_N" for GEMM
+Key: "M_N_K" for GEMM
 ```
 {
     "512_2048_8192" : {
@@ -298,13 +333,7 @@ Key: "M_K_N" for GEMM
     }
 }
 ```
-If you want to explore specific tile size, set the environment variable as below.
-```bash
-export TORCHSIM_MANUAL_TILE_SIZE=1
-export TORCHSIM_TILE_M=512
-export TORCHSIM_TILE_N=512
-export TORCHSIM_TILE_K=512
-```
+
 ## L2 Cache
 It supports L2 cache as persistent cache. User can provide software-managed allocation/eviction strategy for tensors with persistent cache.
 
@@ -329,8 +358,6 @@ Last but not least, you must set `l2d_type` and `l2d_config` in the [TOGSim conf
 
 You can configure these options using environment variables.
 ```bash
-export vpu_num_lanes=128 # vector lane size
-export vpu_num_lanes_STRIDE=2  # vector lane stride for DMA
 export TORCHSIM_DIR=/workspace/PyTorchSim # home directory
 
 # Plan which tensor allocated in TPUv4's CMEM
@@ -347,6 +374,10 @@ export TORCHSIM_USE_TIMING_POOLING=0 # use lightweight pooling for timing
   "num_cores" : 2,                   // Number of NPU cores
   "core_freq_mhz" : 940,             // Core's frequency (MHz)
   "num_systolic_array_per_core" : 2, // Number of systolic array per core
+
+  "vpu_num_lanes" : 128,             // Number of VPU lanes
+  "vpu_spad_size_kb_per_lane" : 128, // Scratchpad memory size per lane (KB)
+  "vpu_vector_length_bits" : 256,    // VPU vector register length (Bits)
 
   "dram_type" : "ramulator2",        // DRAM type (ex. ramulator2, simple)
   "dram_freq_mhz" : 940,             // DRAM frequency (MHz)
@@ -371,7 +402,16 @@ export TORCHSIM_USE_TIMING_POOLING=0 # use lightweight pooling for timing
   "partition": {                     // allocate request queue index
     "core_0":0,
     "core_1":1
-  }
+  },
+
+  "codegen_mapping_strategy" : "heuristic", // Compiler mapping strategy (ex. "heuristic", "autotune", "external-then-heuristic", "external-then-autotune")
+  "codegen_external_mapping_file" : "",     // Path to external mapping file
+  "codegen_autotune_max_retry": 10,         // Maximum retries for autotuning
+  "codegen_autotune_template_topk": 4,      // Top-K templates to consider during autotuning
+  // Compiler optimization level/options.
+  // Value can be "all", "none", or a list of specific optimizations:
+  // ["fusion", "reduction_epilogue", "reduction_reduction", "prologue", "single_batch_conv", "multi_tile_conv", "subtile"]
+  "codegen_compiler_optimization" : "all"
 ```
 You can set TOGSim config path as below.
 ```bash
