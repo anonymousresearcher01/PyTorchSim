@@ -3,6 +3,8 @@
 #include "DMA.h"
 #include "booksim2/Interconnect.hpp"
 #include <cmath>
+#include <iostream>
+#include <fstream>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -69,6 +71,7 @@ class Booksim2Interconnect : public Interconnect {
   virtual mem_fetch* top(uint32_t nid) override;
   virtual void pop(uint32_t nid) override;
   virtual void print_stats() override;
+  void print_config(std::string config_path);
 
  private:
   uint32_t _ctrl_size;

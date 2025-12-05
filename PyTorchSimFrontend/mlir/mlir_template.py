@@ -491,7 +491,9 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
     def make_choices(self, tile_candidates, render, template_node, prologue_nodes, epilogue_nodes):
         choices = []
         for tile_info in tile_candidates:
-            print(f"[Auto-tune] Trying tile size: {list(tile_info)}")
+            if extension_config.CONFIG_DEBUG_MODE:
+                # Compute Tile M, N, K DMA Tile M, N, K
+                print(f"[Auto-tune] Trying tile size: {list(tile_info)}")
             src_code = self.codegen_template_code(render, template_node, prologue_nodes, epilogue_nodes, tile_info)
             bench_runner = self.run_bench([template_node], self.kernel_name, src_code)
             choices.append((bench_runner, src_code, tile_info, self.loop_size))
@@ -506,7 +508,7 @@ class MLIRTemplateKernel(MLIRKernel, BaseMLIRHardwareInfo):
         )
 
     def codegen_nodes(self, tile_candidates, render, template_node, prologue_nodes, epilogue_nodes):
-        if extension_config.CONFIG_AUTOTUNE_TEMPLATE and len(tile_candidates):
+        if "autotune" in extension_config.codegen_mapping_strategy and len(tile_candidates):
             src_code, loop_size = self.autotune(tile_candidates, render, template_node, prologue_nodes, epilogue_nodes)
             self.loop_size = loop_size
         else:
@@ -1230,7 +1232,7 @@ class MLIRTemplate(KernelTemplate):
                 template=self,
                 kwargs=kwargs
             )
-            tile_candidates = self.get_tile_candidates(**kwargs)[:extension_config.CONFIG_AUTOTUNE_TEMPLATE_TOPK]
+            tile_candidates = self.get_tile_candidates(**kwargs)[:extension_config.codegen_autotune_template_topk]
             return kernel, tile_candidates, render
 
         return MLIRTemplateCaller(

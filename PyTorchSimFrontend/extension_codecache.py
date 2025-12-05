@@ -15,7 +15,7 @@ def hash_prefix(hash_value):
     return hash_value[1:12]
 
 def get_write_path(src_code):
-    return os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(get_hash(src_code.strip())))
+    return os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "outputs", hash_prefix(get_hash(src_code.strip())))
 
 def dump_metadata(args, arg_attributes, path):
     meta_path = os.path.join(path, "meta.txt")
@@ -26,19 +26,6 @@ def dump_metadata(args, arg_attributes, path):
         for (arg_name, arg_attribute), arg in zip(arg_attributes, args):
             file.write(f'{arg_name}=({arg_attribute[0]}, {arg.dtype}, {arg.shape})\n')
     return
-
-def llvm_compile_command(input, output):
-    opt_output = f"{input[:-3]}_opt.ll"
-    return [re.sub(r"[ \n]+", " ",
-        f"""
-            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/opt --load-pass-plugin={extension_config.CONFIG_TORCHSIM_CUSTOM_PASS_PATH}/libLowerGemminiPass.so -S -march=riscv64 --passes=LowerGemminiPass {input} -o {opt_output}
-        """,
-    ).strip(),
-            re.sub(r"[ \n]+", " ",
-        f"""
-            {extension_config.CONFIG_TORCHSIM_LLVM_PATH}/llc -march=riscv64 -mattr=+m,+f,+d,+a,+c,+v -O2 {opt_output} -o {output}
-        """,
-    ).strip()]
 
 def mlir_compile_command(filename, vectorlane_size, vlen=256):
     return [re.sub(r"[ \n]+", " ",
@@ -165,7 +152,7 @@ class MLIRCodeCache:
         else:
             link_option = ""
         # Generate LLVM kernel calller and binary for validation
-        if extension_config.CONFIG_TORCHSIM_FUNCTIONAL_MODE:
+        if extension_config.pytorchsim_functional_mode:
             # Use custom malloc to avoid size error
             new_link_option = link_option + " -Wl,--wrap=malloc -Wl,--wrap=free"
             cmds = mlir_compile_command(new_input_path, vectorlane_size, vlen=vlen)
@@ -182,7 +169,7 @@ class MLIRCodeCache:
                     print("Error output:", e.output)
                     assert(0)
 
-                val_llvm_caller = MLIRKernelCallerCodeGen(extension_config.CONFIG_TORCHSIM_FUNCTIONAL_MODE, arg_attributes)
+                val_llvm_caller = MLIRKernelCallerCodeGen(extension_config.pytorchsim_functional_mode, arg_attributes)
                 val_llvm_caller.generate_wrapper_file(write_path, validation_wrapper_name)
                 val_llvm_caller.compile_wih_kernel(write_path, key, validation_wrapper_name,
                                                    validation_binary_name, new_link_option)
@@ -213,7 +200,7 @@ class MLIRCodeCache:
                 print("Error output:", e.output)
                 assert(0)
 
-            if not extension_config.CONFIG_TORCHSIM_TIMING_MODE:
+            if not extension_config.pytorchsim_timing_mode:
                 return key
 
             # Generate MLIR kernel calller and binary for cycle calculation
@@ -280,26 +267,26 @@ class CustomAsyncCompile(AsyncCompile):
             lock = FileLock(os.path.join(lock_dir, key + ".lock"), timeout=LOCK_TIMEOUT)
             with lock:
                 # Run simulator pass
-                result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
+                result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "outputs", hash_prefix(key))
                 # Dump arguments and meta data
                 dump_metadata(args, arg_attributes, result_path)
                 runtime_path = FunctionalSimulator.get_runtime_dump_path(result_path)
-                if not autotune and (extension_config.CONFIG_TORCHSIM_FUNCTIONAL_MODE or validate):
+                if not autotune and (extension_config.pytorchsim_functional_mode or validate):
                     funcsim = FunctionalSimulator(result_path, key)
                     funcsim.run_spike(args, arg_attributes,
                                     runtime_path, self.validation_binary_name,
                                     vectorlane_size=vectorlane_size, spad_info=spad_info,
-                                    cleanup=extension_config.CONFIG_CLEANUP_DUMP_ARGS, silent_mode=silent_mode)
-                if not extension_config.CONFIG_TORCHSIM_TIMING_MODE:
+                                    silent_mode=silent_mode)
+                if not extension_config.pytorchsim_timing_mode:
                     return
 
                 onnx_path = os.path.join(result_path, "tile_graph.onnx")
                 attribute_path = os.path.join(runtime_path, "attribute")
                 togsim_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "TOGSim")
-                backsim = TOGSimulator(togsim_path, extension_config.CONFIG_TOGSIM_CONFIG)
-                backsim.vectorlane_size = vectorlane_size
-                attribute_path = backsim.create_attribute_file(attribute_path, args, loop_size=loop_size)
-                result_path = backsim.simulation(onnx_path, attribute_path, silent_mode=silent_mode)
+                TOGSim = TOGSimulator(togsim_path, extension_config.CONFIG_TOGSIM_CONFIG)
+                TOGSim.vectorlane_size = vectorlane_size
+                attribute_path = TOGSim.create_attribute_file(attribute_path, args, loop_size=loop_size)
+                result_path = TOGSim.simulation(onnx_path, attribute_path, silent_mode=silent_mode)
                 result = TOGSimulator.get_result_from_file(result_path)
                 return result
 
@@ -310,23 +297,20 @@ class CustomAsyncCompile(AsyncCompile):
             lock = FileLock(os.path.join(lock_dir, key + ".lock"), timeout=LOCK_TIMEOUT)
             with lock:
                 # Run simulator pass
-                result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "tmp", hash_prefix(key))
+                result_path = os.path.join(extension_config.CONFIG_TORCHSIM_DUMP_PATH, "outputs", hash_prefix(key))
                 # Dump arguments and meta data
                 dump_metadata(args, arg_attributes, result_path)
                 runtime_path = FunctionalSimulator.get_runtime_dump_path(result_path)
-                if not extension_config.CONFIG_TORCHSIM_TIMING_MODE:
-                    return
 
                 # Todo. Support valude dependent mode for graph mode
-                if False: # extension_config.CONFIG_TORCHSIM_FUNCTIONAL_MODE:
+                if False: # extension_config.pytorchsim_functional_mode:
                     funcsim = FunctionalSimulator(result_path, key)
                     funcsim.run_spike(args, arg_attributes,
                                     runtime_path, self.validation_binary_name,
-                                    vectorlane_size=vectorlane_size, spad_info=spad_info,
-                                    cleanup=extension_config.CONFIG_CLEANUP_DUMP_ARGS)
+                                    vectorlane_size=vectorlane_size, spad_info=spad_info)
             return result_path, runtime_path, None
 
-        is_dryrun = int(os.environ.get('TOGSIM_DRYRUN', default=False)) and not autotune
+        is_dryrun = int(os.environ.get('TOGSIM_EAGER_MODE', default=False)) and not autotune
         target_simulator = dryrun_simulator if is_dryrun else dummy_simulator
         target_simulator.arg_attributes = arg_attributes
         target_simulator.future = future

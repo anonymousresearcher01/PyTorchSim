@@ -9,7 +9,7 @@
 namespace fs = std::filesystem;
 namespace po = boost::program_options;
 
-const char* env_value = std::getenv("TOGSIM_DRYRUN");
+const char* env_value = std::getenv("TOGSIM_EAGER_MODE");
 bool isDryRun = (env_value != nullptr && std::string(env_value) == "1");
 
 void launchKernel(Simulator* simulator, std::string onnx_path, std::string attribute_path, std::string config_path, cycle_type request_time=0, int partiton_id=0) {
