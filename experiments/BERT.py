@@ -36,7 +36,7 @@ if __name__ == "__main__":
     import os
     import sys
     base_dir = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
-    config = os.environ.get('TORCHSIM_CONFIG', default=f'{base_dir}/TOGSim/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json')
+    config = os.environ.get('TORCHSIM_CONFIG', default=f'{base_dir}/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json')
     config_prefix = config.split('/')[-1].split('.')[0][9:] # extract config name from config path FIXME: gem5 result is different as directoy name
     sys.path.append(base_dir)
     args = argparse.ArgumentParser()
@@ -51,7 +51,7 @@ if __name__ == "__main__":
     os.environ['TORCHSIM_DUMP_PATH'] = result_path
     # only timing simulation
     os.environ['TORCHSIM_VALIDATION_MODE'] = "0"
-    if 'TORCHSIM_FUNCTIONAL_MODE' in os.environ:
-        del os.environ['TORCHSIM_FUNCTIONAL_MODE']
+    if 'pytorchsim_functional_mode' in os.environ:
+        del os.environ['pytorchsim_functional_mode']
 
     run_BERT(size, input_seq, config)

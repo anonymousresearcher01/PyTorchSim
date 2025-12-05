@@ -131,7 +131,7 @@ Wrapper Codegen Path = /tmp/torchinductor_root/yd/cyda7nhzv5mtakfhfcxtmmhtsv6kg7
 [Gem5Simulator] cmd>  /workspace/gem5/build/RISCV/gem5.opt -r --stdout-file=sto.log -d /tmp/torchinductor/tmp/fy6nnyudtno/m5out /root/workspace/PyTorchSim/gem5_script/script_systolic.py -c /tmp/torchinductor/tmp/fy6nnyudtno/cycle_bin --vlane 128
 [Gem5Simulator] Simulation is still running... 
 [SpikeSimulator] cmd>  spike --isa rv64gcv --varch=vlen:256,elen:64 --vectorlane-size=128 -m0x80000000:0x1900000000,0x2000000000:0x1000000 --scratchpad-base-paddr=137438953472 --scratchpad-base-vaddr=3489660928 --scratchpad-size=131072  --kernel-addr=0000000000010400:10846 --base-path=/tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001 /workspace/riscv-pk/build/pk /tmp/torchinductor/tmp/fy6nnyudtno/validation_binary /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/arg0_1/0.raw /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/arg1_1/0.raw /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/buf0/0.raw
-[TOGSimulator] cmd>  /root/workspace/PyTorchSim/TOGSim/build/bin/Simulator --config /root/workspace/PyTorchSim/TOGSim/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json --models_list /tmp/torchinductor/tmp/fy6nnyudtno/tile_graph.onnx --attributes_list /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/attribute/0
+[TOGSimulator] cmd>  /root/workspace/PyTorchSim/TOGSim/build/bin/Simulator --config /root/workspace/PyTorchSim/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json --models_list /tmp/torchinductor/tmp/fy6nnyudtno/tile_graph.onnx --attributes_list /tmp/torchinductor/tmp/fy6nnyudtno/runtime_0001/attribute/0
 [TOGSimulator] Simulation is still running..  
 [TOGSimulator] Simulation of "/tmp/torchinductor/tmp/fy6nnyudtno/tile_graph.onnx" is stored to "/tmp/torchinductor/tmp/fy6nnyudtno/togsim_result/0"
 ----------------------------
@@ -147,7 +147,7 @@ Simulation consists of three steps
 
 If you want to turn off the `SpikeSimulator` for fast simulation, you can set as below.
 ```bash
-export TORCHSIM_FUNCTIONAL_MODE=False
+export pytorchsim_functional_mode=False
 ```
 Log contains memory & core stats.
 ```bash
@@ -195,7 +195,7 @@ import torch
 from torchvision.models import resnet18
 from test_transformer import EncoderBlock
 base_path = os.environ.get('TORCHSIM_DIR', default='/workspace/PyTorchSim')
-config = f'{base_path}/TOGSim/configs/systolic_ws_128x128_c2_simple_noc_tpuv3_partition.json'
+config = f'{base_path}/configs/systolic_ws_128x128_c2_simple_noc_tpuv3_partition.json'
 
 sys.path.append(base_path)
 from Scheduler.scheduler import Scheduler, SchedulerDNNModel, Request
@@ -329,11 +329,9 @@ Last but not least, you must set `l2d_type` and `l2d_config` in the [TOGSim conf
 
 You can configure these options using environment variables.
 ```bash
-export TORCHSIM_VECTOR_LANE=128 # vector lane size
-export TORCHSIM_VECTOR_LANE_STRIDE=2  # vector lane stride for DMA
+export vpu_num_lanes=128 # vector lane size
+export vpu_num_lanes_STRIDE=2  # vector lane stride for DMA
 export TORCHSIM_DIR=/workspace/PyTorchSim # home directory
-
-export BLOCK_SPARSE=0 # If you want to use block sparse workload, turn it on
 
 # Plan which tensor allocated in TPUv4's CMEM
 export SRAM_BUFFER_PLAN_PATH=/workspace/PyTorchSim/tpuv4/gemm_plan.py
@@ -344,7 +342,7 @@ export TORCHSIM_USE_TIMING_POOLING=0 # use lightweight pooling for timing
 ## TOGSim Configuration
 ![NPU_Core](./docs/npu_core.jpg)
 
-`TOGSim/configs` directory contains example NPU configuration files in the JSON format.
+`configs` directory contains example NPU configuration files in the JSON format.
 ```
   "num_cores" : 2,                   // Number of NPU cores
   "core_freq_mhz" : 940,             // Core's frequency (MHz)
@@ -377,7 +375,7 @@ export TORCHSIM_USE_TIMING_POOLING=0 # use lightweight pooling for timing
 ```
 You can set TOGSim config path as below.
 ```bash
-export TORCHSIM_CONFIG=/workspace/PyTorchSim/TOGSim/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json
+export TORCHSIM_CONFIG=/workspace/PyTorchSim/configs/systolic_ws_128x128_c1_simple_noc_tpuv3.json
 ```
 ## Future Works
 Currently, PyTorchSim supports PyTorch 2.2. Support for newer versions will be added soon.

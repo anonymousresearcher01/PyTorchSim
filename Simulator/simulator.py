@@ -6,6 +6,7 @@ import re
 import sys
 import json
 import time
+import datetime
 import threading
 from pathlib import Path
 
@@ -161,10 +162,11 @@ class CycleSimulator():
             print("")
 
         dir_path = os.path.join(os.path.dirname(target_binary), "m5out")
-        gem5_cmd = [extension_config.CONFIG_GEM5_PATH, "-r", "--stdout-file=sto.log", "-d", dir_path, extension_config.CONFIG_GEM5_SCRIPT_PATH, "-c", target_binary, "--vlane", str(vectorlane_size)]
+        gem5_script_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "gem5_script/script_systolic.py")
+        gem5_cmd = [extension_config.CONFIG_GEM5_PATH, "-r", "--stdout-file=sto.log", "-d", dir_path, gem5_script_path, "-c", target_binary, "--vlane", str(vectorlane_size)]
         try:
             # Create progress thread
-            is_dryrun = int(os.environ.get('TOGSIM_DRYRUN', default=False)) or silent_mode
+            is_dryrun = int(os.environ.get('TOGSIM_EAGER_MODE', default=False)) or silent_mode
             if not is_dryrun:
                 if extension_config.CONFIG_DEBUG_MODE:
                     print("[Gem5] cmd> ", " ".join(gem5_cmd))
@@ -242,13 +244,15 @@ class TOGSimulator():
                 print("[TOGSim] Error output:", e.output)
             assert 0
         # Save result to result_path
-        result_path = os.path.join(os.path.dirname(model_path), "togsim_result")
+        result_path = extension_config.CONFIG_TORCHSIM_LOG_PATH
         os.makedirs(result_path, exist_ok=True)
-        file_name = str(len(os.listdir(result_path)))
+        file_name = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')+".log"
         result_path = os.path.join(result_path, file_name)
         with open(result_path, "w") as f:
             f.write(result.decode())
-        print(f'[TOGSim] Simulation of "{model_path}" is stored to "{result_path}"')
+        if not silent_mode or extension_config.CONFIG_DEBUG_MODE:
+            model_path_log = f' of "{model_path}" ' if extension_config.CONFIG_DEBUG_MODE else " "
+            print(f'[TOGSim] Simulation log{model_path_log}is stored to "{result_path}"')
         return result_path
 
     def interactive_simulation(self):
@@ -286,7 +290,7 @@ class TOGSimulator():
     def send_command(self, command):
         if self.process:
             try:
-                if not extension_config.CONFIG_TOGSIM_DRYRUN:
+                if extension_config.CONFIG_TORCHSIM_DEBUG_MODE:
                     print(command, flush=True)
                 self.process.stdin.write(command + '\n')
                 self.process.stdin.flush()
@@ -398,6 +402,7 @@ class TOGSimulator():
         dram_channel_bw = {}
         avg_dram_bw = None
         simulation_time = None
+        total_cycle = None
 
         # Read and find total stat position
         with open(result_path, "r") as f:
@@ -452,6 +457,6 @@ class TOGSimulator():
         return core_metrics, dram_channel_bw, avg_dram_bw, simulation_time, total_cycle
 
 if __name__ == "__main__":
-    sim = TOGSimulator("/workspace/PyTorchSim/TOGSim", "/workspace/PyTorchSim/TOGSim/configs/systolic_ws_128x128_c2_simple_noc_tpuv3_partition.json")
+    sim = TOGSimulator("/workspace/PyTorchSim/TOGSim", "/workspace/PyTorchSim/configs/systolic_ws_128x128_c2_simple_noc_tpuv3_partition.json")
     sim.interactive_simulation()
     sim.until(4000)

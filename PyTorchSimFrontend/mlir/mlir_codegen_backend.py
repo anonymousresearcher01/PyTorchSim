@@ -426,7 +426,14 @@ class ExtensionOverrides(common.OpOverrides):
 
     @staticmethod
     def exp2(operand, *args, var_info=None, **kwargs):
-        raise NotImplementedError()
+        # Hands-on part: implement exp2 using math.exp2
+        # var_info = {operand: [tile_size, dtype]}
+        # Ex) var_info[operand] = [8, "f32"]
+
+        ln2 = math.log(2)
+        coeff = ops.constant(ln2, "f32")
+        operand = ops.mul(operand, coeff)
+        return ops.exp(operand), var_info[operand]
 
     @staticmethod
     def erf(operand, *args, var_info=None, **kwargs):
@@ -1572,7 +1579,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
             current_tile_sz = tuple(self.kernel_group.tile_desc.get_tile_size())
             search_space.add(current_tile_sz)
 
-            print(f"[Auto-tune] Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
+            if extension_config.CONFIG_DEBUG_MODE:
+                print(f"[Auto-tune] Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
             self._prepare_simulator_headers(src_code)
             bench_runner = self.run_bench(nodes, kernel_name, src_code)
             choices.append((bench_runner, src_code, current_tile_sz, self.kernel_group.tile_desc.vmap.vlane_stride))
@@ -1614,7 +1622,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
 
                     # Add this choice
                     search_space.add(current_tile_sz)
-                    print(f"[Auto-tune] Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
+                    if extension_config.CONFIG_DEBUG_MODE:
+                        print(f"[Auto-tune] Trying tile size: {list(current_tile_sz)}, vlane_stride: {self.kernel_group.tile_desc.vmap.vlane_stride}, split_axis: {self.kernel_group.tile_desc.vmap.vlane_split_axis}")
                     self._prepare_simulator_headers(src_code)
                     bench_runner = self.run_bench(nodes, kernel_name, src_code)
                     choices.append((bench_runner, src_code, self.kernel_group.tile_desc.get_tile_size(), self.kernel_group.tile_desc.vmap.vlane_stride))
@@ -1625,7 +1634,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
     def autotune(self, *args):
         def get_cycle(choice):
             bench_runner = choice[0]
-            for n_try in range(extension_config.CONFIG_MAX_AUTOTUNE_TRY): # TODO: make simple
+            for n_try in range(extension_config.codegen_autotune_max_retry): # TODO: make simple
                 try:
                     out = bench_runner()
                     return out[-1]
@@ -1641,7 +1650,8 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
         max_idx = results.index(min(results))
         if min(results) == float("inf"):
             raise RuntimeError("Failed to find optimal tile size...")
-        self._log_autotune_result(choices[max_idx], results[max_idx])
+        if extension_config.CONFIG_DEBUG_MODE:
+            self._log_autotune_result(choices[max_idx], results[max_idx])
         optimal_src_code, loop_size = choices[max_idx][1], choices[max_idx][-1]
         return optimal_src_code, loop_size
 
@@ -1661,7 +1671,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
                 "spad_info": self.spad_info,
                 "vlen" : self.vlen,
                 "arg_attributes" : arg_attributes,
-                "validate" : extension_config.CONFIG_TORCHSIM_FUNCTIONAL_MODE,
+                "validate" : extension_config.pytorchsim_functional_mode,
                 "autotune" : True,
             },
             source_code=src_code,
@@ -1680,7 +1690,7 @@ class MLIRKernel(mlir_common.BaseMLIRKernel):
     def codegen_nodes(self, nodes, kernel_name):
         src_code = super().codegen_nodes(nodes, kernel_name)
         self._prepare_simulator_headers(src_code)
-        if extension_config.CONFIG_AUTOTUNE and extension_config.CONFIG_TORCHSIM_TIMING_MODE:
+        if "autotune" in extension_config.codegen_mapping_strategy and extension_config.pytorchsim_timing_mode:
             optimal_src_code = self.autotune(nodes, kernel_name)[0]
             if optimal_src_code is not None:
                 return optimal_src_code

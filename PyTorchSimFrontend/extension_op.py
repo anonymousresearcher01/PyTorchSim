@@ -46,7 +46,7 @@ graph_template = {
 
 class MLIRExternKernelChoice(ExternKernelChoice):
     def call_name(self):
-        is_dryrun = int(os.environ.get('TOGSIM_DRYRUN', default=False))
+        is_dryrun = int(os.environ.get('TOGSIM_EAGER_MODE', default=False))
         if is_dryrun:
             return f"yield from sparse_mm_dummy_stonne_outer"
         return f"torch.ops.extension_op.{self.name}"
@@ -276,9 +276,9 @@ def sparse_mm_stonne_outer(a, b, out):
     onnx_path, attribute_path, c_result_path = prepare_outer_product_matrix(a, b, out)
 
     togsim_path = os.path.join(extension_config.CONFIG_TORCHSIM_DIR, "TOGSim")
-    stonne_config_path = f'{extension_config.CONFIG_TORCHSIM_DIR}/TOGSim/configs/stonne_single_c1_simple_noc.json'
-    backsim = TOGSimulator(togsim_path, stonne_config_path)
-    result_path = backsim.simulation(onnx_path)
+    stonne_config_path = f'{extension_config.CONFIG_TORCHSIM_DIR}/configs/stonne_single_c1_simple_noc.json'
+    TOGSim = TOGSimulator(togsim_path, stonne_config_path)
+    result_path = TOGSim.simulation(onnx_path)
     TOGSimulator.get_result_from_file(result_path)
 
     # Load result data
