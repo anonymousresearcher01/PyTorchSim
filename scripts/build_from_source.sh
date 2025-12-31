@@ -1,9 +1,10 @@
 #!/bin/bash
-home="/workspace"
+home="/mnt/sda/npusim_workspace"
+export RISCV=/mnt/sda/npusim_workspace/riscv
 cd $home
 
 # Gem5
-apt -y update && apt -y upgrade && apt -y install scons
+# apt -y update && apt -y upgrade && apt -y install scons
 git clone https://github.com/PSAL-POSTECH/gem5.git
 cd gem5 && scons build/RISCV/gem5.opt -j $(nproc)
 export GEM5_PATH=$home/gem5/build/RISCV/gem5.opt
